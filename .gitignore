@@ -68,6 +68,7 @@ CLAUDE.local.md
 **/.wrangler/
 
 # Local agent/tooling artifacts (do not commit)
+.out/
 PLAN.md
 .valknut/
 valknut-report.html/
