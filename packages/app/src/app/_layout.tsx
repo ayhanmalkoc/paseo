@@ -881,13 +881,13 @@ function RuntimeProviders({ children }: { children: ReactNode }) {
 
 function RootProviders({ children }: { children: ReactNode }) {
   return (
-    <PortalProvider>
+    <QueryProvider>
       <SafeAreaProvider>
         <KeyboardProvider>
-          <QueryProvider>{children}</QueryProvider>
+          <PortalProvider>{children}</PortalProvider>
         </KeyboardProvider>
       </SafeAreaProvider>
-    </PortalProvider>
+    </QueryProvider>
   );
 }
 

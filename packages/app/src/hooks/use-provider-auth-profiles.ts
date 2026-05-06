@@ -12,6 +12,10 @@ export function providerAuthProfilesQueryKey(
   return ["providerAuthProfiles", serverId, provider ?? "__all__"] as const;
 }
 
+export function providerAuthProfilesServerQueryKey(serverId: string | null) {
+  return ["providerAuthProfiles", serverId] as const;
+}
+
 export interface UseProviderAuthProfilesResult {
   profiles: ProviderAuthProfile[] | undefined;
   isLoading: boolean;
@@ -61,8 +65,10 @@ export function useProviderAuthProfiles(
   });
 
   const invalidate = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey });
-  }, [queryClient, queryKey]);
+    await queryClient.invalidateQueries({
+      queryKey: providerAuthProfilesServerQueryKey(serverId),
+    });
+  }, [queryClient, serverId]);
 
   const importMutation = useMutation({
     mutationFn: async (options?: { alias?: string; setDefault?: boolean }) => {

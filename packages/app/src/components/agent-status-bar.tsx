@@ -33,6 +33,7 @@ import {
 import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import { useSessionStore } from "@/stores/session-store";
+import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import {
@@ -424,11 +425,12 @@ function resolveProviderIcon(provider: string) {
 }
 
 type AgentStatusBarSlice = {
-  provider: string;
+  provider: AgentProvider;
   cwd: string | null;
   currentModeId: string | null | undefined;
   runtimeModelId: string | null;
   model: string | null | undefined;
+  authProfileKey: string | null | undefined;
   features: AgentFeature[] | undefined;
   thinkingOptionId: string | null | undefined;
   lastUsage: unknown;
@@ -449,6 +451,7 @@ function selectAgentStatusBarSlice(
     currentModeId: currentAgent.currentModeId,
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
     model: currentAgent.model,
+    authProfileKey: currentAgent.authProfileKey,
     features: currentAgent.features,
     thinkingOptionId: currentAgent.thinkingOptionId,
     lastUsage: currentAgent.lastUsage,
@@ -463,6 +466,16 @@ function resolveSnapshotSelectedEntry(
     return null;
   }
   return snapshotEntries.find((e) => e.provider === agentProvider) ?? null;
+}
+
+function useAgentStatusBarAuthProfileState(serverId: string, agent: AgentStatusBarSlice) {
+  const providerAuthProfiles = useProviderAuthProfiles(serverId, agent?.provider);
+
+  return {
+    authProfiles: providerAuthProfiles.profiles ?? EMPTY_AUTH_PROFILES,
+    selectedAuthProfileKey: agent?.authProfileKey ?? undefined,
+    isAuthProfilesLoading: providerAuthProfiles.isLoading,
+  };
 }
 
 function buildAgentProviderDefinitions(
@@ -1369,7 +1382,10 @@ function SheetAuthProfileSection({
           testID="agent-preferences-auth-profile"
         >
           <User size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-          <Text style={styles.sheetSelectText}>{displayAuthProfile}</Text>
+          <Text style={styles.sheetSelectText}>Account</Text>
+          <Text ellipsizeMode="tail" numberOfLines={1} style={styles.sheetSelectValueText}>
+            {displayAuthProfile}
+          </Text>
           <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="start">
@@ -2062,6 +2078,8 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     isLoading: snapshotIsLoading,
     refetchIfStale: refetchSnapshotIfStale,
   } = useProvidersSnapshot(serverId);
+  const agentProvider = agent?.provider;
+  const authProfileState = useAgentStatusBarAuthProfileState(serverId, agent);
 
   const snapshotSelectedEntry = useMemo(
     () => resolveSnapshotSelectedEntry(snapshotEntries, agent?.provider),
@@ -2118,7 +2136,6 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     }));
   }, [modelSelection.thinkingOptions]);
 
-  const agentProvider = agent?.provider;
   const activeModelId = modelSelection.activeModelId;
 
   const handleSelectMode = useCallback(
@@ -2258,6 +2275,9 @@ export const AgentStatusBar = memo(function AgentStatusBar({
       onSelectThinkingOption={handleSelectThinkingOption}
       features={agent.features}
       onSetFeature={handleSetFeature}
+      authProfiles={authProfileState.authProfiles}
+      selectedAuthProfileKey={authProfileState.selectedAuthProfileKey}
+      isAuthProfilesLoading={authProfileState.isAuthProfilesLoading}
       isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
       onModelSelectorOpen={handleModelSelectorOpen}
       onDropdownClose={onDropdownClose}
@@ -2508,5 +2528,12 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
+  },
+  sheetSelectValueText: {
+    flexShrink: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    textAlign: "right",
   },
 }));
