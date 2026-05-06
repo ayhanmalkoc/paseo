@@ -326,14 +326,14 @@ export function AdaptiveModalSheet({
 }
 
 /**
- * TextInput that automatically uses BottomSheetTextInput on mobile
+ * TextInput that automatically uses BottomSheetTextInput on native mobile
  * for proper keyboard dodging in AdaptiveModalSheet.
  */
 export const AdaptiveTextInput = forwardRef<TextInput, TextInputProps>(
   function AdaptiveTextInput(props, ref) {
     const isMobile = useIsCompactFormFactor();
 
-    if (isMobile) {
+    if (isMobile && !isWeb) {
       return <BottomSheetTextInput ref={ref as unknown as Ref<never>} {...props} />;
     }
 
