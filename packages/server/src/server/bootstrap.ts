@@ -463,6 +463,9 @@ export async function createPaseoDaemon(
     logger,
     adapters: [new CodexProviderAuthAdapter()],
   });
+  void providerAuthService.syncAllCurrentProfiles().catch((error) => {
+    logger.warn({ err: error }, "Failed to sync provider auth profiles during bootstrap");
+  });
   const agentManager = new AgentManager({
     clients: {
       ...createClientsFromRegistry(providerRegistry, logger),

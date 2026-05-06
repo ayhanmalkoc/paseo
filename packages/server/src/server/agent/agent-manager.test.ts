@@ -806,6 +806,99 @@ test("createAgent applies selected provider auth profile to config and launch en
   rmSync(workdir, { recursive: true, force: true });
 });
 
+test("createAgent syncs current provider auth before resolving default profile", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class CaptureClient extends TestAgentClient {
+    lastConfig: AgentSessionConfig | null = null;
+    lastLaunchContext: AgentLaunchContext | undefined;
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.lastConfig = config;
+      this.lastLaunchContext = launchContext;
+      return new TestAgentSession(config);
+    }
+  }
+
+  class AuthAdapter implements ProviderAuthAdapter {
+    readonly provider = "codex" as const;
+    readonly supportsCurrentAuthSync = true;
+
+    async importCurrent(context: ProviderAuthAdapterContext): Promise<StoredProviderAuthProfile> {
+      const now = context.now().toISOString();
+      return {
+        provider: "codex",
+        key: "profile-a",
+        alias: "work",
+        authMode: "chatgpt",
+        status: "ready",
+        createdAt: now,
+        updatedAt: now,
+        providerHomePath: join(context.providerBaseDir, "profiles", "profile-a", "codex-home"),
+      };
+    }
+
+    async importAuthFile(
+      _authFilePath: string,
+      context: ProviderAuthAdapterContext,
+    ): Promise<StoredProviderAuthProfile> {
+      return this.importCurrent(context);
+    }
+
+    async refreshProfile(profile: StoredProviderAuthProfile): Promise<StoredProviderAuthProfile> {
+      return profile;
+    }
+
+    resolveLaunchContext(profile: StoredProviderAuthProfile): AgentLaunchContext & {
+      profileKey: string;
+    } {
+      return {
+        profileKey: profile.key,
+        env: { CODEX_HOME: profile.providerHomePath },
+      };
+    }
+  }
+
+  const providerAuthService = new ProviderAuthService({
+    paseoHome: workdir,
+    logger,
+    adapters: [new AuthAdapter()],
+    now: () => new Date("2026-05-06T12:00:00.000Z"),
+  });
+
+  const client = new CaptureClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000109",
+    providerAuthService,
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  expect(client.lastConfig?.authProfileKey).toBe("profile-a");
+  expect(snapshot.config.authProfileKey).toBe("profile-a");
+  expect(client.lastLaunchContext).toEqual({
+    env: {
+      PASEO_AGENT_ID: snapshot.id,
+      CODEX_HOME: join(workdir, "provider-auth", "codex", "profiles", "profile-a", "codex-home"),
+    },
+  });
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("createAgent passes persistSession to provider create options", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

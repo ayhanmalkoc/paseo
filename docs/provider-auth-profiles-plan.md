@@ -23,6 +23,201 @@ Future provider support still requires provider-specific adapters for Claude,
 OpenCode, Pi, or custom providers; the app/RPC contract is intended to remain
 unchanged for those additions.
 
+## Next Scope: Automatic Current Auth Sync
+
+This is the next implementation scope. It is intentionally narrower than full
+account rotation.
+
+Goal:
+
+- keep Paseo's provider-auth registry synchronized with the provider's current
+  global login state;
+- remove the need to manually press "Import current" after each external
+  provider login or account switch;
+- preserve explicit/default account selection semantics for new agents;
+- never move an existing or running agent to a different account silently.
+
+Non-goals:
+
+- do not implement provider login inside Paseo;
+- do not rewrite the user's global provider auth file;
+- do not add automatic account rotation based on usage in this step;
+- do not add Claude/OpenCode/Pi adapters in this step.
+
+### Automatic Sync Decisions
+
+1. Sync means idempotent import/update of the current global auth profile.
+
+   For Codex, the adapter reads the effective global Codex home
+   (`CODEX_HOME` or the default `.codex` home), parses `auth.json`, computes
+   the stable profile key, and updates the matching Paseo-managed isolated
+   profile. If the key is new, it creates a new profile. If the key already
+   exists, it refreshes the stored profile snapshot and public metadata.
+
+2. Sync must not override user intent.
+
+   A global account switch should make the new account visible in Paseo, but it
+   must not silently change an explicit draft selection, persisted provider
+   preference, running agent, or stored agent resume key.
+
+3. First-profile defaulting is allowed.
+
+   If a provider has no default profile and sync creates the first ready
+   profile, it may become the default. If a default already exists, sync should
+   leave it unchanged.
+
+4. Sync should be lazy first, watcher second.
+
+   The first implementation should run sync at deterministic app/server
+   interaction points. A file watcher can be added after the behavior is stable,
+   but the feature should not depend on watcher reliability across Windows,
+   macOS, Linux, WSL, and networked home directories.
+
+5. Sync is provider-adapter capability, not Codex-specific service logic.
+
+   The daemon service should expose provider-neutral methods such as
+   `syncCurrentProfile(provider)` and let adapters declare whether they support
+   current-auth sync. Codex supplies the first adapter implementation.
+
+### Automatic Sync Trigger Plan
+
+Initial triggers:
+
+- daemon bootstrap: best-effort sync for providers with current-auth sync
+  support;
+- `list_provider_auth_profiles_request`: sync the requested provider before
+  returning profiles, unless the caller explicitly requests cached-only data in
+  a future optional field;
+- provider diagnostic refresh: sync before showing the Accounts section;
+- new agent create path: sync the selected provider before resolving default
+  auth selection, so a recent external login is available immediately.
+
+Deferred trigger:
+
+- debounced file watcher for known auth files such as Codex `auth.json`.
+  Watchers should be an optimization only; RPC/create-path sync remains the
+  correctness path.
+
+### Automatic Sync Server Plan
+
+Add or refactor in `ProviderAuthService`:
+
+- `syncCurrentProfile(provider: AgentProvider, options?: SyncOptions)`:
+  provider-neutral idempotent operation;
+- `syncAllCurrentProfiles(options?: SyncOptions)`:
+  bootstrap helper for adapters that support sync;
+- shared write/update path with existing `importProfile({ source: "current" })`
+  to avoid duplicate persistence semantics;
+- metadata result indicating whether the profile was `created`, `updated`,
+  `unchanged`, `unsupported`, `missing-auth`, or `failed`;
+- optional `setDefaultWhenEmpty` behavior, defaulting to true for first-profile
+  sync and false for existing-default cases.
+
+Expected service behavior:
+
+- if the provider has no adapter or no sync capability, return an unsupported
+  result without throwing for list/bootstrap paths;
+- if the current auth file is missing, return a missing-auth result and keep
+  existing stored profiles;
+- if parsing fails, keep existing stored profiles and surface a clear warning or
+  RPC error depending on trigger;
+- if sync succeeds, invalidate/update the same provider-auth registry used by
+  manual import.
+
+### Automatic Sync Codex Adapter Plan
+
+Reuse the existing Codex import implementation:
+
+- resolve the effective Codex home from `CODEX_HOME` or default user `.codex`;
+- read and parse `auth.json`;
+- compute the stable key from API key, ChatGPT account/user claims, or unknown
+  auth hash;
+- copy `auth.json` and optional `config.toml` into the matching isolated
+  profile `codex-home`;
+- refresh sanitized metadata: alias, email, account id, user id, auth mode,
+  plan, status, last refresh, local usage snapshot;
+- preserve user-facing alias if the user renamed it later, unless no alias
+  exists.
+
+### Automatic Sync App Plan
+
+Keep the UI simple:
+
+- Provider Accounts section should show automatically synced profiles without
+  requiring the user to press "Import current";
+- keep "Import current" as a manual recovery/force-refresh action;
+- show a small sync/loading state while profile list sync is running;
+- show clear empty text when the provider supports auth profiles but no global
+  login exists;
+- in Preferences, the Account row should use synced profiles and continue to
+  show default/explicit selection exactly as today.
+
+No new primary UI surface is required for this scope.
+
+### Automatic Sync Compatibility Plan
+
+RPC schema changes must be additive:
+
+- existing `list_provider_auth_profiles_request` can keep working unchanged;
+- optional fields may be added later, for example `sync?: boolean` or
+  `cachedOnly?: boolean`;
+- responses may add optional sync metadata, but clients must not depend on it
+  for basic profile display;
+- old clients should continue listing existing stored profiles without knowing
+  about sync metadata.
+
+### Automatic Sync Tests
+
+Server targeted tests:
+
+- syncing current Codex auth creates a new profile when registry is empty;
+- syncing the same current auth updates the existing profile without duplicate
+  keys;
+- syncing a different current auth adds a second profile without changing the
+  existing default;
+- first synced profile becomes default only when no default exists;
+- missing `auth.json` does not delete existing profiles;
+- parse failure does not corrupt registry data;
+- create-agent default resolution sees a newly synced current profile before
+  launch;
+- explicit `authProfileKey` still wins over synced/default profile;
+- resume keeps the persisted `authProfileKey`.
+
+App targeted tests:
+
+- profile-list hook invalidates/refetches after sync/list operations;
+- Accounts section displays automatically synced profiles;
+- Preferences Account row preserves explicit selection after the provider list
+  refreshes.
+
+### Automatic Sync Validation
+
+Follow the repo validation rules:
+
+- run targeted provider-auth service and Codex adapter tests;
+- run targeted agent-manager tests for launch selection;
+- run targeted app hook/component tests if app code changes;
+- run `npm run format:files -- <changed files>`;
+- run `npm run lint -- <changed files>`;
+- run `npm run typecheck`;
+- live validation: switch global Codex account externally, open Paseo Accounts,
+  confirm the profile appears without pressing "Import current", then start a
+  new Codex agent and verify its launch metadata/profile key.
+
+### Automatic Sync Definition of Done
+
+- A user can switch/login Codex externally and see the active account appear in
+  Paseo without manual import.
+- Re-syncing the same external account updates the existing profile instead of
+  creating duplicates.
+- A new external account is added as a new ready profile.
+- Existing default and explicit selections remain stable.
+- New agent creation can use the newly synced account.
+- Existing/running/resumed agents stay pinned to their original auth profile.
+- Missing or invalid global Codex auth does not delete or corrupt stored
+  profiles.
+- No provider secrets are sent to the app or written to logs.
+
 ## Goal
 
 Add native multi-account auth profile support to Paseo so users can run agents

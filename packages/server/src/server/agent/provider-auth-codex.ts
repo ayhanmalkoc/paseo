@@ -29,6 +29,7 @@ export interface ParsedCodexAuth {
 
 export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
   readonly provider = CODEX_PROVIDER;
+  readonly supportsCurrentAuthSync = true;
 
   async importCurrent(
     context: ProviderAuthAdapterContext,
@@ -48,6 +49,7 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
     const resolvedAuthPath = path.resolve(authFilePath);
     const data = await fs.readFile(resolvedAuthPath, "utf8");
     const parsed = parseCodexAuthJson(data);
+    const authFileHash = stableHash(data);
     const now = context.now().toISOString();
     const profileRoot = path.join(context.providerBaseDir, "profiles", parsed.key);
     const profileCodexHome = path.join(profileRoot, "codex-home");
@@ -76,6 +78,9 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
       lastRefresh: parsed.lastRefresh,
       providerHomePath: profileCodexHome,
       usage,
+      metadata: {
+        authFileHash,
+      },
     };
   }
 
@@ -84,7 +89,8 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
     context: ProviderAuthAdapterContext,
   ): Promise<StoredProviderAuthProfile> {
     const authPath = path.join(profile.providerHomePath, CODEX_AUTH_FILENAME);
-    const parsed = parseCodexAuthJson(await fs.readFile(authPath, "utf8"));
+    const data = await fs.readFile(authPath, "utf8");
+    const parsed = parseCodexAuthJson(data);
     const usage = await scanLatestUsage(profile.providerHomePath).catch((error) => {
       context.logger.debug({ err: error, profileKey: profile.key }, "Failed to scan Codex usage");
       return undefined;
@@ -100,6 +106,10 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
       status: "ready",
       lastRefresh: parsed.lastRefresh,
       usage,
+      metadata: {
+        ...profile.metadata,
+        authFileHash: stableHash(data),
+      },
     };
   }
 

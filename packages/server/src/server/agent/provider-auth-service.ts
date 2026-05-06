@@ -30,6 +30,25 @@ export interface ProviderAuthLaunchContext {
   metadata?: Record<string, unknown>;
 }
 
+export type ProviderAuthSyncStatus =
+  | "created"
+  | "updated"
+  | "unchanged"
+  | "unsupported"
+  | "missing-auth"
+  | "failed";
+
+export interface ProviderAuthSyncResult {
+  provider: AgentProvider;
+  status: ProviderAuthSyncStatus;
+  profile?: ProviderAuthProfile;
+  error?: string;
+}
+
+export interface ProviderAuthSyncOptions {
+  setDefaultWhenEmpty?: boolean;
+}
+
 export interface StoredProviderAuthProfile {
   provider: AgentProvider;
   key: string;
@@ -58,6 +77,7 @@ export interface ProviderAuthAdapterContext {
 
 export interface ProviderAuthAdapter {
   readonly provider: AgentProvider;
+  readonly supportsCurrentAuthSync?: boolean;
   importCurrent(
     context: ProviderAuthAdapterContext,
     options?: { alias?: string },
@@ -139,22 +159,53 @@ export class ProviderAuthService {
             alias: request.alias,
           });
     const registry = await this.load();
-    const state = this.getOrCreateProviderState(registry, request.provider);
-    const previous = state.profiles?.[imported.key];
-    const profile: StoredProviderAuthProfile = {
-      ...imported,
-      createdAt: previous?.createdAt ?? imported.createdAt,
-      updatedAt: this.now().toISOString(),
-    };
-    state.profiles = {
-      ...state.profiles,
-      [profile.key]: profile,
-    };
-    if (request.setDefault !== false && !state.defaultProfileKey) {
-      state.defaultProfileKey = profile.key;
+    const result = await this.upsertImportedProfile(registry, request.provider, imported, {
+      preserveExistingAlias: false,
+      setDefaultWhenEmpty: request.setDefault !== false,
+    });
+    return result.profile;
+  }
+
+  async syncCurrentProfile(
+    provider: AgentProvider,
+    options: ProviderAuthSyncOptions = {},
+  ): Promise<ProviderAuthSyncResult> {
+    const adapter = this.adapters.get(provider);
+    if (!adapter || adapter.supportsCurrentAuthSync !== true) {
+      return { provider, status: "unsupported" };
     }
-    await this.save(registry);
-    return this.toPublicProfile(profile, state.defaultProfileKey ?? null);
+
+    try {
+      const imported = await adapter.importCurrent(this.createAdapterContext(provider));
+      const registry = await this.load();
+      const result = await this.upsertImportedProfile(registry, provider, imported, {
+        preserveExistingAlias: true,
+        setDefaultWhenEmpty: options.setDefaultWhenEmpty ?? true,
+      });
+      return {
+        provider,
+        status: result.status,
+        profile: result.profile,
+      };
+    } catch (error) {
+      if (isFileNotFoundError(error)) {
+        this.logger.debug({ provider }, "Current provider auth file is not available");
+        return { provider, status: "missing-auth" };
+      }
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.warn({ err, provider }, "Failed to sync current provider auth profile");
+      return { provider, status: "failed", error: err.message };
+    }
+  }
+
+  async syncAllCurrentProfiles(
+    options: ProviderAuthSyncOptions = {},
+  ): Promise<ProviderAuthSyncResult[]> {
+    const providers = [...this.adapters.values()]
+      .filter((adapter) => adapter.supportsCurrentAuthSync === true)
+      .map((adapter) => adapter.provider);
+
+    return Promise.all(providers.map((provider) => this.syncCurrentProfile(provider, options)));
   }
 
   async removeProfile(provider: AgentProvider, profileKey: string): Promise<void> {
@@ -323,6 +374,56 @@ export class ProviderAuthService {
     return registry.providers[provider];
   }
 
+  private async upsertImportedProfile(
+    registry: StoredProviderAuthRegistry,
+    provider: AgentProvider,
+    imported: StoredProviderAuthProfile,
+    options: {
+      preserveExistingAlias: boolean;
+      setDefaultWhenEmpty: boolean;
+    },
+  ): Promise<{
+    profile: ProviderAuthProfile;
+    status: Extract<ProviderAuthSyncStatus, "created" | "updated" | "unchanged">;
+  }> {
+    const state = this.getOrCreateProviderState(registry, provider);
+    const previous = state.profiles?.[imported.key];
+    const profile: StoredProviderAuthProfile = {
+      ...imported,
+      alias: options.preserveExistingAlias && previous?.alias ? previous.alias : imported.alias,
+      createdAt: previous?.createdAt ?? imported.createdAt,
+      updatedAt: this.now().toISOString(),
+      lastUsedAt: previous?.lastUsedAt ?? imported.lastUsedAt,
+      metadata: mergeProfileMetadata(previous, imported, options.preserveExistingAlias),
+    };
+    let status: Extract<ProviderAuthSyncStatus, "created" | "updated" | "unchanged">;
+    if (!previous) {
+      status = "created";
+    } else if (hasStoredProfileChanged(previous, profile)) {
+      status = "updated";
+    } else {
+      status = "unchanged";
+    }
+    const shouldSetDefault = options.setDefaultWhenEmpty && !state.defaultProfileKey;
+
+    if (status !== "unchanged" || shouldSetDefault) {
+      state.profiles = {
+        ...state.profiles,
+        [profile.key]: status === "unchanged" && previous ? previous : profile,
+      };
+      if (shouldSetDefault) {
+        state.defaultProfileKey = profile.key;
+      }
+      await this.save(registry);
+    }
+
+    const stored = state.profiles?.[profile.key] ?? profile;
+    return {
+      profile: this.toPublicProfile(stored, state.defaultProfileKey ?? null),
+      status,
+    };
+  }
+
   private async load(): Promise<StoredProviderAuthRegistry> {
     if (this.registry) {
       return this.registry;
@@ -404,6 +505,67 @@ function normalizeProfileKey(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function mergeProfileMetadata(
+  previous: StoredProviderAuthProfile | undefined,
+  imported: StoredProviderAuthProfile,
+  preserveExisting: boolean,
+): Record<string, unknown> | undefined {
+  const previousMetadata = preserveExisting ? previous?.metadata : undefined;
+  const importedMetadata = imported.metadata;
+  if (!previousMetadata && !importedMetadata) {
+    return undefined;
+  }
+  return {
+    ...previousMetadata,
+    ...importedMetadata,
+  };
+}
+
+function hasStoredProfileChanged(
+  previous: StoredProviderAuthProfile,
+  next: StoredProviderAuthProfile,
+): boolean {
+  return (
+    JSON.stringify(toComparableProfile(previous)) !== JSON.stringify(toComparableProfile(next))
+  );
+}
+
+function toComparableProfile(profile: StoredProviderAuthProfile) {
+  return {
+    provider: profile.provider,
+    key: profile.key,
+    alias: profile.alias,
+    email: profile.email,
+    accountName: profile.accountName,
+    accountId: profile.accountId,
+    userId: profile.userId,
+    authMode: profile.authMode,
+    plan: profile.plan,
+    status: profile.status,
+    lastRefresh: profile.lastRefresh,
+    providerHomePath: profile.providerHomePath,
+    usage: profile.usage ? toComparableUsage(profile.usage) : undefined,
+    metadata: profile.metadata,
+  };
+}
+
+function toComparableUsage(usage: ProviderAuthUsageSnapshot) {
+  return {
+    source: usage.source,
+    primaryUsedPercent: usage.primaryUsedPercent,
+    secondaryUsedPercent: usage.secondaryUsedPercent,
+    creditsRemaining: usage.creditsRemaining,
+  };
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
 
 function chooseProfileByUsage(profiles: StoredProviderAuthProfile[]): StoredProviderAuthProfile {

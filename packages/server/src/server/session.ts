@@ -3870,7 +3870,13 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "list_provider_auth_profiles_request" }>,
   ): Promise<void> {
     try {
-      const profiles = await this.requireProviderAuthService().listProfiles(msg.provider);
+      const providerAuthService = this.requireProviderAuthService();
+      if (msg.provider) {
+        await providerAuthService.syncCurrentProfile(msg.provider);
+      } else {
+        await providerAuthService.syncAllCurrentProfiles();
+      }
+      const profiles = await providerAuthService.listProfiles(msg.provider);
       this.emit({
         type: "list_provider_auth_profiles_response",
         payload: {

@@ -3180,6 +3180,9 @@ export class AgentManager {
     if (!requestedProfileKey && !options.resolveDefault) {
       return { profileKey: null };
     }
+    if (options.resolveDefault) {
+      await this.providerAuthService.syncCurrentProfile(config.provider);
+    }
     return this.providerAuthService.resolveLaunchContext({
       provider: config.provider,
       authProfileKey: requestedProfileKey,
