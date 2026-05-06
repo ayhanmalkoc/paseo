@@ -3022,10 +3022,6 @@ export class Session {
       if (!resolvedWorkspace) {
         throw new Error(`Workspace not found: ${msg.workspaceId}`);
       }
-      this.scheduleAutoNameWorkspaceBranchForFirstAgent({
-        workspace: resolvedWorkspace,
-        firstAgentContext,
-      });
       const snapshot = await this.agentManager.createAgent(
         {
           ...sessionConfig,
