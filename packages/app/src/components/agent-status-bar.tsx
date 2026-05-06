@@ -63,6 +63,7 @@ import {
   getStatusSelectorHint,
   resolveAgentStatusBarSurface,
   resolveAgentModelSelection,
+  shouldSplitAgentStatusBarControls,
 } from "@/components/agent-status-bar.utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb as platformIsWeb } from "@/constants/platform";
@@ -270,6 +271,10 @@ function makePrefsButtonStyle({ pressed }: PressableStateCallbackType) {
   return [styles.prefsButton, pressed && styles.prefsButtonPressed];
 }
 
+function makePrefsIconButtonStyle({ pressed }: PressableStateCallbackType) {
+  return [styles.prefsIconButton, pressed && styles.prefsButtonPressed];
+}
+
 function pickSheetModel({
   nextProviderId,
   modelId,
@@ -441,6 +446,33 @@ function SheetModelTriggerView({
   );
 }
 
+function SheetPreferencesTriggerContent({
+  splitControls,
+  ProviderIcon,
+  displayModel,
+}: {
+  splitControls: boolean;
+  ProviderIcon: ReturnType<typeof getProviderIcon> | null;
+  displayModel: string;
+}) {
+  const { theme } = useUnistyles();
+
+  if (splitControls) {
+    return <Settings2 size={theme.iconSize.md} color={theme.colors.foregroundMuted} />;
+  }
+
+  return (
+    <>
+      {ProviderIcon ? (
+        <ProviderIcon size={theme.iconSize.lg} color={theme.colors.foregroundMuted} />
+      ) : null}
+      <Text style={styles.prefsButtonText} numberOfLines={1}>
+        {displayModel}
+      </Text>
+    </>
+  );
+}
+
 function getModeIconColor(
   colorTier: AgentModeColorTier | undefined,
   palette: {
@@ -606,7 +638,12 @@ function ControlledStatusBar({
 
   const handleDesktopModelSelect = useCallback(
     (nextProviderId: string, modelId: string) => {
-      pickDesktopModel({ nextProviderId, modelId, currentProvider: provider, onSelectModel });
+      pickDesktopModel({
+        nextProviderId,
+        modelId,
+        currentProvider: provider,
+        onSelectModel,
+      });
     },
     [onSelectModel, provider],
   );
@@ -702,6 +739,12 @@ function ControlledStatusBar({
     isWeb: platformIsWeb,
     isCompact,
   });
+  const splitSheetControls = shouldSplitAgentStatusBarControls({
+    isWeb: platformIsWeb,
+    isCompact,
+  });
+  const hasPreferencesControl =
+    canSelectThinking || canSelectMode || Boolean(features && features.length > 0);
 
   return (
     <View style={styles.container}>
@@ -798,6 +841,8 @@ function ControlledStatusBar({
           handleOpenPrefs={handleOpenPrefs}
           handleClosePrefs={handleClosePrefs}
           prefsButtonStyle={prefsButtonStyle}
+          splitControls={splitSheetControls}
+          hasPreferencesControl={hasPreferencesControl}
           sheetThinkingPressableStyle={sheetThinkingPressableStyle}
           sheetModePressableStyle={sheetModePressableStyle}
           handleSheetModelSelect={handleSheetModelSelect}
@@ -1116,6 +1161,8 @@ interface SheetStatusBarContentProps {
   handleOpenPrefs: () => void;
   handleClosePrefs: () => void;
   prefsButtonStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  splitControls: boolean;
+  hasPreferencesControl: boolean;
   sheetThinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   sheetModePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
@@ -1163,6 +1210,8 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     handleOpenPrefs,
     handleClosePrefs,
     prefsButtonStyle,
+    splitControls,
+    hasPreferencesControl,
     sheetThinkingPressableStyle,
     sheetModePressableStyle,
     handleSheetModelSelect,
@@ -1172,30 +1221,52 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     renderSheetModelTrigger,
   } = props;
 
+  const shouldRenderModelSelector = splitControls && canSelectModel;
+  const shouldRenderPreferencesButton = !splitControls || hasPreferencesControl;
+  const preferencesButtonStyle = splitControls ? makePrefsIconButtonStyle : prefsButtonStyle;
+
   return (
     <>
-      <Pressable
-        onPress={handleOpenPrefs}
-        style={prefsButtonStyle}
-        accessibilityRole="button"
-        accessibilityLabel="Agent preferences"
-        testID="agent-preferences-button"
-      >
-        {ProviderIcon ? (
-          <ProviderIcon size={theme.iconSize.lg} color={theme.colors.foregroundMuted} />
-        ) : null}
-        <Text style={styles.prefsButtonText} numberOfLines={1}>
-          {displayModel}
-        </Text>
-      </Pressable>
+      {shouldRenderModelSelector ? (
+        <CombinedModelSelector
+          providerDefinitions={effectiveProviderDefinitions}
+          allProviderModels={effectiveAllProviderModels}
+          selectedProvider={provider}
+          selectedModel={selectedModelId ?? ""}
+          canSelectProvider={canSelectProviderInModelMenu}
+          onSelect={handleSheetModelSelect}
+          favoriteKeys={favoriteKeys}
+          onToggleFavorite={onToggleFavoriteModel}
+          isLoading={isModelLoading}
+          disabled={modelDisabled}
+          onOpen={onModelSelectorOpen}
+          onClose={onDropdownClose}
+        />
+      ) : null}
+
+      {shouldRenderPreferencesButton ? (
+        <Pressable
+          onPress={handleOpenPrefs}
+          style={preferencesButtonStyle}
+          accessibilityRole="button"
+          accessibilityLabel="Agent preferences"
+          testID="agent-preferences-button"
+        >
+          <SheetPreferencesTriggerContent
+            splitControls={splitControls}
+            ProviderIcon={ProviderIcon}
+            displayModel={displayModel}
+          />
+        </Pressable>
+      ) : null}
 
       <AdaptiveModalSheet
         title="Preferences"
-        visible={prefsOpen}
+        visible={prefsOpen && shouldRenderPreferencesButton}
         onClose={handleClosePrefs}
         testID="agent-preferences-sheet"
       >
-        {canSelectModel ? (
+        {!splitControls && canSelectModel ? (
           <View style={styles.sheetSection}>
             <CombinedModelSelector
               providerDefinitions={effectiveProviderDefinitions}
@@ -1692,7 +1763,10 @@ export const AgentStatusBar = memo(function AgentStatusBar({
   }, [availableModes]);
 
   const modelOptions = useMemo<StatusOption[]>(() => {
-    return (models ?? []).map((model) => ({ id: model.id, label: model.label }));
+    return (models ?? []).map((model) => ({
+      id: model.id,
+      label: model.label,
+    }));
   }, [models]);
   const favoriteKeys = useMemo(
     () =>
@@ -1893,7 +1967,10 @@ export function DraftAgentStatusBar({
   }, [modeOptions]);
 
   const mappedThinkingOptions = useMemo<StatusOption[]>(() => {
-    return thinkingOptions.map((option) => ({ id: option.id, label: option.label }));
+    return thinkingOptions.map((option) => ({
+      id: option.id,
+      label: option.label,
+    }));
   }, [thinkingOptions]);
   const favoriteKeys = useMemo(
     () =>
@@ -2041,6 +2118,13 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius["2xl"],
+  },
+  prefsIconButton: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.full,
   },
   prefsButtonPressed: {
     backgroundColor: theme.colors.surface0,

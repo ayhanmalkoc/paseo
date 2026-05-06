@@ -443,7 +443,7 @@ function ProviderSearchInput({
   const { theme } = useUnistyles();
   const inputRef = useRef<TextInput>(null);
   const isMobile = useIsCompactFormFactor();
-  const InputComponent = isMobile ? BottomSheetTextInput : TextInput;
+  const InputComponent = isMobile && !platformIsWeb ? BottomSheetTextInput : TextInput;
 
   useEffect(() => {
     if (!autoFocus || !platformIsWeb || !inputRef.current) return () => {};

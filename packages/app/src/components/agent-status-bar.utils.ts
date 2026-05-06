@@ -24,6 +24,13 @@ export function resolveAgentStatusBarSurface(input: {
   return input.isWeb && !input.isCompact ? "desktop" : "sheet";
 }
 
+export function shouldSplitAgentStatusBarControls(input: {
+  isWeb: boolean;
+  isCompact: boolean;
+}): boolean {
+  return input.isWeb && input.isCompact;
+}
+
 export function normalizeModelId(modelId: string | null | undefined): string | null {
   const normalized = typeof modelId === "string" ? modelId.trim() : "";
   if (!normalized) {
