@@ -2,6 +2,7 @@ import type { AgentFeature, AgentModelDefinition } from "@server/server/agent/ag
 
 export type ExplainedStatusSelector = "mode" | "model" | "thinking";
 export type FeatureHighlightColor = "blue" | "default" | "yellow";
+export type AgentStatusBarSurface = "desktop" | "sheet";
 
 export function getStatusSelectorHint(selector: ExplainedStatusSelector): string {
   switch (selector) {
@@ -14,6 +15,13 @@ export function getStatusSelectorHint(selector: ExplainedStatusSelector): string
     default:
       throw new Error("unreachable");
   }
+}
+
+export function resolveAgentStatusBarSurface(input: {
+  isWeb: boolean;
+  isCompact: boolean;
+}): AgentStatusBarSurface {
+  return input.isWeb && !input.isCompact ? "desktop" : "sheet";
 }
 
 export function normalizeModelId(modelId: string | null | undefined): string | null {

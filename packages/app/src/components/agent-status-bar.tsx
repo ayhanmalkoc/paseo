@@ -61,8 +61,10 @@ import {
   getFeatureHighlightColor,
   getFeatureTooltip,
   getStatusSelectorHint,
+  resolveAgentStatusBarSurface,
   resolveAgentModelSelection,
 } from "@/components/agent-status-bar.utils";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb as platformIsWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
@@ -490,6 +492,7 @@ function ControlledStatusBar({
   onModelSelectorOpen,
 }: ControlledAgentStatusBarProps) {
   const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [openSelector, setOpenSelector] = useState<StatusSelector | null>(null);
 
@@ -695,9 +698,14 @@ function ControlledStatusBar({
     return null;
   }
 
+  const statusBarSurface = resolveAgentStatusBarSurface({
+    isWeb: platformIsWeb,
+    isCompact,
+  });
+
   return (
     <View style={styles.container}>
-      {platformIsWeb ? (
+      {statusBarSurface === "desktop" ? (
         <DesktopStatusBarContent
           provider={provider}
           providerOptions={providerOptions}
