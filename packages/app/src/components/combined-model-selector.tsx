@@ -59,6 +59,7 @@ import {
   buildSelectedTriggerLabel,
   matchesSearch,
   resolveProviderLabel,
+  shouldAutoFocusProviderSearch,
   type SelectorModelRow,
 } from "./combined-model-selector.utils";
 
@@ -611,6 +612,7 @@ export function CombinedModelSelector({
   disabled = false,
 }: CombinedModelSelectorProps) {
   const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isContentReady, setIsContentReady] = useState(platformIsWeb);
@@ -695,6 +697,10 @@ export function CombinedModelSelector({
 
     return buildSelectedTriggerLabel(selectedModelLabel);
   }, [selectedModelLabel]);
+  const providerSearchAutoFocus = shouldAutoFocusProviderSearch({
+    isWeb: platformIsWeb,
+    isCompact,
+  });
 
   useEffect(() => {
     if (platformIsWeb) {
@@ -751,11 +757,11 @@ export function CombinedModelSelector({
           <ProviderSearchInput
             value={searchQuery}
             onChangeText={setSearchQuery}
-            autoFocus={platformIsWeb}
+            autoFocus={providerSearchAutoFocus}
           />
         </View>
       ) : undefined,
-    [view, singleProviderView, handleBackToAll, searchQuery],
+    [view, singleProviderView, handleBackToAll, providerSearchAutoFocus, searchQuery],
   );
 
   return (
