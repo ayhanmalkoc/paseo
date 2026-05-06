@@ -2,6 +2,7 @@ import type { AgentProviderDefinition } from "@server/server/agent/provider-mani
 import type {
   AgentModelDefinition,
   AgentProvider,
+  ProviderAuthProfile,
   ProviderSnapshotEntry,
 } from "@server/server/agent/agent-sdk-types";
 import {
@@ -15,6 +16,7 @@ export interface FormInitialValues {
   provider?: AgentProvider;
   modeId?: string | null;
   model?: string | null;
+  authProfileKey?: string | null;
   thinkingOptionId?: string | null;
   workingDir?: string;
 }
@@ -24,6 +26,7 @@ export interface FormState {
   provider: AgentProvider | null;
   modeId: string;
   model: string;
+  authProfileKey: string;
   thinkingOptionId: string;
   workingDir: string;
 }
@@ -33,6 +36,7 @@ export interface UserModifiedFields {
   provider: boolean;
   modeId: boolean;
   model: boolean;
+  authProfileKey: boolean;
   thinkingOptionId: boolean;
   workingDir: boolean;
 }
@@ -47,6 +51,7 @@ export const INITIAL_USER_MODIFIED: UserModifiedFields = {
   provider: false,
   modeId: false,
   model: false,
+  authProfileKey: false,
   thinkingOptionId: false,
   workingDir: false,
 };
@@ -65,6 +70,7 @@ export type AgentFormAction =
       initialValues: FormInitialValues | undefined;
       preferences: FormPreferences | null;
       availableModels: AgentModelDefinition[] | null;
+      availableAuthProfiles?: ProviderAuthProfile[] | undefined;
       allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>;
     }
   | { type: "SET_SERVER_ID"; value: string | null }
@@ -89,6 +95,7 @@ export type AgentFormAction =
       modelId: string;
       availableModels: AgentModelDefinition[] | null;
     }
+  | { type: "SET_AUTH_PROFILE_FROM_USER"; authProfileKey: string }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
   | { type: "SET_WORKING_DIR"; value: string }
   | { type: "SET_WORKING_DIR_FROM_USER"; value: string }
@@ -183,6 +190,7 @@ export function hasFormStateChanged(prev: FormState, next: FormState): boolean {
     prev.provider !== next.provider ||
     prev.modeId !== next.modeId ||
     prev.model !== next.model ||
+    prev.authProfileKey !== next.authProfileKey ||
     prev.thinkingOptionId !== next.thinkingOptionId ||
     prev.workingDir !== next.workingDir
   );
@@ -322,6 +330,57 @@ function resolveThinkingOption(input: {
   return "";
 }
 
+function normalizeAuthProfileKey(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function resolveAuthProfileKey(input: {
+  provider: AgentProvider | null;
+  userModified: boolean;
+  currentAuthProfileKey: string;
+  initialValues: FormInitialValues | undefined;
+  providerPrefs: ProviderPrefs | undefined;
+  availableAuthProfiles: ProviderAuthProfile[] | undefined;
+}): string {
+  const {
+    provider,
+    userModified,
+    currentAuthProfileKey,
+    initialValues,
+    providerPrefs,
+    availableAuthProfiles,
+  } = input;
+  if (!provider) return "";
+  const normalizedCurrent = normalizeAuthProfileKey(currentAuthProfileKey);
+
+  if (availableAuthProfiles === undefined) {
+    if (userModified) return normalizedCurrent;
+    return (
+      normalizeAuthProfileKey(initialValues?.authProfileKey) ||
+      normalizeAuthProfileKey(providerPrefs?.authProfileKey) ||
+      normalizedCurrent
+    );
+  }
+
+  const validKeys = new Set(availableAuthProfiles.map((profile) => profile.key));
+  const normalizeValid = (value: string | null | undefined) => {
+    const key = normalizeAuthProfileKey(value);
+    return key && validKeys.has(key) ? key : "";
+  };
+
+  if (userModified) {
+    return normalizeValid(normalizedCurrent);
+  }
+
+  return (
+    normalizeValid(initialValues?.authProfileKey) ||
+    normalizeValid(providerPrefs?.authProfileKey) ||
+    availableAuthProfiles.find((profile) => profile.isDefault && profile.status === "ready")?.key ||
+    availableAuthProfiles.find((profile) => profile.status === "ready")?.key ||
+    ""
+  );
+}
+
 export function resolveFormState(
   initialValues: FormInitialValues | undefined,
   preferences: FormPreferences | null,
@@ -329,6 +388,7 @@ export function resolveFormState(
   userModified: UserModifiedFields,
   currentState: FormState,
   allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>,
+  availableAuthProfiles: ProviderAuthProfile[] | undefined = undefined,
 ): FormState {
   const result = { ...currentState };
 
@@ -361,6 +421,15 @@ export function resolveFormState(
     initialValues,
     providerPrefs,
     availableModels,
+  });
+
+  result.authProfileKey = resolveAuthProfileKey({
+    provider: result.provider,
+    userModified: userModified.authProfileKey,
+    currentAuthProfileKey: result.authProfileKey,
+    initialValues,
+    providerPrefs,
+    availableAuthProfiles,
   });
 
   result.thinkingOptionId = resolveThinkingOption({
@@ -433,9 +502,11 @@ function pickNextThinkingOptionForProvider(input: {
   });
 }
 
-export function resolveAgentForm(
+type AgentFormBaseAction = Exclude<AgentFormAction, { type: "SET_AUTH_PROFILE_FROM_USER" }>;
+
+function resolveAgentFormBase(
   state: AgentFormReducerState,
-  action: AgentFormAction,
+  action: AgentFormBaseAction,
 ): AgentFormReducerState {
   switch (action.type) {
     case "RESOLVE": {
@@ -446,6 +517,7 @@ export function resolveAgentForm(
         state.userModified,
         state.form,
         action.allowedProviderMap,
+        action.availableAuthProfiles,
       );
       if (!hasFormStateChanged(state.form, resolved)) return state;
       return { ...state, form: resolved };
@@ -480,9 +552,10 @@ export function resolveAgentForm(
           provider: action.provider,
           modeId: nextModeId,
           model: nextModelId,
+          authProfileKey: "",
           thinkingOptionId: nextThinkingOptionId,
         },
-        userModified: { ...state.userModified, provider: true },
+        userModified: { ...state.userModified, provider: true, authProfileKey: false },
       };
     }
 
@@ -500,9 +573,15 @@ export function resolveAgentForm(
           provider: action.provider,
           model: nextModelId,
           modeId: action.providerDef?.defaultModeId ?? "",
+          authProfileKey: "",
           thinkingOptionId: nextThinkingOptionId,
         },
-        userModified: { ...state.userModified, provider: true, model: true },
+        userModified: {
+          ...state.userModified,
+          provider: true,
+          model: true,
+          authProfileKey: false,
+        },
       };
     }
 
@@ -556,4 +635,17 @@ export function resolveAgentForm(
     default:
       throw new Error("unreachable");
   }
+}
+
+export function resolveAgentForm(
+  state: AgentFormReducerState,
+  action: AgentFormAction,
+): AgentFormReducerState {
+  if (action.type === "SET_AUTH_PROFILE_FROM_USER") {
+    return {
+      form: { ...state.form, authProfileKey: normalizeAuthProfileKey(action.authProfileKey) },
+      userModified: { ...state.userModified, authProfileKey: true },
+    };
+  }
+  return resolveAgentFormBase(state, action);
 }

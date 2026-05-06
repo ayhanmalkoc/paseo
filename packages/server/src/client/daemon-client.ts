@@ -57,6 +57,11 @@ import type {
   GetProvidersSnapshotResponseMessage,
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
+  ListProviderAuthProfilesResponseMessage,
+  ImportProviderAuthProfileResponseMessage,
+  RemoveProviderAuthProfileResponseMessage,
+  SetDefaultProviderAuthProfileResponseMessage,
+  RefreshProviderAuthProfileResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -298,6 +303,11 @@ type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
+type ListProviderAuthProfilesPayload = ListProviderAuthProfilesResponseMessage["payload"];
+type ImportProviderAuthProfilePayload = ImportProviderAuthProfileResponseMessage["payload"];
+type RemoveProviderAuthProfilePayload = RemoveProviderAuthProfileResponseMessage["payload"];
+type SetDefaultProviderAuthProfilePayload = SetDefaultProviderAuthProfileResponseMessage["payload"];
+type RefreshProviderAuthProfilePayload = RefreshProviderAuthProfileResponseMessage["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -3226,6 +3236,95 @@ export class DaemonClient {
         provider,
       },
       responseType: "provider_diagnostic_response",
+      timeout: 30000,
+    });
+  }
+
+  async listProviderAuthProfiles(options?: {
+    provider?: AgentProvider;
+    requestId?: string;
+  }): Promise<ListProviderAuthProfilesPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "list_provider_auth_profiles_request",
+        provider: options?.provider,
+      },
+      responseType: "list_provider_auth_profiles_response",
+      timeout: 10000,
+    });
+  }
+
+  async importProviderAuthProfile(options: {
+    provider: AgentProvider;
+    source?: "current" | "file";
+    path?: string;
+    alias?: string;
+    setDefault?: boolean;
+    requestId?: string;
+  }): Promise<ImportProviderAuthProfilePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "import_provider_auth_profile_request",
+        provider: options.provider,
+        source: options.source ?? "current",
+        path: options.path,
+        alias: options.alias,
+        setDefault: options.setDefault,
+      },
+      responseType: "import_provider_auth_profile_response",
+      timeout: 30000,
+    });
+  }
+
+  async removeProviderAuthProfile(options: {
+    provider: AgentProvider;
+    profileKey: string;
+    requestId?: string;
+  }): Promise<RemoveProviderAuthProfilePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "remove_provider_auth_profile_request",
+        provider: options.provider,
+        profileKey: options.profileKey,
+      },
+      responseType: "remove_provider_auth_profile_response",
+      timeout: 30000,
+    });
+  }
+
+  async setDefaultProviderAuthProfile(options: {
+    provider: AgentProvider;
+    profileKey: string | null;
+    requestId?: string;
+  }): Promise<SetDefaultProviderAuthProfilePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "set_default_provider_auth_profile_request",
+        provider: options.provider,
+        profileKey: options.profileKey,
+      },
+      responseType: "set_default_provider_auth_profile_response",
+      timeout: 10000,
+    });
+  }
+
+  async refreshProviderAuthProfile(options: {
+    provider: AgentProvider;
+    profileKey: string;
+    requestId?: string;
+  }): Promise<RefreshProviderAuthProfilePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "refresh_provider_auth_profile_request",
+        provider: options.provider,
+        profileKey: options.profileKey,
+      },
+      responseType: "refresh_provider_auth_profile_response",
       timeout: 30000,
     });
   }

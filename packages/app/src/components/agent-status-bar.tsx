@@ -27,6 +27,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldOff,
+  User,
   Zap,
 } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -54,6 +55,7 @@ import type {
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
+  ProviderAuthProfile,
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import { getModeVisuals, type AgentModeColorTier } from "@server/server/agent/provider-manifest";
@@ -75,7 +77,13 @@ interface StatusOption {
   label: string;
 }
 
-type StatusSelector = "provider" | "mode" | "model" | "thinking" | `feature-${string}`;
+type StatusSelector =
+  | "provider"
+  | "mode"
+  | "model"
+  | "thinking"
+  | "auth-profile"
+  | `feature-${string}`;
 
 interface ControlledAgentStatusBarProps {
   provider: string;
@@ -89,6 +97,10 @@ interface ControlledAgentStatusBarProps {
   selectedModelId?: string;
   onSelectModel?: (modelId: string) => void;
   onSelectProviderAndModel?: (provider: string, modelId: string) => void;
+  authProfiles?: ProviderAuthProfile[];
+  selectedAuthProfileKey?: string;
+  onSelectAuthProfile?: (authProfileKey: string) => void;
+  isAuthProfilesLoading?: boolean;
   thinkingOptions?: StatusOption[];
   selectedThinkingOptionId?: string;
   onSelectThinkingOption?: (thinkingOptionId: string) => void;
@@ -115,6 +127,10 @@ export interface DraftAgentStatusBarProps {
   models: AgentModelDefinition[];
   selectedModel: string;
   onSelectModel: (modelId: string) => void;
+  authProfiles?: ProviderAuthProfile[];
+  selectedAuthProfileKey?: string;
+  onSelectAuthProfile?: (authProfileKey: string) => void;
+  isAuthProfilesLoading?: boolean;
   isModelLoading: boolean;
   allProviderModels: Map<string, AgentModelDefinition[]>;
   isAllModelsLoading: boolean;
@@ -185,6 +201,8 @@ const MODE_ICONS = {
   ShieldOff,
 } as const;
 
+const EMPTY_AUTH_PROFILES: ProviderAuthProfile[] = [];
+
 function alwaysTrue() {
   return true;
 }
@@ -204,12 +222,14 @@ function resolveHasAnyControl({
   providerOptions,
   modeOptions,
   canSelectModel,
+  hasAuthProfileControl,
   thinkingOptions,
   features,
 }: {
   providerOptions: StatusOption[] | undefined;
   modeOptions: StatusOption[] | undefined;
   canSelectModel: boolean;
+  hasAuthProfileControl: boolean;
   thinkingOptions: StatusOption[] | undefined;
   features: AgentFeature[] | undefined;
 }) {
@@ -217,6 +237,7 @@ function resolveHasAnyControl({
     Boolean(providerOptions?.length) ||
     Boolean(modeOptions?.length) ||
     canSelectModel ||
+    hasAuthProfileControl ||
     Boolean(thinkingOptions?.length) ||
     Boolean(features?.length)
   );
@@ -224,6 +245,71 @@ function resolveHasAnyControl({
 
 function toComboboxOptions(options: StatusOption[] | undefined): ComboboxOption[] {
   return (options ?? []).map((o) => ({ id: o.id, label: o.label }));
+}
+
+function formatAuthProfileLabel(profile: ProviderAuthProfile): string {
+  return (
+    profile.email ||
+    profile.accountName ||
+    profile.alias ||
+    (profile.authMode === "api-key" ? "Codex API key" : "Codex account")
+  );
+}
+
+function resolveDisplayAuthProfile(input: {
+  authProfiles: ProviderAuthProfile[];
+  selectedAuthProfileKey: string | undefined;
+  isLoading: boolean;
+}): string {
+  if (input.isLoading && input.authProfiles.length === 0) {
+    return "Loading accounts...";
+  }
+  if (!input.selectedAuthProfileKey) {
+    const defaultProfile = input.authProfiles.find((profile) => profile.isDefault);
+    return defaultProfile ? formatAuthProfileLabel(defaultProfile) : "Default account";
+  }
+  const selected = input.authProfiles.find(
+    (profile) => profile.key === input.selectedAuthProfileKey,
+  );
+  return selected ? formatAuthProfileLabel(selected) : "Default account";
+}
+
+function resolveAuthProfileControlState(input: {
+  authProfiles: ProviderAuthProfile[];
+  selectedAuthProfileKey: string | undefined;
+  isLoading: boolean;
+  onSelectAuthProfile?: (authProfileKey: string) => void;
+}) {
+  return {
+    hasControl: input.isLoading || input.authProfiles.length > 0,
+    canSelect: Boolean(input.onSelectAuthProfile && input.authProfiles.length > 0),
+    display: resolveDisplayAuthProfile({
+      authProfiles: input.authProfiles,
+      selectedAuthProfileKey: input.selectedAuthProfileKey,
+      isLoading: input.isLoading,
+    }),
+  };
+}
+
+function resolveStatusSelectability(input: {
+  onSelectProvider?: (providerId: string) => void;
+  providerOptions?: StatusOption[];
+  onSelectMode?: (modeId: string) => void;
+  modeOptions?: StatusOption[];
+  onSelectModel?: (modelId: string) => void;
+  onSelectThinkingOption?: (thinkingOptionId: string) => void;
+  thinkingOptions?: StatusOption[];
+}) {
+  return {
+    provider: Boolean(
+      input.onSelectProvider && input.providerOptions && input.providerOptions.length > 0,
+    ),
+    mode: Boolean(input.onSelectMode && input.modeOptions && input.modeOptions.length > 0),
+    model: Boolean(input.onSelectModel),
+    thinking: Boolean(
+      input.onSelectThinkingOption && input.thinkingOptions && input.thinkingOptions.length > 0,
+    ),
+  };
 }
 
 function buildFallbackAllProviderModels(
@@ -508,6 +594,10 @@ function ControlledStatusBar({
   selectedModelId,
   onSelectModel,
   onSelectProviderAndModel,
+  authProfiles = EMPTY_AUTH_PROFILES,
+  selectedAuthProfileKey,
+  onSelectAuthProfile,
+  isAuthProfilesLoading = false,
   thinkingOptions,
   selectedThinkingOptionId,
   onSelectThinkingOption,
@@ -533,18 +623,32 @@ function ControlledStatusBar({
   const _modelAnchorRef = useRef<View>(null);
   const thinkingAnchorRef = useRef<View>(null);
 
-  const canSelectProvider = Boolean(
-    onSelectProvider && providerOptions && providerOptions.length > 0,
-  );
-  const canSelectMode = Boolean(onSelectMode && modeOptions && modeOptions.length > 0);
-  const canSelectModel = Boolean(onSelectModel);
-  const canSelectThinking = Boolean(
-    onSelectThinkingOption && thinkingOptions && thinkingOptions.length > 0,
-  );
+  const selectability = resolveStatusSelectability({
+    onSelectProvider,
+    providerOptions,
+    onSelectMode,
+    modeOptions,
+    onSelectModel,
+    onSelectThinkingOption,
+    thinkingOptions,
+  });
+  const canSelectProvider = selectability.provider;
+  const canSelectMode = selectability.mode;
+  const canSelectModel = selectability.model;
+  const authProfileControl = resolveAuthProfileControlState({
+    authProfiles,
+    selectedAuthProfileKey,
+    isLoading: isAuthProfilesLoading,
+    onSelectAuthProfile,
+  });
+  const hasAuthProfileControl = authProfileControl.hasControl;
+  const canSelectAuthProfile = authProfileControl.canSelect;
+  const canSelectThinking = selectability.thinking;
 
   const displayProvider = findOptionLabel(providerOptions, selectedProviderId, "Provider");
   const displayMode = findOptionLabel(modeOptions, selectedModeId, "Default");
   const displayModel = resolveDisplayModel(isModelLoading, modelOptions, selectedModelId);
+  const displayAuthProfile = authProfileControl.display;
   const displayThinking = findOptionLabel(
     thinkingOptions,
     selectedThinkingOptionId,
@@ -563,6 +667,7 @@ function ControlledStatusBar({
     providerOptions,
     modeOptions,
     canSelectModel,
+    hasAuthProfileControl,
     thinkingOptions,
     features,
   });
@@ -624,6 +729,10 @@ function ControlledStatusBar({
 
   const handleProviderOpenChange = useMemo(() => handleOpenChange("provider"), [handleOpenChange]);
   const handleThinkingOpenChange = useMemo(() => handleOpenChange("thinking"), [handleOpenChange]);
+  const handleAuthProfileOpenChange = useMemo(
+    () => handleOpenChange("auth-profile"),
+    [handleOpenChange],
+  );
   const handleModeOpenChange = useMemo(() => handleOpenChange("mode"), [handleOpenChange]);
 
   const handleProviderSelect = useCallback(
@@ -633,6 +742,10 @@ function ControlledStatusBar({
   const handleThinkingSelect = useCallback(
     (id: string) => onSelectThinkingOption?.(id),
     [onSelectThinkingOption],
+  );
+  const handleAuthProfileSelect = useCallback(
+    (id: string) => onSelectAuthProfile?.(id),
+    [onSelectAuthProfile],
   );
   const handleModeSelect = useCallback((id: string) => onSelectMode?.(id), [onSelectMode]);
 
@@ -668,6 +781,17 @@ function ControlledStatusBar({
         openSelector === "thinking",
       ),
     [canSelectThinking, disabled, openSelector],
+  );
+
+  const authProfilePressableStyle = useMemo(
+    () =>
+      makeBadgePressableStyle(
+        styles.modeBadge,
+        styles.disabledBadge,
+        disabled || !canSelectAuthProfile,
+        openSelector === "auth-profile",
+      ),
+    [canSelectAuthProfile, disabled, openSelector],
   );
 
   const modePressableStyle = useMemo(
@@ -711,6 +835,11 @@ function ControlledStatusBar({
     [canSelectThinking, disabled],
   );
 
+  const sheetAuthProfilePressableStyle = useMemo(
+    () => makeSheetPressableStyle(disabled || !canSelectAuthProfile),
+    [canSelectAuthProfile, disabled],
+  );
+
   const sheetModePressableStyle = useMemo(
     () => makeSheetPressableStyle(disabled || !canSelectMode),
     [canSelectMode, disabled],
@@ -744,7 +873,10 @@ function ControlledStatusBar({
     isCompact,
   });
   const hasPreferencesControl =
-    canSelectThinking || canSelectMode || Boolean(features && features.length > 0);
+    hasAuthProfileControl ||
+    canSelectThinking ||
+    canSelectMode ||
+    Boolean(features && features.length > 0);
 
   return (
     <View style={styles.container}>
@@ -757,6 +889,11 @@ function ControlledStatusBar({
           selectedModeId={selectedModeId}
           modelOptions={modelOptions}
           selectedModelId={selectedModelId}
+          authProfiles={authProfiles}
+          selectedAuthProfileKey={selectedAuthProfileKey}
+          hasAuthProfileControl={hasAuthProfileControl}
+          canSelectAuthProfile={canSelectAuthProfile}
+          isAuthProfilesLoading={isAuthProfilesLoading}
           thinkingOptions={thinkingOptions}
           selectedThinkingOptionId={selectedThinkingOptionId}
           features={features}
@@ -781,6 +918,7 @@ function ControlledStatusBar({
           comboboxThinkingOptions={comboboxThinkingOptions}
           displayProvider={displayProvider}
           displayModel={displayModel}
+          displayAuthProfile={displayAuthProfile}
           displayThinking={displayThinking}
           ModeIconComponent={ModeIconComponent}
           modeIconColor={modeIconColor}
@@ -790,16 +928,19 @@ function ControlledStatusBar({
           modeAnchorRef={modeAnchorRef}
           providerPressableStyle={providerPressableStyle}
           thinkingPressableStyle={thinkingPressableStyle}
+          authProfilePressableStyle={authProfilePressableStyle}
           modePressableStyle={modePressableStyle}
           handleProviderPress={handleProviderPress}
           handleThinkingPress={handleThinkingPress}
           handleModePress={handleModePress}
           handleProviderSelect={handleProviderSelect}
           handleThinkingSelect={handleThinkingSelect}
+          handleAuthProfileSelect={handleAuthProfileSelect}
           handleModeSelect={handleModeSelect}
           handleDesktopModelSelect={handleDesktopModelSelect}
           handleProviderOpenChange={handleProviderOpenChange}
           handleThinkingOpenChange={handleThinkingOpenChange}
+          handleAuthProfileOpenChange={handleAuthProfileOpenChange}
           handleModeOpenChange={handleModeOpenChange}
           handleOpenChange={handleOpenChange}
           renderModeOption={renderModeOption}
@@ -810,6 +951,11 @@ function ControlledStatusBar({
           modeOptions={modeOptions}
           selectedModeId={selectedModeId}
           selectedModelId={selectedModelId}
+          authProfiles={authProfiles}
+          selectedAuthProfileKey={selectedAuthProfileKey}
+          hasAuthProfileControl={hasAuthProfileControl}
+          canSelectAuthProfile={canSelectAuthProfile}
+          isAuthProfilesLoading={isAuthProfilesLoading}
           thinkingOptions={thinkingOptions}
           selectedThinkingOptionId={selectedThinkingOptionId}
           features={features}
@@ -832,6 +978,7 @@ function ControlledStatusBar({
           effectiveAllProviderModels={effectiveAllProviderModels}
           displayMode={displayMode}
           displayModel={displayModel}
+          displayAuthProfile={displayAuthProfile}
           displayThinking={displayThinking}
           ModeIconComponent={ModeIconComponent}
           modeIconColor={modeIconColor}
@@ -844,10 +991,13 @@ function ControlledStatusBar({
           splitControls={splitSheetControls}
           hasPreferencesControl={hasPreferencesControl}
           sheetThinkingPressableStyle={sheetThinkingPressableStyle}
+          sheetAuthProfilePressableStyle={sheetAuthProfilePressableStyle}
           sheetModePressableStyle={sheetModePressableStyle}
           handleSheetModelSelect={handleSheetModelSelect}
           handleThinkingOpenChange={handleThinkingOpenChange}
+          handleAuthProfileOpenChange={handleAuthProfileOpenChange}
           handleModeOpenChange={handleModeOpenChange}
+          handleAuthProfileSelect={handleAuthProfileSelect}
           handleOpenChange={handleOpenChange}
           renderSheetModelTrigger={renderSheetModelTrigger}
         />
@@ -864,6 +1014,11 @@ interface DesktopStatusBarContentProps {
   selectedModeId?: string;
   modelOptions?: StatusOption[];
   selectedModelId?: string;
+  authProfiles: ProviderAuthProfile[];
+  selectedAuthProfileKey?: string;
+  hasAuthProfileControl: boolean;
+  canSelectAuthProfile: boolean;
+  isAuthProfilesLoading: boolean;
   thinkingOptions?: StatusOption[];
   selectedThinkingOptionId?: string;
   features?: AgentFeature[];
@@ -888,6 +1043,7 @@ interface DesktopStatusBarContentProps {
   comboboxThinkingOptions: ComboboxOption[];
   displayProvider: string;
   displayModel: string;
+  displayAuthProfile: string;
   displayThinking: string;
   ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
   modeIconColor: string;
@@ -897,16 +1053,19 @@ interface DesktopStatusBarContentProps {
   modeAnchorRef: RefObject<View | null>;
   providerPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   thinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  authProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   modePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   handleProviderPress: () => void;
   handleThinkingPress: () => void;
   handleModePress: () => void;
   handleProviderSelect: (id: string) => void;
   handleThinkingSelect: (id: string) => void;
+  handleAuthProfileSelect: (id: string) => void;
   handleModeSelect: (id: string) => void;
   handleDesktopModelSelect: (providerId: string, modelId: string) => void;
   handleProviderOpenChange: (open: boolean) => void;
   handleThinkingOpenChange: (open: boolean) => void;
+  handleAuthProfileOpenChange: (open: boolean) => void;
   handleModeOpenChange: (open: boolean) => void;
   handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
   renderModeOption: (args: {
@@ -928,6 +1087,10 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     modeOptions,
     selectedModeId,
     selectedModelId,
+    authProfiles,
+    selectedAuthProfileKey,
+    hasAuthProfileControl,
+    canSelectAuthProfile,
     thinkingOptions,
     selectedThinkingOptionId,
     features,
@@ -951,6 +1114,7 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     comboboxThinkingOptions,
     displayProvider,
     displayModel,
+    displayAuthProfile,
     displayThinking,
     ModeIconComponent,
     modeIconColor,
@@ -960,16 +1124,19 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     modeAnchorRef,
     providerPressableStyle,
     thinkingPressableStyle,
+    authProfilePressableStyle,
     modePressableStyle,
     handleProviderPress,
     handleThinkingPress,
     handleModePress,
     handleProviderSelect,
     handleThinkingSelect,
+    handleAuthProfileSelect,
     handleModeSelect,
     handleDesktopModelSelect,
     handleProviderOpenChange,
     handleThinkingOpenChange,
+    handleAuthProfileOpenChange,
     handleModeOpenChange,
     handleOpenChange,
     renderModeOption,
@@ -1034,6 +1201,46 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
             <Text style={styles.tooltipText}>{getStatusSelectorHint("model")}</Text>
           </TooltipContent>
         </Tooltip>
+      ) : null}
+
+      {hasAuthProfileControl ? (
+        <DropdownMenu
+          open={openSelector === "auth-profile"}
+          onOpenChange={handleAuthProfileOpenChange}
+        >
+          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+            <TooltipTrigger asChild triggerRefProp="ref">
+              <DropdownMenuTrigger
+                disabled={disabled || !canSelectAuthProfile}
+                style={authProfilePressableStyle}
+                accessibilityRole="button"
+                accessibilityLabel={`Select agent account (${displayAuthProfile})`}
+                testID="agent-auth-profile-selector"
+              >
+                <User size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+                <Text style={styles.modeBadgeText}>{displayAuthProfile}</Text>
+                <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="top" align="center" offset={8}>
+              <Text style={styles.tooltipText}>Select account</Text>
+            </TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent side="top" align="start">
+            <AuthProfileAutoMenuItem
+              selected={!selectedAuthProfileKey}
+              onSelectAuthProfile={handleAuthProfileSelect}
+            />
+            {authProfiles.map((profile) => (
+              <AuthProfileMenuItem
+                key={profile.key}
+                profile={profile}
+                selected={profile.key === selectedAuthProfileKey}
+                onSelectAuthProfile={handleAuthProfileSelect}
+              />
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : null}
 
       {thinkingOptions && thinkingOptions.length > 0 ? (
@@ -1125,11 +1332,75 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
   );
 }
 
+function SheetAuthProfileSection({
+  authProfiles,
+  selectedAuthProfileKey,
+  canSelectAuthProfile,
+  disabled,
+  displayAuthProfile,
+  openSelector,
+  sheetAuthProfilePressableStyle,
+  handleAuthProfileOpenChange,
+  handleAuthProfileSelect,
+}: {
+  authProfiles: ProviderAuthProfile[];
+  selectedAuthProfileKey?: string;
+  canSelectAuthProfile: boolean;
+  disabled: boolean;
+  displayAuthProfile: string;
+  openSelector: StatusSelector | null;
+  sheetAuthProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  handleAuthProfileOpenChange: (open: boolean) => void;
+  handleAuthProfileSelect: (id: string) => void;
+}) {
+  const { theme } = useUnistyles();
+
+  return (
+    <View style={styles.sheetSection}>
+      <DropdownMenu
+        open={openSelector === "auth-profile"}
+        onOpenChange={handleAuthProfileOpenChange}
+      >
+        <DropdownMenuTrigger
+          disabled={disabled || !canSelectAuthProfile}
+          style={sheetAuthProfilePressableStyle}
+          accessibilityRole="button"
+          accessibilityLabel="Select agent account"
+          testID="agent-preferences-auth-profile"
+        >
+          <User size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+          <Text style={styles.sheetSelectText}>{displayAuthProfile}</Text>
+          <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="start">
+          <AuthProfileAutoMenuItem
+            selected={!selectedAuthProfileKey}
+            onSelectAuthProfile={handleAuthProfileSelect}
+          />
+          {authProfiles.map((profile) => (
+            <AuthProfileMenuItem
+              key={profile.key}
+              profile={profile}
+              selected={profile.key === selectedAuthProfileKey}
+              onSelectAuthProfile={handleAuthProfileSelect}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
 interface SheetStatusBarContentProps {
   provider: string;
   modeOptions?: StatusOption[];
   selectedModeId?: string;
   selectedModelId?: string;
+  authProfiles: ProviderAuthProfile[];
+  selectedAuthProfileKey?: string;
+  hasAuthProfileControl: boolean;
+  canSelectAuthProfile: boolean;
+  isAuthProfilesLoading: boolean;
   thinkingOptions?: StatusOption[];
   selectedThinkingOptionId?: string;
   features?: AgentFeature[];
@@ -1152,6 +1423,7 @@ interface SheetStatusBarContentProps {
   effectiveAllProviderModels: Map<string, AgentModelDefinition[]>;
   displayMode: string;
   displayModel: string;
+  displayAuthProfile: string;
   displayThinking: string;
   ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
   modeIconColor: string;
@@ -1164,10 +1436,13 @@ interface SheetStatusBarContentProps {
   splitControls: boolean;
   hasPreferencesControl: boolean;
   sheetThinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  sheetAuthProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   sheetModePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
   handleThinkingOpenChange: (open: boolean) => void;
+  handleAuthProfileOpenChange: (open: boolean) => void;
   handleModeOpenChange: (open: boolean) => void;
+  handleAuthProfileSelect: (id: string) => void;
   handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
   renderSheetModelTrigger: (args: { selectedModelLabel: string }) => ReactElement;
 }
@@ -1179,6 +1454,10 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     modeOptions,
     selectedModeId,
     selectedModelId,
+    authProfiles,
+    selectedAuthProfileKey,
+    hasAuthProfileControl,
+    canSelectAuthProfile,
     thinkingOptions,
     selectedThinkingOptionId,
     features,
@@ -1201,6 +1480,7 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     effectiveAllProviderModels,
     displayMode,
     displayModel,
+    displayAuthProfile,
     displayThinking,
     ModeIconComponent,
     modeIconColor,
@@ -1213,10 +1493,13 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     splitControls,
     hasPreferencesControl,
     sheetThinkingPressableStyle,
+    sheetAuthProfilePressableStyle,
     sheetModePressableStyle,
     handleSheetModelSelect,
     handleThinkingOpenChange,
+    handleAuthProfileOpenChange,
     handleModeOpenChange,
+    handleAuthProfileSelect,
     handleOpenChange,
     renderSheetModelTrigger,
   } = props;
@@ -1284,6 +1567,20 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
               renderTrigger={renderSheetModelTrigger}
             />
           </View>
+        ) : null}
+
+        {hasAuthProfileControl ? (
+          <SheetAuthProfileSection
+            authProfiles={authProfiles}
+            selectedAuthProfileKey={selectedAuthProfileKey}
+            canSelectAuthProfile={canSelectAuthProfile}
+            disabled={disabled}
+            displayAuthProfile={displayAuthProfile}
+            openSelector={openSelector}
+            sheetAuthProfilePressableStyle={sheetAuthProfilePressableStyle}
+            handleAuthProfileOpenChange={handleAuthProfileOpenChange}
+            handleAuthProfileSelect={handleAuthProfileSelect}
+          />
         ) : null}
 
         {thinkingOptions && thinkingOptions.length > 0 ? (
@@ -1616,6 +1913,44 @@ function FeatureOptionMenuItem({
   );
 }
 
+function AuthProfileAutoMenuItem({
+  selected,
+  onSelectAuthProfile,
+}: {
+  selected: boolean;
+  onSelectAuthProfile?: (authProfileKey: string) => void;
+}) {
+  const handleSelect = useCallback(() => {
+    onSelectAuthProfile?.("");
+  }, [onSelectAuthProfile]);
+
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      Default account
+    </DropdownMenuItem>
+  );
+}
+
+function AuthProfileMenuItem({
+  profile,
+  selected,
+  onSelectAuthProfile,
+}: {
+  profile: ProviderAuthProfile;
+  selected: boolean;
+  onSelectAuthProfile?: (authProfileKey: string) => void;
+}) {
+  const handleSelect = useCallback(() => {
+    onSelectAuthProfile?.(profile.key);
+  }, [onSelectAuthProfile, profile.key]);
+
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {formatAuthProfileLabel(profile)}
+    </DropdownMenuItem>
+  );
+}
+
 function ThinkingMenuItem({
   thinking,
   selected,
@@ -1941,6 +2276,10 @@ export function DraftAgentStatusBar({
   models,
   selectedModel,
   onSelectModel,
+  authProfiles,
+  selectedAuthProfileKey,
+  onSelectAuthProfile,
+  isAuthProfilesLoading,
   isModelLoading: _isModelLoading,
   allProviderModels,
   isAllModelsLoading,
@@ -2033,6 +2372,10 @@ export function DraftAgentStatusBar({
             onSelectThinkingOption={onSelectThinkingOption}
             features={features}
             onSetFeature={onSetFeature}
+            authProfiles={authProfiles}
+            selectedAuthProfileKey={selectedAuthProfileKey}
+            onSelectAuthProfile={onSelectAuthProfile}
+            isAuthProfilesLoading={isAuthProfilesLoading}
             onDropdownClose={onDropdownClose}
             disabled={disabled}
           />
@@ -2053,6 +2396,10 @@ export function DraftAgentStatusBar({
       selectedModelId={selectedModel}
       onSelectModel={onSelectModel}
       onSelectProviderAndModel={onSelectProviderAndModel}
+      authProfiles={authProfiles}
+      selectedAuthProfileKey={selectedAuthProfileKey}
+      onSelectAuthProfile={onSelectAuthProfile}
+      isAuthProfilesLoading={isAuthProfilesLoading}
       isModelLoading={isAllModelsLoading}
       favoriteKeys={favoriteKeys}
       onToggleFavoriteModel={handleToggleFavorite}

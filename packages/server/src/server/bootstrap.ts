@@ -97,6 +97,8 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
+import { CodexProviderAuthAdapter } from "./agent/provider-auth-codex.js";
+import { ProviderAuthService } from "./agent/provider-auth-service.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -456,6 +458,11 @@ export async function createPaseoDaemon(
     workspaceGitService,
     isDev: config.isDev === true,
   });
+  const providerAuthService = new ProviderAuthService({
+    paseoHome: config.paseoHome,
+    logger,
+    adapters: [new CodexProviderAuthAdapter()],
+  });
   const agentManager = new AgentManager({
     clients: {
       ...createClientsFromRegistry(providerRegistry, logger),
@@ -463,6 +470,7 @@ export async function createPaseoDaemon(
     },
     providerDefinitions: providerRegistry,
     registry: agentStorage,
+    providerAuthService,
     logger,
   });
 
@@ -854,6 +862,7 @@ export async function createPaseoDaemon(
             (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
             workspaceGitService,
             github,
+            providerAuthService,
           );
 
           if (relayEnabled) {

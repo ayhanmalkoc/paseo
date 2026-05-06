@@ -45,6 +45,7 @@ interface AutoSubmitConfig {
   provider: string;
   modeId: string | null;
   model: string | null;
+  authProfileKey: string | null;
   thinkingOptionId: string | null;
   featureValues: Record<string, unknown>;
 }
@@ -54,6 +55,7 @@ function resolveAutoSubmitConfig(
     provider: string;
     modeId?: string | null;
     model?: string | null;
+    authProfileKey?: string | null;
     thinkingOptionId?: string | null;
     featureValues?: Record<string, unknown>;
   } | null,
@@ -63,6 +65,7 @@ function resolveAutoSubmitConfig(
     provider: pending.provider,
     modeId: pending.modeId ?? null,
     model: pending.model ?? null,
+    authProfileKey: pending.authProfileKey ?? null,
     thinkingOptionId: pending.thinkingOptionId ?? null,
     featureValues: pending.featureValues ?? {},
   };
@@ -143,6 +146,48 @@ function resolveDraftModeId(input: {
   return null;
 }
 
+function requireDraftProvider(input: {
+  autoSubmitConfig: AutoSubmitConfig | null;
+  selectedProvider: string | null;
+}): string {
+  const provider = input.autoSubmitConfig?.provider ?? input.selectedProvider;
+  if (!provider) {
+    throw new Error("Select a model");
+  }
+  return provider;
+}
+
+function buildSubmitDraftAgentConfig(input: {
+  provider: string;
+  workspaceDirectory: string;
+  autoSubmitConfig: AutoSubmitConfig | null;
+  composerState: {
+    selectedMode: string;
+    modeOptions: unknown[];
+    effectiveModelId: string | null;
+    effectiveAuthProfileKey: string | null;
+    effectiveThinkingOptionId: string | null;
+    featureValues: Record<string, unknown> | undefined;
+  };
+}) {
+  const { autoSubmitConfig, composerState } = input;
+  return buildWorkspaceDraftAgentConfig({
+    provider: input.provider,
+    cwd: input.workspaceDirectory,
+    ...resolveDraftModeIdOverride({
+      autoSubmitConfig,
+      modeOptionsCount: composerState.modeOptions.length,
+      selectedMode: composerState.selectedMode,
+    }),
+    model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
+    authProfileKey:
+      autoSubmitConfig?.authProfileKey ?? (composerState.effectiveAuthProfileKey || undefined),
+    thinkingOptionId:
+      autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
+    featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
+  });
+}
+
 async function submitDraftCreateRequest(input: {
   attempt: { clientMessageId: string };
   text: string;
@@ -157,6 +202,7 @@ async function submitDraftCreateRequest(input: {
     selectedMode: string;
     modeOptions: unknown[];
     effectiveModelId: string | null;
+    effectiveAuthProfileKey: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
   };
@@ -179,23 +225,15 @@ async function submitDraftCreateRequest(input: {
     throw new Error("Host is not connected");
   }
 
-  const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
-  if (!provider) {
-    throw new Error("Select a model");
-  }
-  const modeIdOverride = resolveDraftModeIdOverride({
+  const provider = requireDraftProvider({
     autoSubmitConfig,
-    modeOptionsCount: composerState.modeOptions.length,
-    selectedMode: composerState.selectedMode,
+    selectedProvider: composerState.selectedProvider,
   });
-  const config = buildWorkspaceDraftAgentConfig({
+  const config = buildSubmitDraftAgentConfig({
     provider,
-    cwd: workspaceDirectory,
-    ...modeIdOverride,
-    model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
-    thinkingOptionId:
-      autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
-    featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
+    workspaceDirectory,
+    autoSubmitConfig,
+    composerState,
   });
 
   const imagesData = await encodeImages(images);
@@ -223,6 +261,7 @@ function buildDraftAgentSnapshot(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
     effectiveModelId: string | null;
+    effectiveAuthProfileKey: string | null;
     effectiveThinkingOptionId: string | null;
     modeOptions: unknown[];
     selectedMode: string;
@@ -234,6 +273,8 @@ function buildDraftAgentSnapshot(input: {
   invariant(workspaceDirectory, "Workspace directory is required");
   const now = attempt.timestamp;
   const model = autoSubmitConfig?.model ?? (composerState.effectiveModelId || null);
+  const authProfileKey =
+    autoSubmitConfig?.authProfileKey ?? (composerState.effectiveAuthProfileKey || null);
   const thinkingOptionId =
     autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || null);
   const modeId = resolveDraftModeId({
@@ -263,6 +304,7 @@ function buildDraftAgentSnapshot(input: {
     title: "Agent",
     cwd: workspaceDirectory,
     model,
+    authProfileKey,
     features: composerState.statusControls.features,
     thinkingOptionId,
     labels: {},

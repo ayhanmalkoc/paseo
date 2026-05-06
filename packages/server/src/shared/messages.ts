@@ -131,6 +131,7 @@ import type {
   ToolCallDetail,
   ToolCallTimelineItem,
   AgentUsage,
+  ProviderAuthProfile,
 } from "../server/agent/agent-sdk-types.js";
 
 export const AgentStatusSchema = z.enum(AGENT_LIFECYCLE_STATUSES);
@@ -208,6 +209,32 @@ export const ProviderSnapshotEntrySchema = z.object({
   defaultModeId: z.string().nullable().optional(),
 });
 
+const ProviderAuthUsageSnapshotSchema = z.object({
+  source: z.enum(["local-rollout", "provider-api"]),
+  primaryUsedPercent: z.number().optional(),
+  secondaryUsedPercent: z.number().optional(),
+  creditsRemaining: z.number().optional(),
+  refreshedAt: z.string(),
+});
+
+export const ProviderAuthProfileSchema: z.ZodType<ProviderAuthProfile> = z.object({
+  provider: AgentProviderSchema,
+  key: z.string(),
+  alias: z.string(),
+  email: z.string().optional(),
+  accountName: z.string().optional(),
+  accountId: z.string().optional(),
+  userId: z.string().optional(),
+  authMode: z.enum(["chatgpt", "api-key", "unknown"]),
+  plan: z.string().optional(),
+  status: z.enum(["ready", "needs-login", "invalid", "refreshing"]),
+  isDefault: z.boolean().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  lastUsedAt: z.string().optional(),
+  usage: ProviderAuthUsageSnapshotSchema.optional(),
+});
+
 const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z.object({
   supportsStreaming: z.boolean(),
   supportsSessionPersistence: z.boolean(),
@@ -257,6 +284,7 @@ const AgentSessionConfigSchema = z.object({
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
+  authProfileKey: z.string().nullable().optional(),
   featureValues: z.record(z.unknown()).optional(),
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
   approvalPolicy: z.string().optional(),
@@ -610,6 +638,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
   model: z.string().nullable(),
+  authProfileKey: z.string().nullable().optional(),
   features: z.array(AgentFeatureSchema).optional(),
   thinkingOptionId: z.string().nullable().optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
@@ -1048,6 +1077,43 @@ export const RefreshProvidersSnapshotRequestMessageSchema = z.object({
 export const ProviderDiagnosticRequestMessageSchema = z.object({
   type: z.literal("provider_diagnostic_request"),
   provider: AgentProviderSchema,
+  requestId: z.string(),
+});
+
+export const ListProviderAuthProfilesRequestMessageSchema = z.object({
+  type: z.literal("list_provider_auth_profiles_request"),
+  provider: AgentProviderSchema.optional(),
+  requestId: z.string(),
+});
+
+export const ImportProviderAuthProfileRequestMessageSchema = z.object({
+  type: z.literal("import_provider_auth_profile_request"),
+  provider: AgentProviderSchema,
+  source: z.enum(["current", "file"]).default("current"),
+  path: z.string().optional(),
+  alias: z.string().optional(),
+  setDefault: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+export const RemoveProviderAuthProfileRequestMessageSchema = z.object({
+  type: z.literal("remove_provider_auth_profile_request"),
+  provider: AgentProviderSchema,
+  profileKey: z.string(),
+  requestId: z.string(),
+});
+
+export const SetDefaultProviderAuthProfileRequestMessageSchema = z.object({
+  type: z.literal("set_default_provider_auth_profile_request"),
+  provider: AgentProviderSchema,
+  profileKey: z.string().nullable(),
+  requestId: z.string(),
+});
+
+export const RefreshProviderAuthProfileRequestMessageSchema = z.object({
+  type: z.literal("refresh_provider_auth_profile_request"),
+  provider: AgentProviderSchema,
+  profileKey: z.string(),
   requestId: z.string(),
 });
 
@@ -1698,6 +1764,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   GetProvidersSnapshotRequestMessageSchema,
   RefreshProvidersSnapshotRequestMessageSchema,
   ProviderDiagnosticRequestMessageSchema,
+  ListProviderAuthProfilesRequestMessageSchema,
+  ImportProviderAuthProfileRequestMessageSchema,
+  RemoveProviderAuthProfileRequestMessageSchema,
+  SetDefaultProviderAuthProfileRequestMessageSchema,
+  RefreshProviderAuthProfileRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -1941,6 +2012,7 @@ export const ServerInfoStatusPayloadSchema = z
     features: z
       .object({
         providersSnapshot: z.boolean().optional(),
+        providerAuthProfiles: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3142,6 +3214,48 @@ export const ProviderDiagnosticResponseMessageSchema = z.object({
   }),
 });
 
+export const ListProviderAuthProfilesResponseMessageSchema = z.object({
+  type: z.literal("list_provider_auth_profiles_response"),
+  payload: z.object({
+    profiles: z.array(ProviderAuthProfileSchema),
+    requestId: z.string(),
+  }),
+});
+
+export const ImportProviderAuthProfileResponseMessageSchema = z.object({
+  type: z.literal("import_provider_auth_profile_response"),
+  payload: z.object({
+    profile: ProviderAuthProfileSchema,
+    requestId: z.string(),
+  }),
+});
+
+export const RemoveProviderAuthProfileResponseMessageSchema = z.object({
+  type: z.literal("remove_provider_auth_profile_response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    profileKey: z.string(),
+    requestId: z.string(),
+  }),
+});
+
+export const SetDefaultProviderAuthProfileResponseMessageSchema = z.object({
+  type: z.literal("set_default_provider_auth_profile_response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    profiles: z.array(ProviderAuthProfileSchema),
+    requestId: z.string(),
+  }),
+});
+
+export const RefreshProviderAuthProfileResponseMessageSchema = z.object({
+  type: z.literal("refresh_provider_auth_profile_response"),
+  payload: z.object({
+    profile: ProviderAuthProfileSchema,
+    requestId: z.string(),
+  }),
+});
+
 const AgentSlashCommandSchema = z.object({
   name: z.string(),
   description: z.string(),
@@ -3362,6 +3476,11 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProvidersSnapshotUpdateMessageSchema,
   RefreshProvidersSnapshotResponseMessageSchema,
   ProviderDiagnosticResponseMessageSchema,
+  ListProviderAuthProfilesResponseMessageSchema,
+  ImportProviderAuthProfileResponseMessageSchema,
+  RemoveProviderAuthProfileResponseMessageSchema,
+  SetDefaultProviderAuthProfileResponseMessageSchema,
+  RefreshProviderAuthProfileResponseMessageSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,
@@ -3477,6 +3596,21 @@ export type RefreshProvidersSnapshotResponseMessage = z.infer<
 export type ProviderDiagnosticResponseMessage = z.infer<
   typeof ProviderDiagnosticResponseMessageSchema
 >;
+export type ListProviderAuthProfilesResponseMessage = z.infer<
+  typeof ListProviderAuthProfilesResponseMessageSchema
+>;
+export type ImportProviderAuthProfileResponseMessage = z.infer<
+  typeof ImportProviderAuthProfileResponseMessageSchema
+>;
+export type RemoveProviderAuthProfileResponseMessage = z.infer<
+  typeof RemoveProviderAuthProfileResponseMessageSchema
+>;
+export type SetDefaultProviderAuthProfileResponseMessage = z.infer<
+  typeof SetDefaultProviderAuthProfileResponseMessageSchema
+>;
+export type RefreshProviderAuthProfileResponseMessage = z.infer<
+  typeof RefreshProviderAuthProfileResponseMessageSchema
+>;
 export type ChatCreateResponse = z.infer<typeof ChatCreateResponseSchema>;
 export type ChatListResponse = z.infer<typeof ChatListResponseSchema>;
 export type ChatInspectResponse = z.infer<typeof ChatInspectResponseSchema>;
@@ -3536,6 +3670,21 @@ export type RefreshProvidersSnapshotRequestMessage = z.infer<
 >;
 export type ProviderDiagnosticRequestMessage = z.infer<
   typeof ProviderDiagnosticRequestMessageSchema
+>;
+export type ListProviderAuthProfilesRequestMessage = z.infer<
+  typeof ListProviderAuthProfilesRequestMessageSchema
+>;
+export type ImportProviderAuthProfileRequestMessage = z.infer<
+  typeof ImportProviderAuthProfileRequestMessageSchema
+>;
+export type RemoveProviderAuthProfileRequestMessage = z.infer<
+  typeof RemoveProviderAuthProfileRequestMessageSchema
+>;
+export type SetDefaultProviderAuthProfileRequestMessage = z.infer<
+  typeof SetDefaultProviderAuthProfileRequestMessageSchema
+>;
+export type RefreshProviderAuthProfileRequestMessage = z.infer<
+  typeof RefreshProviderAuthProfileRequestMessageSchema
 >;
 export type ChatCreateRequest = z.infer<typeof ChatCreateRequestSchema>;
 export type ChatListRequest = z.infer<typeof ChatListRequestSchema>;

@@ -102,6 +102,7 @@ export function toAgentPayload(
     provider: agent.provider,
     cwd: agent.cwd,
     model: agent.config.model ?? null,
+    authProfileKey: agent.config.authProfileKey ?? null,
     thinkingOptionId,
     effectiveThinkingOptionId,
     ...(runtimeInfo ? { runtimeInfo } : {}),
@@ -277,6 +278,9 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   }
   if (config.thinkingOptionId) {
     serializable.thinkingOptionId = config.thinkingOptionId;
+  }
+  if (Object.prototype.hasOwnProperty.call(config, "authProfileKey")) {
+    serializable.authProfileKey = config.authProfileKey ?? null;
   }
   if (Object.prototype.hasOwnProperty.call(config, "featureValues")) {
     const featureValues = sanitizeMetadata(config.featureValues);

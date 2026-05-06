@@ -118,6 +118,7 @@ describe("buildDraftComposerCommandConfig", () => {
         modeOptions: [{ id: "auto", label: "Auto" }],
         selectedMode: "auto",
         effectiveModelId: "gpt-5.4",
+        authProfileKey: "profile-a",
         effectiveThinkingOptionId: "high",
       }),
     ).toEqual({
@@ -125,6 +126,7 @@ describe("buildDraftComposerCommandConfig", () => {
       cwd: "/repo",
       modeId: "auto",
       model: "gpt-5.4",
+      authProfileKey: "profile-a",
       thinkingOptionId: "high",
     });
   });

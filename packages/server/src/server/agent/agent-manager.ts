@@ -52,6 +52,7 @@ import {
 } from "./agent-stream-coalescer.js";
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "./provider-manifest.js";
+import type { ProviderAuthService } from "./provider-auth-service.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -66,6 +67,14 @@ interface TimeoutOptions {
 
 function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
+}
+
+function normalizeAuthProfileKey(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
@@ -131,6 +140,7 @@ export interface AgentManagerOptions {
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
+  providerAuthService?: ProviderAuthService;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
@@ -420,6 +430,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
+  private readonly providerAuthService: ProviderAuthService | null;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -430,6 +441,7 @@ export class AgentManager {
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
+    this.providerAuthService = options?.providerAuthService ?? null;
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -808,18 +820,22 @@ export class AgentManager {
     const injectedConfig = this.buildInjectedMcpConfig(config, resolvedAgentId);
     this.requireEnabledProvider(injectedConfig.provider);
     const normalizedConfig = await this.normalizeConfig(injectedConfig);
+    const authLaunch = await this.resolveProviderAuthLaunchContext(normalizedConfig, {
+      resolveDefault: true,
+    });
+    const authConfig = this.withResolvedAuthProfile(normalizedConfig, authLaunch.profileKey);
     const launchConfig = this.withInjectedMcpHeaders(
-      normalizedConfig,
+      authConfig,
       resolvedAgentId,
       options?.mcpServerHeaders,
     );
-    const launchContext = this.buildLaunchContext(resolvedAgentId);
+    const launchContext = this.buildLaunchContext(resolvedAgentId, authLaunch.env);
     const client = await this.requireAvailableClient({
-      provider: normalizedConfig.provider,
+      provider: authConfig.provider,
     });
     const createOptions = this.buildCreateSessionOptions(options);
     const session = await client.createSession(launchConfig, launchContext, createOptions);
-    return this.registerSession(session, normalizedConfig, resolvedAgentId, {
+    return this.registerSession(session, authConfig, resolvedAgentId, {
       labels: options?.labels,
       workspaceId: options?.workspaceId,
     });
@@ -870,7 +886,11 @@ export class AgentManager {
       hasResumeOverrides = true;
     }
 
-    const launchContext = this.buildLaunchContext(resolvedAgentId);
+    const authLaunch = await this.resolveProviderAuthLaunchContext(normalizedConfig, {
+      resolveDefault: false,
+    });
+    const authConfig = this.withResolvedAuthProfile(normalizedConfig, authLaunch.profileKey);
+    const launchContext = this.buildLaunchContext(resolvedAgentId, authLaunch.env);
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
     if (!available) {
@@ -883,7 +903,7 @@ export class AgentManager {
       hasResumeOverrides ? resumeOverrides : undefined,
       launchContext,
     );
-    return this.registerSession(session, normalizedConfig, resolvedAgentId, options);
+    return this.registerSession(session, authConfig, resolvedAgentId, options);
   }
 
   // Hot-reload an active agent session with config overrides while preserving
@@ -910,11 +930,15 @@ export class AgentManager {
       provider,
     } as AgentSessionConfig;
     const normalizedConfig = await this.normalizeConfig(refreshConfig);
-    const launchContext = this.buildLaunchContext(agentId);
+    const authLaunch = await this.resolveProviderAuthLaunchContext(normalizedConfig, {
+      resolveDefault: false,
+    });
+    const authConfig = this.withResolvedAuthProfile(normalizedConfig, authLaunch.profileKey);
+    const launchContext = this.buildLaunchContext(agentId, authLaunch.env);
 
     const session = handle
-      ? await client.resumeSession(handle, normalizedConfig, launchContext)
-      : await client.createSession(normalizedConfig, launchContext);
+      ? await client.resumeSession(handle, authConfig, launchContext)
+      : await client.createSession(authConfig, launchContext);
 
     this.agentStreamCoalescer.flushAndDiscard(agentId);
     // Remove the existing agent entry before swapping sessions
@@ -927,7 +951,7 @@ export class AgentManager {
     await this.closeReloadedSession(existing.session, agentId);
 
     // Preserve existing labels and timeline during reload.
-    return this.registerSession(session, normalizedConfig, agentId, {
+    return this.registerSession(session, authConfig, agentId, {
       labels: existing.labels,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
@@ -3145,10 +3169,44 @@ export class AgentManager {
     return normalized;
   }
 
-  private buildLaunchContext(agentId: string): AgentLaunchContext {
+  private async resolveProviderAuthLaunchContext(
+    config: AgentSessionConfig,
+    options: { resolveDefault: boolean },
+  ): Promise<{ profileKey: string | null; env?: Record<string, string> }> {
+    if (!this.providerAuthService) {
+      return { profileKey: null };
+    }
+    const requestedProfileKey = normalizeAuthProfileKey(config.authProfileKey);
+    if (!requestedProfileKey && !options.resolveDefault) {
+      return { profileKey: null };
+    }
+    return this.providerAuthService.resolveLaunchContext({
+      provider: config.provider,
+      authProfileKey: requestedProfileKey,
+    });
+  }
+
+  private withResolvedAuthProfile(
+    config: AgentSessionConfig,
+    profileKey: string | null,
+  ): AgentSessionConfig {
+    if (!profileKey) {
+      return config;
+    }
+    return {
+      ...config,
+      authProfileKey: profileKey,
+    };
+  }
+
+  private buildLaunchContext(
+    agentId: string,
+    providerAuthEnv?: Record<string, string>,
+  ): AgentLaunchContext {
     return {
       env: {
         PASEO_AGENT_ID: agentId,
+        ...providerAuthEnv,
       },
     };
   }

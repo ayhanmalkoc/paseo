@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AgentFeatureSchema,
   AgentSnapshotPayloadSchema,
+  ProviderAuthProfileSchema,
   SetAgentFeatureRequestMessageSchema,
   SetAgentFeatureResponseMessageSchema,
 } from "./messages.js";
@@ -142,5 +143,53 @@ describe("agent feature schemas", () => {
 
     expect(parsed.features).toHaveLength(1);
     expect(parsed.features?.[0]?.id).toBe("fast_mode");
+  });
+
+  it("accepts provider auth metadata without requiring it on old snapshots", () => {
+    const parsedProfile = ProviderAuthProfileSchema.parse({
+      provider: "codex",
+      key: "profile-a",
+      alias: "Work",
+      email: "user@example.com",
+      authMode: "chatgpt",
+      status: "ready",
+      isDefault: true,
+      createdAt: "2026-05-06T12:00:00.000Z",
+      updatedAt: "2026-05-06T12:00:00.000Z",
+      usage: {
+        source: "local-rollout",
+        primaryUsedPercent: 15,
+        refreshedAt: "2026-05-06T12:10:00.000Z",
+      },
+    });
+
+    const parsedSnapshot = AgentSnapshotPayloadSchema.parse({
+      id: "agent-123",
+      provider: "codex",
+      cwd: "/tmp/project",
+      model: "gpt-5",
+      authProfileKey: "profile-a",
+      createdAt: "2026-04-03T12:00:00.000Z",
+      updatedAt: "2026-04-03T12:00:00.000Z",
+      lastUserMessageAt: null,
+      status: "idle",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: null,
+      labels: {},
+    });
+
+    expect(parsedProfile.key).toBe("profile-a");
+    expect(parsedSnapshot.authProfileKey).toBe("profile-a");
   });
 });

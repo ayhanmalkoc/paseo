@@ -88,6 +88,7 @@ import type {
 } from "./agent/provider-launch-config.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
+import type { ProviderAuthService } from "./agent/provider-auth-service.js";
 import type {
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
@@ -579,6 +580,7 @@ export interface SessionOptions {
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager?: ProviderSnapshotManager;
+  providerAuthService?: ProviderAuthService;
   scriptRouteStore?: ScriptRouteStore;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
@@ -817,6 +819,7 @@ export class Session {
   private readonly MOBILE_BACKGROUND_STREAM_GRACE_MS = 60_000;
   private readonly terminalManager: TerminalManager | null;
   private readonly providerSnapshotManager: ProviderSnapshotManager | null;
+  private readonly providerAuthService: ProviderAuthService | null;
   private unsubscribeProviderSnapshotEvents: (() => void) | null = null;
   private readonly scriptRouteStore: ScriptRouteStore | null;
   private readonly scriptRuntimeStore: WorkspaceScriptRuntimeStore | null;
@@ -893,6 +896,7 @@ export class Session {
       tts,
       terminalManager,
       providerSnapshotManager,
+      providerAuthService,
       scriptRouteStore,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
@@ -945,6 +949,7 @@ export class Session {
       sessionLogger: this.sessionLogger,
     });
     this.providerSnapshotManager = providerSnapshotManager ?? null;
+    this.providerAuthService = providerAuthService ?? null;
     this.scriptRouteStore = scriptRouteStore ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
@@ -2121,6 +2126,16 @@ export class Session {
         return this.handleRefreshProvidersSnapshotRequest(msg);
       case "provider_diagnostic_request":
         return this.handleProviderDiagnosticRequest(msg);
+      case "list_provider_auth_profiles_request":
+        return this.handleListProviderAuthProfilesRequest(msg);
+      case "import_provider_auth_profile_request":
+        return this.handleImportProviderAuthProfileRequest(msg);
+      case "remove_provider_auth_profile_request":
+        return this.handleRemoveProviderAuthProfileRequest(msg);
+      case "set_default_provider_auth_profile_request":
+        return this.handleSetDefaultProviderAuthProfileRequest(msg);
+      case "refresh_provider_auth_profile_request":
+        return this.handleRefreshProviderAuthProfileRequest(msg);
       default:
         return undefined;
     }
@@ -3849,6 +3864,140 @@ export class Session {
         },
       });
     }
+  }
+
+  private async handleListProviderAuthProfilesRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_provider_auth_profiles_request" }>,
+  ): Promise<void> {
+    try {
+      const profiles = await this.requireProviderAuthService().listProfiles(msg.provider);
+      this.emit({
+        type: "list_provider_auth_profiles_response",
+        payload: {
+          profiles,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderAuthRpcError(msg, error, "provider_auth_profiles_list_failed");
+    }
+  }
+
+  private async handleImportProviderAuthProfileRequest(
+    msg: Extract<SessionInboundMessage, { type: "import_provider_auth_profile_request" }>,
+  ): Promise<void> {
+    try {
+      const profile = await this.requireProviderAuthService().importProfile({
+        provider: msg.provider,
+        source: msg.source,
+        path: msg.path,
+        alias: msg.alias,
+        setDefault: msg.setDefault,
+      });
+      this.emit({
+        type: "import_provider_auth_profile_response",
+        payload: {
+          profile,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderAuthRpcError(msg, error, "provider_auth_profile_import_failed");
+    }
+  }
+
+  private async handleRemoveProviderAuthProfileRequest(
+    msg: Extract<SessionInboundMessage, { type: "remove_provider_auth_profile_request" }>,
+  ): Promise<void> {
+    try {
+      await this.requireProviderAuthService().removeProfile(msg.provider, msg.profileKey);
+      this.emit({
+        type: "remove_provider_auth_profile_response",
+        payload: {
+          provider: msg.provider,
+          profileKey: msg.profileKey,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderAuthRpcError(msg, error, "provider_auth_profile_remove_failed");
+    }
+  }
+
+  private async handleSetDefaultProviderAuthProfileRequest(
+    msg: Extract<SessionInboundMessage, { type: "set_default_provider_auth_profile_request" }>,
+  ): Promise<void> {
+    try {
+      const profiles = await this.requireProviderAuthService().setDefaultProfile(
+        msg.provider,
+        msg.profileKey,
+      );
+      this.emit({
+        type: "set_default_provider_auth_profile_response",
+        payload: {
+          provider: msg.provider,
+          profiles,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderAuthRpcError(msg, error, "provider_auth_profile_default_failed");
+    }
+  }
+
+  private async handleRefreshProviderAuthProfileRequest(
+    msg: Extract<SessionInboundMessage, { type: "refresh_provider_auth_profile_request" }>,
+  ): Promise<void> {
+    try {
+      const profile = await this.requireProviderAuthService().refreshProfile(
+        msg.provider,
+        msg.profileKey,
+      );
+      this.emit({
+        type: "refresh_provider_auth_profile_response",
+        payload: {
+          profile,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderAuthRpcError(msg, error, "provider_auth_profile_refresh_failed");
+    }
+  }
+
+  private requireProviderAuthService(): ProviderAuthService {
+    if (!this.providerAuthService) {
+      throw new Error("Provider auth profiles are not available");
+    }
+    return this.providerAuthService;
+  }
+
+  private emitProviderAuthRpcError(
+    msg: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "list_provider_auth_profiles_request"
+          | "import_provider_auth_profile_request"
+          | "remove_provider_auth_profile_request"
+          | "set_default_provider_auth_profile_request"
+          | "refresh_provider_auth_profile_request";
+      }
+    >,
+    error: unknown,
+    code: string,
+  ): void {
+    const err = error instanceof Error ? error : new Error(String(error));
+    this.sessionLogger.warn({ err, requestType: msg.type }, "Provider auth RPC failed");
+    this.emit({
+      type: "rpc_error",
+      payload: {
+        requestId: msg.requestId,
+        requestType: msg.type,
+        error: err.message,
+        code,
+      },
+    });
   }
 
   private assertSafeGitRef(ref: string, label: string): void {

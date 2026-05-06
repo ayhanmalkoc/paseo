@@ -15,6 +15,7 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
+    authProfileKey: z.string().nullable().optional(),
     featureValues: z.record(z.unknown()).nullable().optional(),
     extra: z.record(z.any()).nullable().optional(),
     systemPrompt: z.string().nullable().optional(),
@@ -72,6 +73,7 @@ export type SerializableAgentConfig = Pick<
   | "modeId"
   | "model"
   | "thinkingOptionId"
+  | "authProfileKey"
   | "featureValues"
   | "extra"
   | "systemPrompt"

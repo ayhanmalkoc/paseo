@@ -15,13 +15,18 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { isWeb } from "@/constants/platform";
 import { Fonts } from "@/constants/theme";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
 import { formatTimeAgo } from "@/utils/time";
-import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type {
+  AgentModelDefinition,
+  AgentProvider,
+  ProviderAuthProfile,
+} from "@server/server/agent/agent-sdk-types";
 import type { ProviderProfileModel } from "@server/server/agent/provider-launch-config";
 
 interface ProviderDiagnosticSheetProps {
@@ -190,6 +195,176 @@ function CustomModelsSection(props: {
             model={model}
             deleting={deletingModelId === model.id}
             onDelete={handleDelete}
+          />
+        ))}
+      </View>
+      {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
+    </SettingsSection>
+  );
+}
+
+function formatAuthProfileSubtitle(profile: ProviderAuthProfile): string {
+  const parts = [
+    profile.email,
+    profile.plan,
+    profile.authMode === "api-key" ? "API key" : profile.authMode,
+    profile.status !== "ready" ? profile.status : null,
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function AuthProfileRow(props: {
+  profile: ProviderAuthProfile;
+  busy: boolean;
+  onRefresh: (profileKey: string) => void;
+  onSetDefault: (profileKey: string) => void;
+  onRemove: (profileKey: string) => void;
+}) {
+  const { profile, busy, onRefresh, onSetDefault, onRemove } = props;
+  const handleRefresh = useCallback(() => onRefresh(profile.key), [onRefresh, profile.key]);
+  const handleSetDefault = useCallback(
+    () => onSetDefault(profile.key),
+    [onSetDefault, profile.key],
+  );
+  const handleRemove = useCallback(() => onRemove(profile.key), [onRemove, profile.key]);
+  const title = profile.alias || profile.email || "Account";
+  const subtitle = formatAuthProfileSubtitle(profile);
+
+  return (
+    <View style={MODEL_ROW_STYLE}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        {subtitle ? (
+          <Text style={sheetStyles.monoHint} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+      <View style={sheetStyles.profileActions}>
+        {!profile.isDefault ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            onPress={handleSetDefault}
+            disabled={busy}
+            accessibilityLabel={`Use ${title} by default`}
+          >
+            Default
+          </Button>
+        ) : (
+          <Text style={sheetStyles.defaultBadge}>Default</Text>
+        )}
+        <Button
+          variant="ghost"
+          size="xs"
+          onPress={handleRefresh}
+          disabled={busy}
+          accessibilityLabel={`Refresh ${title}`}
+        >
+          Refresh
+        </Button>
+        <Button
+          variant="ghost"
+          size="xs"
+          onPress={handleRemove}
+          disabled={busy}
+          accessibilityLabel={`Remove ${title}`}
+        >
+          Remove
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+function ProviderAuthProfilesSection(props: { provider: string; serverId: string }) {
+  const { provider, serverId } = props;
+  const {
+    profiles = [],
+    isLoading,
+    isRefreshing,
+    isSupported,
+    importCurrent,
+    refreshProfile,
+    setDefault,
+    remove,
+  } = useProviderAuthProfiles(serverId, provider as AgentProvider);
+  const [error, setError] = useState<string | null>(null);
+
+  const runAuthAction = useCallback(async (action: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await action();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Account action failed");
+    }
+  }, []);
+
+  const handleImportCurrent = useCallback(() => {
+    void runAuthAction(() => importCurrent({ setDefault: true }));
+  }, [importCurrent, runAuthAction]);
+  const handleRefresh = useCallback(
+    (profileKey: string) => {
+      void runAuthAction(() => refreshProfile(profileKey));
+    },
+    [refreshProfile, runAuthAction],
+  );
+  const handleSetDefault = useCallback(
+    (profileKey: string) => {
+      void runAuthAction(() => setDefault(profileKey));
+    },
+    [runAuthAction, setDefault],
+  );
+  const handleRemove = useCallback(
+    (profileKey: string) => {
+      void runAuthAction(() => remove(profileKey));
+    },
+    [remove, runAuthAction],
+  );
+  const importCurrentAction = useMemo(
+    () => (
+      <Button
+        variant="ghost"
+        size="xs"
+        onPress={handleImportCurrent}
+        disabled={isRefreshing}
+        loading={isRefreshing && profiles.length === 0}
+        accessibilityLabel="Import current provider account"
+      >
+        Import current
+      </Button>
+    ),
+    [handleImportCurrent, isRefreshing, profiles.length],
+  );
+
+  if (!isSupported) {
+    return null;
+  }
+
+  return (
+    <SettingsSection title="Accounts" trailing={importCurrentAction}>
+      <View style={settingsStyles.card}>
+        {isLoading && profiles.length === 0 ? (
+          <View style={sheetStyles.emptyRow}>
+            <ActivityIndicator size="small" />
+            <Text style={sheetStyles.mutedText}>Loading accounts…</Text>
+          </View>
+        ) : null}
+        {!isLoading && profiles.length === 0 ? (
+          <View style={sheetStyles.emptyRow}>
+            <Text style={sheetStyles.mutedText}>No accounts imported</Text>
+          </View>
+        ) : null}
+        {profiles.map((profile) => (
+          <AuthProfileRow
+            key={profile.key}
+            profile={profile}
+            busy={isRefreshing}
+            onRefresh={handleRefresh}
+            onSetDefault={handleSetDefault}
+            onRemove={handleRemove}
           />
         ))}
       </View>
@@ -425,6 +600,8 @@ export function ProviderDiagnosticSheet({
 
       <CustomModelsSection provider={provider} serverId={serverId} refresh={refresh} />
 
+      <ProviderAuthProfilesSection provider={provider} serverId={serverId} />
+
       <View>
         <View style={sheetStyles.modelsHeader}>
           <Text style={settingsStyles.sectionHeaderTitle}>Models</Text>
@@ -532,6 +709,18 @@ const sheetStyles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+  },
+  profileActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: theme.spacing[1],
+    flexShrink: 0,
+  },
+  defaultBadge: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    paddingHorizontal: theme.spacing[2],
   },
   modelsScroll: {
     maxHeight: 360,

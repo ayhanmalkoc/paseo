@@ -96,6 +96,7 @@ export function buildDraftComposerCommandConfig(input: {
   modeOptions: DraftAgentStatusBarProps["modeOptions"];
   selectedMode: string;
   effectiveModelId: string;
+  authProfileKey?: string;
   effectiveThinkingOptionId: string;
   featureValues?: Record<string, unknown>;
 }): DraftCommandConfig | undefined {
@@ -111,6 +112,7 @@ export function buildDraftComposerCommandConfig(input: {
       ? { modeId: input.selectedMode }
       : {}),
     ...(input.effectiveModelId ? { model: input.effectiveModelId } : {}),
+    ...(input.authProfileKey ? { authProfileKey: input.authProfileKey } : {}),
     ...(input.effectiveThinkingOptionId
       ? { thinkingOptionId: input.effectiveThinkingOptionId }
       : {}),
@@ -135,6 +137,10 @@ export function buildDraftStatusControls(input: {
     models: formState.availableModels,
     selectedModel: formState.selectedModel,
     onSelectModel: formState.setModelFromUser,
+    authProfiles: formState.authProfiles,
+    selectedAuthProfileKey: formState.selectedAuthProfileKey,
+    onSelectAuthProfile: formState.setAuthProfileFromUser,
+    isAuthProfilesLoading: formState.isAuthProfilesLoading,
     isModelLoading: formState.isModelLoading,
     allProviderModels: formState.allProviderModels,
     isAllModelsLoading: formState.isAllModelsLoading,

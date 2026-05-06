@@ -98,6 +98,7 @@ export interface Agent {
   title: string | null;
   cwd: string;
   model: string | null;
+  authProfileKey?: string | null;
   features?: AgentFeature[];
   thinkingOptionId?: string | null;
   requiresAttention?: boolean;

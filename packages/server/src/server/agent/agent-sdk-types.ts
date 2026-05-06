@@ -84,6 +84,35 @@ export interface ProviderSnapshotEntry {
   defaultModeId?: string | null;
 }
 
+export type ProviderAuthStatus = "ready" | "needs-login" | "invalid" | "refreshing";
+export type ProviderAuthMode = "chatgpt" | "api-key" | "unknown";
+
+export interface ProviderAuthUsageSnapshot {
+  source: "local-rollout" | "provider-api";
+  primaryUsedPercent?: number;
+  secondaryUsedPercent?: number;
+  creditsRemaining?: number;
+  refreshedAt: string;
+}
+
+export interface ProviderAuthProfile {
+  provider: AgentProvider;
+  key: string;
+  alias: string;
+  email?: string;
+  accountName?: string;
+  accountId?: string;
+  userId?: string;
+  authMode: ProviderAuthMode;
+  plan?: string;
+  status: ProviderAuthStatus;
+  isDefault?: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+  usage?: ProviderAuthUsageSnapshot;
+}
+
 export interface AgentFeatureToggle {
   type: "toggle";
   id: string;
@@ -450,6 +479,7 @@ export interface AgentSessionConfig {
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
+  authProfileKey?: string | null;
   featureValues?: Record<string, unknown>;
   title?: string | null;
   approvalPolicy?: string;

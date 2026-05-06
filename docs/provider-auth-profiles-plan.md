@@ -1,8 +1,27 @@
 # Provider Auth Profiles Plan
 
-Status: decision plan
+Status: Codex MVP implemented on `codex/provider-auth-profiles`
 Branch: `codex/provider-auth-profiles`
 Reference: [Loongphy/codex-auth](https://github.com/Loongphy/codex-auth), inspected at `d3102f0`
+
+## Implementation Status
+
+The Codex MVP is implemented behind a provider-neutral auth profile service:
+
+- server-side storage, sanitized RPC schemas, and Codex `auth.json` parsing are
+  in place;
+- Codex launches receive an isolated `CODEX_HOME` through `AgentLaunchContext`;
+- new and persisted agents carry `authProfileKey` without breaking older
+  clients;
+- provider settings expose account import/default/refresh/remove actions;
+- composer Preferences expose a separate Account row while leaving
+  provider/model selection unchanged;
+- local Codex rollout usage scanning and default/auto-ready selection are
+  implemented server-side.
+
+Future provider support still requires provider-specific adapters for Claude,
+OpenCode, Pi, or custom providers; the app/RPC contract is intended to remain
+unchanged for those additions.
 
 ## Goal
 

@@ -15,6 +15,7 @@ export interface DraftCommandConfig {
   cwd: string;
   modeId?: string;
   model?: string;
+  authProfileKey?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
 }
@@ -28,6 +29,7 @@ function commandsQueryKey(serverId: string, agentId: string, draftConfig?: Draft
     draftConfig?.cwd ?? null,
     draftConfig?.modeId ?? null,
     draftConfig?.model ?? null,
+    draftConfig?.authProfileKey ?? null,
     draftConfig?.thinkingOptionId ?? null,
     draftConfig?.featureValues ?? null,
   ] as const;
