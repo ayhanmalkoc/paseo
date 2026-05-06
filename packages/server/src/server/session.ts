@@ -3007,10 +3007,6 @@ export class Session {
       if (!resolvedWorkspace) {
         throw new Error(`Workspace not found: ${msg.workspaceId}`);
       }
-      this.scheduleAutoNameWorkspaceBranchForFirstAgent({
-        workspace: resolvedWorkspace,
-        firstAgentContext,
-      });
       const snapshot = await this.agentManager.createAgent(
         {
           ...sessionConfig,
@@ -7310,8 +7306,9 @@ export class Session {
         { agentId, messageId: msg.messageId, textPrefix: msg.text.slice(0, 80) },
         "send_agent_message_request: dispatching shared sendPromptToAgent",
       );
+      let dispatchResult: { outOfBand: boolean };
       try {
-        await sendPromptToAgent({
+        dispatchResult = await sendPromptToAgent({
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
           agentId,
@@ -7330,6 +7327,19 @@ export class Session {
             agentId,
             accepted: false,
             error: message,
+          },
+        });
+        return;
+      }
+
+      if (dispatchResult.outOfBand) {
+        this.emit({
+          type: "send_agent_message_response",
+          payload: {
+            requestId: msg.requestId,
+            agentId,
+            accepted: true,
+            error: null,
           },
         });
         return;
