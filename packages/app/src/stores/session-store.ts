@@ -15,6 +15,7 @@ import type {
   AgentCapabilityFlags,
   AgentUsage,
   AgentPersistenceHandle,
+  AgentProfileSnapshot,
 } from "@server/server/agent/agent-sdk-types";
 import type {
   ServerInfoStatusPayload,
@@ -99,6 +100,7 @@ export interface Agent {
   cwd: string;
   model: string | null;
   authProfileKey?: string | null;
+  profileSnapshot?: AgentProfileSnapshot;
   features?: AgentFeature[];
   thinkingOptionId?: string | null;
   requiresAttention?: boolean;

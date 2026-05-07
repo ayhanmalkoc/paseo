@@ -62,17 +62,36 @@ export function attachAgentStoragePersistence(
 }
 
 export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSessionConfig> {
-  return {
+  const overrides: Partial<AgentSessionConfig> = {
     cwd: record.cwd,
-    modeId: record.lastModeId ?? record.config?.modeId ?? undefined,
-    model: record.config?.model ?? undefined,
-    thinkingOptionId: record.config?.thinkingOptionId ?? undefined,
-    featureValues: record.config?.featureValues ?? undefined,
-    title: record.config?.title ?? undefined,
-    extra: record.config?.extra ?? undefined,
-    systemPrompt: record.config?.systemPrompt ?? undefined,
-    mcpServers: record.config?.mcpServers ?? undefined,
+    modeId: resolveStoredModeId(record),
   };
+  applyStoredConfigOverrides(overrides, record.config);
+  return overrides;
+}
+
+function resolveStoredModeId(record: StoredAgentRecord): string | undefined {
+  return record.lastModeId ?? record.config?.modeId ?? undefined;
+}
+
+function applyStoredConfigOverrides(
+  target: Partial<AgentSessionConfig>,
+  config: StoredAgentRecord["config"],
+): void {
+  if (!config) {
+    return;
+  }
+  target.model = config.model ?? undefined;
+  target.thinkingOptionId = config.thinkingOptionId ?? undefined;
+  target.authProfileKey = config.authProfileKey ?? undefined;
+  target.runtimeProfileId = config.runtimeProfileId ?? undefined;
+  target.profileOverrides = config.profileOverrides ?? undefined;
+  target.profileSnapshot = config.profileSnapshot ?? undefined;
+  target.featureValues = config.featureValues ?? undefined;
+  target.title = config.title ?? undefined;
+  target.extra = config.extra ?? undefined;
+  target.systemPrompt = config.systemPrompt ?? undefined;
+  target.mcpServers = config.mcpServers ?? undefined;
 }
 
 export function buildSessionConfig(
@@ -91,6 +110,10 @@ export function buildSessionConfig(
     modeId: overrides.modeId,
     model: overrides.model,
     thinkingOptionId: overrides.thinkingOptionId,
+    authProfileKey: overrides.authProfileKey,
+    runtimeProfileId: overrides.runtimeProfileId,
+    profileOverrides: overrides.profileOverrides,
+    profileSnapshot: overrides.profileSnapshot,
     featureValues: overrides.featureValues,
     title: overrides.title,
     extra: overrides.extra,

@@ -14,7 +14,6 @@ import type {
   AgentClient,
   AgentCreateSessionOptions,
   AgentFeature,
-  AgentLaunchContext,
   AgentSlashCommand,
   AgentMode,
   AgentPermissionRequest,
@@ -53,6 +52,8 @@ import {
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "./provider-manifest.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
+import type { RuntimeProfileService } from "./runtime-profile-service.js";
+import { LaunchResolver, type ResolvedAgentLaunch } from "./launch-resolver.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -128,6 +129,8 @@ interface AgentManagerRescueTimeouts {
 interface ReloadAgentSessionOptions {
   forceCreateSession?: boolean;
   resolveDefaultAuthProfile?: boolean;
+  runtimeProfileId?: string | null;
+  profileOverrides?: AgentSessionConfig["profileOverrides"];
 }
 
 interface ProviderEnabledFlag {
@@ -146,6 +149,7 @@ export interface AgentManagerOptions {
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
   providerAuthService?: ProviderAuthService;
+  runtimeProfileService?: RuntimeProfileService;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
@@ -436,6 +440,7 @@ export class AgentManager {
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly providerAuthService: ProviderAuthService | null;
+  private readonly launchResolver: LaunchResolver;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -447,6 +452,10 @@ export class AgentManager {
     this.onAgentAttention = options?.onAgentAttention;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
     this.providerAuthService = options?.providerAuthService ?? null;
+    this.launchResolver = new LaunchResolver({
+      providerAuthService: this.providerAuthService,
+      runtimeProfileService: options.runtimeProfileService,
+    });
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -825,22 +834,24 @@ export class AgentManager {
     const injectedConfig = this.buildInjectedMcpConfig(config, resolvedAgentId);
     this.requireEnabledProvider(injectedConfig.provider);
     const normalizedConfig = await this.normalizeConfig(injectedConfig);
-    const authLaunch = await this.resolveProviderAuthLaunchContext(normalizedConfig, {
-      resolveDefault: true,
+    const resolvedLaunch = await this.resolveAgentLaunch(resolvedAgentId, normalizedConfig, {
+      resolveDefaultAuthProfile: true,
     });
-    const authConfig = this.withResolvedAuthProfile(normalizedConfig, authLaunch.profileKey);
     const launchConfig = this.withInjectedMcpHeaders(
-      authConfig,
+      resolvedLaunch.config,
       resolvedAgentId,
       options?.mcpServerHeaders,
     );
-    const launchContext = this.buildLaunchContext(resolvedAgentId, authLaunch.env);
     const client = await this.requireAvailableClient({
-      provider: authConfig.provider,
+      provider: launchConfig.provider,
     });
     const createOptions = this.buildCreateSessionOptions(options);
-    const session = await client.createSession(launchConfig, launchContext, createOptions);
-    return this.registerSession(session, authConfig, resolvedAgentId, {
+    const session = await client.createSession(
+      launchConfig,
+      resolvedLaunch.launchContext,
+      createOptions,
+    );
+    return this.registerSession(session, launchConfig, resolvedAgentId, {
       labels: options?.labels,
       workspaceId: options?.workspaceId,
     });
@@ -891,11 +902,9 @@ export class AgentManager {
       hasResumeOverrides = true;
     }
 
-    const authLaunch = await this.resolveProviderAuthLaunchContext(normalizedConfig, {
-      resolveDefault: false,
+    const resolvedLaunch = await this.resolveAgentLaunch(resolvedAgentId, normalizedConfig, {
+      resolveDefaultAuthProfile: false,
     });
-    const authConfig = this.withResolvedAuthProfile(normalizedConfig, authLaunch.profileKey);
-    const launchContext = this.buildLaunchContext(resolvedAgentId, authLaunch.env);
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
     if (!available) {
@@ -906,9 +915,9 @@ export class AgentManager {
     const session = await client.resumeSession(
       handle,
       hasResumeOverrides ? resumeOverrides : undefined,
-      launchContext,
+      resolvedLaunch.launchContext,
     );
-    return this.registerSession(session, authConfig, resolvedAgentId, options);
+    return this.registerSession(session, resolvedLaunch.config, resolvedAgentId, options);
   }
 
   // Hot-reload an active agent session with config overrides while preserving
@@ -934,18 +943,23 @@ export class AgentManager {
       ...existing.config,
       ...overrides,
       provider,
+      ...(options?.runtimeProfileId !== undefined
+        ? { runtimeProfileId: options.runtimeProfileId }
+        : {}),
+      ...(options?.profileOverrides !== undefined
+        ? { profileOverrides: options.profileOverrides }
+        : {}),
     } as AgentSessionConfig;
     const normalizedConfig = await this.normalizeConfig(refreshConfig);
-    const authLaunch = await this.resolveProviderAuthLaunchContext(normalizedConfig, {
-      resolveDefault: options?.resolveDefaultAuthProfile === true,
+    const resolvedLaunch = await this.resolveAgentLaunch(agentId, normalizedConfig, {
+      resolveDefaultAuthProfile: options?.resolveDefaultAuthProfile === true,
+      excludeAgentId: agentId,
     });
-    const authConfig = this.withResolvedAuthProfile(normalizedConfig, authLaunch.profileKey);
-    const launchContext = this.buildLaunchContext(agentId, authLaunch.env);
 
     const session =
       handle && options?.forceCreateSession !== true
-        ? await client.resumeSession(handle, authConfig, launchContext)
-        : await client.createSession(authConfig, launchContext);
+        ? await client.resumeSession(handle, resolvedLaunch.config, resolvedLaunch.launchContext)
+        : await client.createSession(resolvedLaunch.config, resolvedLaunch.launchContext);
 
     this.agentStreamCoalescer.flushAndDiscard(agentId);
     // Remove the existing agent entry before swapping sessions
@@ -958,7 +972,7 @@ export class AgentManager {
     await this.closeReloadedSession(existing.session, agentId);
 
     // Preserve existing labels and timeline during reload.
-    return this.registerSession(session, authConfig, agentId, {
+    return this.registerSession(session, resolvedLaunch.config, agentId, {
       labels: existing.labels,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
@@ -1165,6 +1179,31 @@ export class AgentManager {
       agentId,
       { authProfileKey: authLaunch.profileKey },
       { forceCreateSession: true },
+    );
+  }
+
+  async restartAgentWithRuntimeProfile(
+    agentId: string,
+    runtimeProfileId: string,
+    profileOverrides?: AgentSessionConfig["profileOverrides"],
+  ): Promise<ManagedAgent> {
+    this.requireSessionAgent(agentId);
+    const requestedProfileId = normalizeAuthProfileKey(runtimeProfileId);
+    if (!requestedProfileId) {
+      throw new Error("Runtime profile id is required");
+    }
+    return this.reloadAgentSession(
+      agentId,
+      {
+        runtimeProfileId: requestedProfileId,
+        profileOverrides,
+      },
+      {
+        forceCreateSession: true,
+        resolveDefaultAuthProfile: true,
+        runtimeProfileId: requestedProfileId,
+        profileOverrides,
+      },
     );
   }
 
@@ -3214,6 +3253,34 @@ export class AgentManager {
     return normalized;
   }
 
+  private async resolveAgentLaunch(
+    agentId: string,
+    normalizedConfig: AgentSessionConfig,
+    options: {
+      resolveDefaultAuthProfile: boolean;
+      excludeAgentId?: string;
+    },
+  ): Promise<ResolvedAgentLaunch> {
+    return this.launchResolver.resolve({
+      agentId,
+      config: normalizedConfig,
+      normalizedConfig,
+      resolveDefaultAuthProfile: options.resolveDefaultAuthProfile,
+      activeAgents: this.buildAccountLeaseSnapshots(),
+      excludeAgentId: options.excludeAgentId,
+    });
+  }
+
+  private buildAccountLeaseSnapshots(): Array<{
+    agentId: string;
+    profileSnapshot?: AgentSessionConfig["profileSnapshot"];
+  }> {
+    return Array.from(this.agents.values()).map((agent) => ({
+      agentId: agent.id,
+      profileSnapshot: agent.config.profileSnapshot,
+    }));
+  }
+
   private async resolveProviderAuthLaunchContext(
     config: AgentSessionConfig,
     options: { resolveDefault: boolean },
@@ -3232,31 +3299,6 @@ export class AgentManager {
       provider: config.provider,
       authProfileKey: requestedProfileKey,
     });
-  }
-
-  private withResolvedAuthProfile(
-    config: AgentSessionConfig,
-    profileKey: string | null,
-  ): AgentSessionConfig {
-    if (!profileKey) {
-      return config;
-    }
-    return {
-      ...config,
-      authProfileKey: profileKey,
-    };
-  }
-
-  private buildLaunchContext(
-    agentId: string,
-    providerAuthEnv?: Record<string, string>,
-  ): AgentLaunchContext {
-    return {
-      env: {
-        PASEO_AGENT_ID: agentId,
-        ...providerAuthEnv,
-      },
-    };
   }
 
   private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {

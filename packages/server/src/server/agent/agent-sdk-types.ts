@@ -85,7 +85,7 @@ export interface ProviderSnapshotEntry {
 }
 
 export type ProviderAuthStatus = "ready" | "needs-login" | "invalid" | "refreshing";
-export type ProviderAuthMode = "chatgpt" | "api-key" | "unknown";
+export type ProviderAuthMode = "chatgpt" | "api-key" | "oauth" | "external" | "unknown";
 
 export interface ProviderAuthUsageSnapshot {
   source: "local-rollout" | "provider-api";
@@ -111,6 +111,142 @@ export interface ProviderAuthProfile {
   updatedAt: string;
   lastUsedAt?: string;
   usage?: ProviderAuthUsageSnapshot;
+}
+
+export type ProviderAccount = ProviderAuthProfile;
+
+export type AccountLoginMethod = "chatgpt-device-code" | "chatgpt-browser" | "api-key";
+
+export type AccountLoginStatus =
+  | "starting"
+  | "pending-user"
+  | "importing"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "expired";
+
+export interface AccountLoginSession {
+  id: string;
+  provider: AgentProvider;
+  method: AccountLoginMethod;
+  status: AccountLoginStatus;
+  verificationUrl?: string;
+  userCode?: string;
+  account?: ProviderAccount;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt?: string;
+}
+
+export type RuntimeProfileConcurrencyPolicy = "allow" | "warn" | "single-active";
+
+export interface RuntimeProfileWorkspaceDefaults {
+  cwd?: string;
+  worktreePolicy?: "current" | "new-worktree" | "ask";
+}
+
+export interface RuntimeProfile {
+  id: string;
+  version: number;
+  name: string;
+  provider: AgentProvider;
+  accountKey?: string | null;
+  model?: string | null;
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
+  permissionPresetId?: string | null;
+  mcpServerIds?: string[];
+  skillIds?: string[];
+  instructionOverlay?: string | null;
+  systemPrompt?: string | null;
+  featureDefaults?: Record<string, unknown>;
+  featureValues?: Record<string, unknown>;
+  envOverlay?: Record<string, string>;
+  mcpServers?: Record<string, McpServerConfig>;
+  workspaceDefaults?: RuntimeProfileWorkspaceDefaults;
+  concurrencyPolicy: RuntimeProfileConcurrencyPolicy;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type RuntimeProfilePatch = Partial<
+  Pick<
+    RuntimeProfile,
+    | "name"
+    | "provider"
+    | "accountKey"
+    | "model"
+    | "modeId"
+    | "thinkingOptionId"
+    | "permissionPresetId"
+    | "mcpServerIds"
+    | "skillIds"
+    | "instructionOverlay"
+    | "systemPrompt"
+    | "featureDefaults"
+    | "featureValues"
+    | "envOverlay"
+    | "mcpServers"
+    | "workspaceDefaults"
+    | "concurrencyPolicy"
+  >
+>;
+
+export type RuntimeProfileLaunchOverrides = Partial<
+  Pick<
+    RuntimeProfile,
+    | "accountKey"
+    | "model"
+    | "modeId"
+    | "thinkingOptionId"
+    | "permissionPresetId"
+    | "mcpServerIds"
+    | "skillIds"
+    | "instructionOverlay"
+    | "systemPrompt"
+    | "featureDefaults"
+    | "featureValues"
+    | "envOverlay"
+    | "mcpServers"
+    | "workspaceDefaults"
+  >
+>;
+
+export interface AgentProfileSnapshot {
+  sourceProfileId?: string;
+  sourceProfileVersion?: number;
+  sourceProfileName?: string;
+  provider: AgentProvider;
+  accountKey?: string | null;
+  model?: string | null;
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
+  permissionPresetId?: string | null;
+  mcpServerIds?: string[];
+  skillIds?: string[];
+  instructionOverlay?: string | null;
+  systemPrompt?: string | null;
+  featureDefaults?: Record<string, unknown>;
+  featureValues?: Record<string, unknown>;
+  envOverlay?: Record<string, string>;
+  workspaceDefaults?: RuntimeProfileWorkspaceDefaults;
+  concurrencyPolicy?: RuntimeProfileConcurrencyPolicy;
+  resolvedAt: string;
+}
+
+export interface RuntimeLaunchWarning {
+  code:
+    | "account-in-use"
+    | "runtime-profile-in-use"
+    | "missing-account"
+    | "invalid-account"
+    | "provider-unavailable";
+  message: string;
+  accountKey?: string | null;
+  runtimeProfileId?: string | null;
+  agentIds?: string[];
 }
 
 export interface AgentFeatureToggle {
@@ -480,6 +616,9 @@ export interface AgentSessionConfig {
   model?: string;
   thinkingOptionId?: string;
   authProfileKey?: string | null;
+  runtimeProfileId?: string | null;
+  profileOverrides?: RuntimeProfileLaunchOverrides;
+  profileSnapshot?: AgentProfileSnapshot;
   featureValues?: Record<string, unknown>;
   title?: string | null;
   approvalPolicy?: string;

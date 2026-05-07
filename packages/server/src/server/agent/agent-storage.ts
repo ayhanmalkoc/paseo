@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { Logger } from "pino";
 
-import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
+import { AgentFeatureSchema, AgentProfileSnapshotSchema, AgentStatusSchema } from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -16,6 +16,9 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
     authProfileKey: z.string().nullable().optional(),
+    runtimeProfileId: z.string().nullable().optional(),
+    profileOverrides: z.record(z.any()).nullable().optional(),
+    profileSnapshot: AgentProfileSnapshotSchema.optional(),
     featureValues: z.record(z.unknown()).nullable().optional(),
     extra: z.record(z.any()).nullable().optional(),
     systemPrompt: z.string().nullable().optional(),
@@ -74,6 +77,9 @@ export type SerializableAgentConfig = Pick<
   | "model"
   | "thinkingOptionId"
   | "authProfileKey"
+  | "runtimeProfileId"
+  | "profileOverrides"
+  | "profileSnapshot"
   | "featureValues"
   | "extra"
   | "systemPrompt"

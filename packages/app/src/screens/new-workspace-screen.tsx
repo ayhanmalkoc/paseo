@@ -370,6 +370,9 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
     ...(composerState.effectiveAuthProfileKey
       ? { authProfileKey: composerState.effectiveAuthProfileKey }
       : {}),
+    ...(composerState.effectiveRuntimeProfileId
+      ? { runtimeProfileId: composerState.effectiveRuntimeProfileId }
+      : {}),
     ...(composerState.effectiveThinkingOptionId
       ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
       : {}),

@@ -62,6 +62,14 @@ import type {
   RemoveProviderAuthProfileResponseMessage,
   SetDefaultProviderAuthProfileResponseMessage,
   RefreshProviderAuthProfileResponseMessage,
+  ListAccountLoginMethodsResponseMessage,
+  StartAccountLoginResponseMessage,
+  CancelAccountLoginResponseMessage,
+  ListAccountLoginSessionsResponseMessage,
+  ListRuntimeProfilesResponseMessage,
+  CreateRuntimeProfileResponseMessage,
+  UpdateRuntimeProfileResponseMessage,
+  DeleteRuntimeProfileResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -82,6 +90,8 @@ import type {
   AgentPersistenceHandle,
   AgentProvider,
   AgentSessionConfig,
+  AccountLoginMethod,
+  RuntimeProfilePatch,
 } from "../server/agent/agent-sdk-types.js";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
 import { isRelayClientWebSocketUrl } from "../shared/daemon-endpoints.js";
@@ -308,6 +318,14 @@ type ImportProviderAuthProfilePayload = ImportProviderAuthProfileResponseMessage
 type RemoveProviderAuthProfilePayload = RemoveProviderAuthProfileResponseMessage["payload"];
 type SetDefaultProviderAuthProfilePayload = SetDefaultProviderAuthProfileResponseMessage["payload"];
 type RefreshProviderAuthProfilePayload = RefreshProviderAuthProfileResponseMessage["payload"];
+type ListAccountLoginMethodsPayload = ListAccountLoginMethodsResponseMessage["payload"];
+type StartAccountLoginPayload = StartAccountLoginResponseMessage["payload"];
+type CancelAccountLoginPayload = CancelAccountLoginResponseMessage["payload"];
+type ListAccountLoginSessionsPayload = ListAccountLoginSessionsResponseMessage["payload"];
+type ListRuntimeProfilesPayload = ListRuntimeProfilesResponseMessage["payload"];
+type CreateRuntimeProfilePayload = CreateRuntimeProfileResponseMessage["payload"];
+type UpdateRuntimeProfilePayload = UpdateRuntimeProfileResponseMessage["payload"];
+type DeleteRuntimeProfilePayload = DeleteRuntimeProfileResponseMessage["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -2217,6 +2235,39 @@ export class DaemonClient {
     }
   }
 
+  async restartAgentWithRuntimeProfile(
+    agentId: string,
+    runtimeProfileId: string,
+    profileOverrides?: AgentSessionConfig["profileOverrides"],
+  ): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "restart_agent_with_runtime_profile_request",
+      agentId,
+      runtimeProfileId,
+      ...(profileOverrides ? { profileOverrides } : {}),
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "restart_agent_with_runtime_profile_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "restartAgentWithRuntimeProfile rejected");
+    }
+  }
+
   async restartServer(reason?: string, requestId?: string): Promise<RestartRequestedStatusPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({
@@ -3354,6 +3405,132 @@ export class DaemonClient {
       },
       responseType: "refresh_provider_auth_profile_response",
       timeout: 30000,
+    });
+  }
+
+  async listAccountLoginMethods(options: {
+    provider: AgentProvider;
+    requestId?: string;
+  }): Promise<ListAccountLoginMethodsPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "list_account_login_methods_request",
+        provider: options.provider,
+      },
+      responseType: "list_account_login_methods_response",
+      timeout: 10000,
+    });
+  }
+
+  async startAccountLogin(options: {
+    provider: AgentProvider;
+    method: AccountLoginMethod;
+    setDefault?: boolean;
+    requestId?: string;
+  }): Promise<StartAccountLoginPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "start_account_login_request",
+        provider: options.provider,
+        method: options.method,
+        setDefault: options.setDefault,
+      },
+      responseType: "start_account_login_response",
+      timeout: 30000,
+    });
+  }
+
+  async cancelAccountLogin(options: {
+    sessionId: string;
+    requestId?: string;
+  }): Promise<CancelAccountLoginPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "cancel_account_login_request",
+        sessionId: options.sessionId,
+      },
+      responseType: "cancel_account_login_response",
+      timeout: 30000,
+    });
+  }
+
+  async listAccountLoginSessions(options?: {
+    provider?: AgentProvider;
+    requestId?: string;
+  }): Promise<ListAccountLoginSessionsPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "list_account_login_sessions_request",
+        provider: options?.provider,
+      },
+      responseType: "list_account_login_sessions_response",
+      timeout: 10000,
+    });
+  }
+
+  async listRuntimeProfiles(options?: {
+    provider?: AgentProvider;
+    requestId?: string;
+  }): Promise<ListRuntimeProfilesPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "list_runtime_profiles_request",
+        provider: options?.provider,
+      },
+      responseType: "list_runtime_profiles_response",
+      timeout: 10000,
+    });
+  }
+
+  async createRuntimeProfile(options: {
+    profile: RuntimeProfilePatch & { name: string; provider: AgentProvider };
+    requestId?: string;
+  }): Promise<CreateRuntimeProfilePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "create_runtime_profile_request",
+        profile: options.profile,
+      },
+      responseType: "create_runtime_profile_response",
+      timeout: 10000,
+    });
+  }
+
+  async updateRuntimeProfile(options: {
+    profileId: string;
+    patch: RuntimeProfilePatch;
+    requestId?: string;
+  }): Promise<UpdateRuntimeProfilePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "update_runtime_profile_request",
+        profileId: options.profileId,
+        patch: options.patch,
+      },
+      responseType: "update_runtime_profile_response",
+      timeout: 10000,
+    });
+  }
+
+  async deleteRuntimeProfile(options: {
+    profileId: string;
+    requestId?: string;
+  }): Promise<DeleteRuntimeProfilePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "delete_runtime_profile_request",
+        profileId: options.profileId,
+      },
+      responseType: "delete_runtime_profile_response",
+      timeout: 10000,
     });
   }
 

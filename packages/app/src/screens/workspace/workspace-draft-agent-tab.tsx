@@ -46,6 +46,7 @@ interface AutoSubmitConfig {
   modeId: string | null;
   model: string | null;
   authProfileKey: string | null;
+  runtimeProfileId: string | null;
   thinkingOptionId: string | null;
   featureValues: Record<string, unknown>;
 }
@@ -56,6 +57,7 @@ function resolveAutoSubmitConfig(
     modeId?: string | null;
     model?: string | null;
     authProfileKey?: string | null;
+    runtimeProfileId?: string | null;
     thinkingOptionId?: string | null;
     featureValues?: Record<string, unknown>;
   } | null,
@@ -66,6 +68,7 @@ function resolveAutoSubmitConfig(
     modeId: pending.modeId ?? null,
     model: pending.model ?? null,
     authProfileKey: pending.authProfileKey ?? null,
+    runtimeProfileId: pending.runtimeProfileId ?? null,
     thinkingOptionId: pending.thinkingOptionId ?? null,
     featureValues: pending.featureValues ?? {},
   };
@@ -166,6 +169,7 @@ function buildSubmitDraftAgentConfig(input: {
     modeOptions: unknown[];
     effectiveModelId: string | null;
     effectiveAuthProfileKey: string | null;
+    effectiveRuntimeProfileId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
   };
@@ -182,6 +186,8 @@ function buildSubmitDraftAgentConfig(input: {
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
     authProfileKey:
       autoSubmitConfig?.authProfileKey ?? (composerState.effectiveAuthProfileKey || undefined),
+    runtimeProfileId:
+      autoSubmitConfig?.runtimeProfileId ?? (composerState.effectiveRuntimeProfileId || undefined),
     thinkingOptionId:
       autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
     featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
@@ -203,6 +209,7 @@ async function submitDraftCreateRequest(input: {
     modeOptions: unknown[];
     effectiveModelId: string | null;
     effectiveAuthProfileKey: string | null;
+    effectiveRuntimeProfileId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
   };
@@ -262,6 +269,7 @@ function buildDraftAgentSnapshot(input: {
   composerState: {
     effectiveModelId: string | null;
     effectiveAuthProfileKey: string | null;
+    effectiveRuntimeProfileId: string | null;
     effectiveThinkingOptionId: string | null;
     modeOptions: unknown[];
     selectedMode: string;
@@ -275,6 +283,8 @@ function buildDraftAgentSnapshot(input: {
   const model = autoSubmitConfig?.model ?? (composerState.effectiveModelId || null);
   const authProfileKey =
     autoSubmitConfig?.authProfileKey ?? (composerState.effectiveAuthProfileKey || null);
+  const runtimeProfileId =
+    autoSubmitConfig?.runtimeProfileId ?? (composerState.effectiveRuntimeProfileId || null);
   const thinkingOptionId =
     autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || null);
   const modeId = resolveDraftModeId({
@@ -305,6 +315,17 @@ function buildDraftAgentSnapshot(input: {
     cwd: workspaceDirectory,
     model,
     authProfileKey,
+    profileSnapshot: runtimeProfileId
+      ? {
+          sourceProfileId: runtimeProfileId,
+          provider,
+          accountKey: authProfileKey,
+          model,
+          modeId,
+          thinkingOptionId,
+          resolvedAt: now.toISOString(),
+        }
+      : undefined,
     features: composerState.statusControls.features,
     thinkingOptionId,
     labels: {},

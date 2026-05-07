@@ -17,6 +17,7 @@ export interface FormInitialValues {
   modeId?: string | null;
   model?: string | null;
   authProfileKey?: string | null;
+  runtimeProfileId?: string | null;
   thinkingOptionId?: string | null;
   workingDir?: string;
 }
@@ -27,6 +28,7 @@ export interface FormState {
   modeId: string;
   model: string;
   authProfileKey: string;
+  runtimeProfileId: string;
   thinkingOptionId: string;
   workingDir: string;
 }
@@ -37,6 +39,7 @@ export interface UserModifiedFields {
   modeId: boolean;
   model: boolean;
   authProfileKey: boolean;
+  runtimeProfileId: boolean;
   thinkingOptionId: boolean;
   workingDir: boolean;
 }
@@ -52,6 +55,7 @@ export const INITIAL_USER_MODIFIED: UserModifiedFields = {
   modeId: false,
   model: false,
   authProfileKey: false,
+  runtimeProfileId: false,
   thinkingOptionId: false,
   workingDir: false,
 };
@@ -96,6 +100,7 @@ export type AgentFormAction =
       availableModels: AgentModelDefinition[] | null;
     }
   | { type: "SET_AUTH_PROFILE_FROM_USER"; authProfileKey: string }
+  | { type: "SET_RUNTIME_PROFILE_FROM_USER"; runtimeProfileId: string }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
   | { type: "SET_WORKING_DIR"; value: string }
   | { type: "SET_WORKING_DIR_FROM_USER"; value: string }
@@ -191,6 +196,7 @@ export function hasFormStateChanged(prev: FormState, next: FormState): boolean {
     prev.modeId !== next.modeId ||
     prev.model !== next.model ||
     prev.authProfileKey !== next.authProfileKey ||
+    prev.runtimeProfileId !== next.runtimeProfileId ||
     prev.thinkingOptionId !== next.thinkingOptionId ||
     prev.workingDir !== next.workingDir
   );
@@ -431,6 +437,9 @@ export function resolveFormState(
     providerPrefs,
     availableAuthProfiles,
   });
+  if (!userModified.runtimeProfileId) {
+    result.runtimeProfileId = normalizeAuthProfileKey(initialValues?.runtimeProfileId);
+  }
 
   result.thinkingOptionId = resolveThinkingOption({
     provider: result.provider,
@@ -553,9 +562,15 @@ function resolveAgentFormBase(
           modeId: nextModeId,
           model: nextModelId,
           authProfileKey: "",
+          runtimeProfileId: "",
           thinkingOptionId: nextThinkingOptionId,
         },
-        userModified: { ...state.userModified, provider: true, authProfileKey: false },
+        userModified: {
+          ...state.userModified,
+          provider: true,
+          authProfileKey: false,
+          runtimeProfileId: false,
+        },
       };
     }
 
@@ -574,6 +589,7 @@ function resolveAgentFormBase(
           model: nextModelId,
           modeId: action.providerDef?.defaultModeId ?? "",
           authProfileKey: "",
+          runtimeProfileId: "",
           thinkingOptionId: nextThinkingOptionId,
         },
         userModified: {
@@ -581,6 +597,7 @@ function resolveAgentFormBase(
           provider: true,
           model: true,
           authProfileKey: false,
+          runtimeProfileId: false,
         },
       };
     }
@@ -645,6 +662,12 @@ export function resolveAgentForm(
     return {
       form: { ...state.form, authProfileKey: normalizeAuthProfileKey(action.authProfileKey) },
       userModified: { ...state.userModified, authProfileKey: true },
+    };
+  }
+  if (action.type === "SET_RUNTIME_PROFILE_FROM_USER") {
+    return {
+      form: { ...state.form, runtimeProfileId: normalizeAuthProfileKey(action.runtimeProfileId) },
+      userModified: { ...state.userModified, runtimeProfileId: true },
     };
   }
   return resolveAgentFormBase(state, action);

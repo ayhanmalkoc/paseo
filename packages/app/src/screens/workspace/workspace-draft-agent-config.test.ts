@@ -10,6 +10,7 @@ describe("workspace-draft-agent-config", () => {
         modeId: "auto",
         model: "gpt-5.4",
         authProfileKey: "codex-profile",
+        runtimeProfileId: "codex-runtime-profile",
         thinkingOptionId: "high",
       }),
     ).toEqual({
@@ -18,6 +19,7 @@ describe("workspace-draft-agent-config", () => {
       modeId: "auto",
       model: "gpt-5.4",
       authProfileKey: "codex-profile",
+      runtimeProfileId: "codex-runtime-profile",
       thinkingOptionId: "high",
     });
   });

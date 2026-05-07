@@ -6,10 +6,12 @@ import type {
   AgentProvider,
   ProviderAuthProfile,
   ProviderSnapshotEntry,
+  RuntimeProfile,
 } from "@server/server/agent/agent-sdk-types";
 import { useHosts } from "@/runtime/host-runtime";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { useProviderAuthProfiles } from "./use-provider-auth-profiles";
+import { useRuntimeProfiles } from "./use-runtime-profiles";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
   useFormPreferences,
@@ -55,6 +57,10 @@ export interface UseAgentFormStateResult {
   setModelFromUser: (modelId: string) => void;
   selectedAuthProfileKey: string;
   setAuthProfileFromUser: (authProfileKey: string) => void;
+  selectedRuntimeProfileId: string;
+  setRuntimeProfileFromUser: (runtimeProfileId: string) => void;
+  runtimeProfiles: RuntimeProfile[];
+  isRuntimeProfilesLoading: boolean;
   selectedThinkingOptionId: string;
   setThinkingOptionFromUser: (thinkingOptionId: string) => void;
   workingDir: string;
@@ -185,6 +191,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         modeId: "",
         model: "",
         authProfileKey: "",
+        runtimeProfileId: "",
         thinkingOptionId: "",
         workingDir: "",
       },
@@ -258,6 +265,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     () => providerAuthProfiles.profiles ?? [],
     [providerAuthProfiles.profiles],
   );
+  const runtimeProfilesQuery = useRuntimeProfiles(formState.serverId, formState.provider);
   const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
   const snapshotSelectedProviderModes = resolveSelectedProviderModes({
     selectedEntry: snapshotSelectedEntry,
@@ -460,6 +468,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     [updatePreferences],
   );
 
+  const setRuntimeProfileFromUser = useCallback((runtimeProfileId: string) => {
+    dispatch({ type: "SET_RUNTIME_PROFILE_FROM_USER", runtimeProfileId });
+  }, []);
+
   const setThinkingOptionFromUser = useCallback(
     (thinkingOptionId: string) => {
       dispatch({ type: "SET_THINKING_OPTION_FROM_USER", thinkingOptionId });
@@ -541,6 +553,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       setModelFromUser,
       selectedAuthProfileKey: formState.authProfileKey,
       setAuthProfileFromUser,
+      selectedRuntimeProfileId: formState.runtimeProfileId,
+      setRuntimeProfileFromUser,
+      runtimeProfiles: runtimeProfilesQuery.profiles,
+      isRuntimeProfilesLoading: runtimeProfilesQuery.isLoading,
       selectedThinkingOptionId: formState.thinkingOptionId,
       setThinkingOptionFromUser,
       workingDir: formState.workingDir,
@@ -572,6 +588,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       resolvedModelId,
       formState.thinkingOptionId,
       formState.authProfileKey,
+      formState.runtimeProfileId,
       formState.workingDir,
       setSelectedServerId,
       setSelectedServerIdFromUser,
@@ -579,6 +596,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       setModeFromUser,
       setModelFromUser,
       setAuthProfileFromUser,
+      setRuntimeProfileFromUser,
       setThinkingOptionFromUser,
       setWorkingDir,
       setWorkingDirFromUser,
@@ -590,6 +608,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       availableModels,
       authProfiles,
       providerAuthProfiles.isLoading,
+      runtimeProfilesQuery.profiles,
+      runtimeProfilesQuery.isLoading,
       allProviderModels,
       isAllModelsLoading,
       availableThinkingOptions,

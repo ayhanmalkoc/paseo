@@ -99,6 +99,8 @@ import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { CodexProviderAuthAdapter } from "./agent/provider-auth-codex.js";
 import { ProviderAuthService } from "./agent/provider-auth-service.js";
+import { RuntimeProfileService } from "./agent/runtime-profile-service.js";
+import { AccountOnboardingService } from "./agent/account-onboarding-service.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
 import {
@@ -463,6 +465,16 @@ export async function createPaseoDaemon(
     logger,
     adapters: [new CodexProviderAuthAdapter()],
   });
+  const runtimeProfileService = new RuntimeProfileService({
+    paseoHome: config.paseoHome,
+    logger,
+  });
+  const accountOnboardingService = new AccountOnboardingService({
+    paseoHome: config.paseoHome,
+    logger,
+    providerAuthService,
+    runtimeSettings: config.agentProviderSettings,
+  });
   void providerAuthService.syncAllCurrentProfiles().catch((error) => {
     logger.warn({ err: error }, "Failed to sync provider auth profiles during bootstrap");
   });
@@ -474,6 +486,7 @@ export async function createPaseoDaemon(
     providerDefinitions: providerRegistry,
     registry: agentStorage,
     providerAuthService,
+    runtimeProfileService,
     logger,
   });
 
@@ -866,6 +879,8 @@ export async function createPaseoDaemon(
             workspaceGitService,
             github,
             providerAuthService,
+            runtimeProfileService,
+            accountOnboardingService,
           );
 
           if (relayEnabled) {

@@ -37,6 +37,8 @@ import type {
 } from "./agent/provider-launch-config.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { ProviderAuthService } from "./agent/provider-auth-service.js";
+import type { RuntimeProfileService } from "./agent/runtime-profile-service.js";
+import type { AccountOnboardingService } from "./agent/account-onboarding-service.js";
 import { buildProviderRegistry, createClientsFromRegistry } from "./agent/provider-registry.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
@@ -415,6 +417,8 @@ export class VoiceAssistantWebSocketServer {
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private unsubscribeSpeechReadiness: (() => void) | null = null;
   private unsubscribeDaemonConfigChange: (() => void) | null = null;
+  private readonly runtimeProfileService: RuntimeProfileService | null;
+  private readonly accountOnboardingService: AccountOnboardingService | null;
 
   constructor(
     server: HTTPServer,
@@ -457,6 +461,8 @@ export class VoiceAssistantWebSocketServer {
     workspaceGitService?: WorkspaceGitService,
     github?: GitHubService,
     providerAuthService?: ProviderAuthService,
+    runtimeProfileService?: RuntimeProfileService,
+    accountOnboardingService?: AccountOnboardingService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -481,6 +487,8 @@ export class VoiceAssistantWebSocketServer {
     this.github = github ?? createGitHubService();
     this.workspaceGitService = workspaceGitService ?? createFallbackWorkspaceGitService();
     this.providerAuthService = providerAuthService ?? null;
+    this.runtimeProfileService = runtimeProfileService ?? null;
+    this.accountOnboardingService = accountOnboardingService ?? null;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.daemonConfigStore = daemonConfigStore;
@@ -932,6 +940,8 @@ export class VoiceAssistantWebSocketServer {
       terminalManager: this.terminalManager,
       providerSnapshotManager: this.providerSnapshotManager,
       providerAuthService: this.providerAuthService ?? undefined,
+      runtimeProfileService: this.runtimeProfileService ?? undefined,
+      accountOnboardingService: this.accountOnboardingService ?? undefined,
       scriptRouteStore: this.scriptRouteStore ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
@@ -1099,6 +1109,10 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         providerAuthProfiles: true,
+        providerAuthAccounts: true,
+        providerAccountOnboarding: this.accountOnboardingService !== null,
+        runtimeProfiles: this.runtimeProfileService !== null,
+        agentProfileSnapshots: true,
       },
     };
   }

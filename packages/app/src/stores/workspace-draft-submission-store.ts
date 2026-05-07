@@ -13,6 +13,7 @@ export interface PendingWorkspaceDraftSubmission {
   modeId?: string;
   model?: string;
   authProfileKey?: string;
+  runtimeProfileId?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
   allowEmptyText?: boolean;

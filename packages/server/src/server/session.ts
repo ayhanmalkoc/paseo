@@ -89,6 +89,8 @@ import type {
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
 import type { ProviderAuthService } from "./agent/provider-auth-service.js";
+import type { RuntimeProfileService } from "./agent/runtime-profile-service.js";
+import type { AccountOnboardingService } from "./agent/account-onboarding-service.js";
 import type {
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
@@ -581,6 +583,8 @@ export interface SessionOptions {
   terminalManager: TerminalManager | null;
   providerSnapshotManager?: ProviderSnapshotManager;
   providerAuthService?: ProviderAuthService;
+  runtimeProfileService?: RuntimeProfileService;
+  accountOnboardingService?: AccountOnboardingService;
   scriptRouteStore?: ScriptRouteStore;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
@@ -864,6 +868,10 @@ export class Session {
   private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private readonly isDev: boolean;
   private readonly daemonAuthToken: string | null;
+  private readonly runtimeProfileService: RuntimeProfileService | null;
+  private readonly accountOnboardingService: AccountOnboardingService | null;
+  private unsubscribeAccountLoginEvents: (() => void) | null = null;
+  private unsubscribeRuntimeProfileEvents: (() => void) | null = null;
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
@@ -897,6 +905,8 @@ export class Session {
       terminalManager,
       providerSnapshotManager,
       providerAuthService,
+      runtimeProfileService,
+      accountOnboardingService,
       scriptRouteStore,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
@@ -950,6 +960,8 @@ export class Session {
     });
     this.providerSnapshotManager = providerSnapshotManager ?? null;
     this.providerAuthService = providerAuthService ?? null;
+    this.runtimeProfileService = runtimeProfileService ?? null;
+    this.accountOnboardingService = accountOnboardingService ?? null;
     this.scriptRouteStore = scriptRouteStore ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
@@ -973,6 +985,8 @@ export class Session {
     });
 
     this.initializePerSessionManagers({ tts, stt, dictation });
+    this.subscribeToAccountLoginEvents();
+    this.subscribeToRuntimeProfileEvents();
 
     // Initialize agent MCP client asynchronously
     void this.initializeAgentMcp();
@@ -1263,6 +1277,30 @@ export class Session {
         this.providerSnapshotManager?.off("change", handleProviderSnapshotChange);
       };
     }
+  }
+
+  private subscribeToAccountLoginEvents(): void {
+    if (!this.accountOnboardingService) {
+      return;
+    }
+    this.unsubscribeAccountLoginEvents = this.accountOnboardingService.subscribe((session) => {
+      this.emit({
+        type: "account_login_update",
+        payload: { session },
+      });
+    });
+  }
+
+  private subscribeToRuntimeProfileEvents(): void {
+    if (!this.runtimeProfileService) {
+      return;
+    }
+    this.unsubscribeRuntimeProfileEvents = this.runtimeProfileService.subscribe((profiles) => {
+      this.emit({
+        type: "runtime_profiles_update",
+        payload: { profiles },
+      });
+    });
   }
 
   private bindVoiceBridges(params: {
@@ -1894,6 +1932,13 @@ export class Session {
           msg.authProfileKey,
           msg.requestId,
         );
+      case "restart_agent_with_runtime_profile_request":
+        return this.handleRestartAgentWithRuntimeProfileRequest(
+          msg.agentId,
+          msg.runtimeProfileId,
+          msg.profileOverrides,
+          msg.requestId,
+        );
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
@@ -2117,6 +2162,14 @@ export class Session {
   }
 
   private dispatchProviderMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    return (
+      this.dispatchProviderRegistryMessage(msg) ??
+      this.dispatchProviderAuthMessage(msg) ??
+      this.dispatchProviderRuntimeProfileMessage(msg)
+    );
+  }
+
+  private dispatchProviderRegistryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "list_provider_models_request":
         return this.handleListProviderModelsRequest(msg);
@@ -2132,6 +2185,13 @@ export class Session {
         return this.handleRefreshProvidersSnapshotRequest(msg);
       case "provider_diagnostic_request":
         return this.handleProviderDiagnosticRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchProviderAuthMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
       case "list_provider_auth_profiles_request":
         return this.handleListProviderAuthProfilesRequest(msg);
       case "import_provider_auth_profile_request":
@@ -2142,6 +2202,31 @@ export class Session {
         return this.handleSetDefaultProviderAuthProfileRequest(msg);
       case "refresh_provider_auth_profile_request":
         return this.handleRefreshProviderAuthProfileRequest(msg);
+      case "list_account_login_methods_request":
+        return this.handleListAccountLoginMethodsRequest(msg);
+      case "start_account_login_request":
+        return this.handleStartAccountLoginRequest(msg);
+      case "cancel_account_login_request":
+        return this.handleCancelAccountLoginRequest(msg);
+      case "list_account_login_sessions_request":
+        return this.handleListAccountLoginSessionsRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchProviderRuntimeProfileMessage(
+    msg: SessionInboundMessage,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "list_runtime_profiles_request":
+        return this.handleListRuntimeProfilesRequest(msg);
+      case "create_runtime_profile_request":
+        return this.handleCreateRuntimeProfileRequest(msg);
+      case "update_runtime_profile_request":
+        return this.handleUpdateRuntimeProfileRequest(msg);
+      case "delete_runtime_profile_request":
+        return this.handleDeleteRuntimeProfileRequest(msg);
       default:
         return undefined;
     }
@@ -3023,6 +3108,8 @@ export class Session {
       });
       const resolvedConfig: AgentSessionConfig = {
         ...config,
+        ...(msg.runtimeProfileId !== undefined ? { runtimeProfileId: msg.runtimeProfileId } : {}),
+        ...(msg.profileOverrides !== undefined ? { profileOverrides: msg.profileOverrides } : {}),
         ...(provisionalTitle ? { title: provisionalTitle } : {}),
       };
 
@@ -3977,11 +4064,169 @@ export class Session {
     }
   }
 
+  private async handleListAccountLoginMethodsRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_account_login_methods_request" }>,
+  ): Promise<void> {
+    try {
+      const methods = this.requireAccountOnboardingService().listMethods(msg.provider);
+      this.emit({
+        type: "list_account_login_methods_response",
+        payload: {
+          provider: msg.provider,
+          methods,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitAccountLoginRpcError(msg, error, "account_login_methods_list_failed");
+    }
+  }
+
+  private async handleStartAccountLoginRequest(
+    msg: Extract<SessionInboundMessage, { type: "start_account_login_request" }>,
+  ): Promise<void> {
+    try {
+      const session = await this.requireAccountOnboardingService().startLogin({
+        provider: msg.provider,
+        method: msg.method,
+        setDefault: msg.setDefault,
+      });
+      this.emit({
+        type: "start_account_login_response",
+        payload: {
+          session,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitAccountLoginRpcError(msg, error, "account_login_start_failed");
+    }
+  }
+
+  private async handleCancelAccountLoginRequest(
+    msg: Extract<SessionInboundMessage, { type: "cancel_account_login_request" }>,
+  ): Promise<void> {
+    try {
+      const session = await this.requireAccountOnboardingService().cancelLogin(msg.sessionId);
+      this.emit({
+        type: "cancel_account_login_response",
+        payload: {
+          session,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitAccountLoginRpcError(msg, error, "account_login_cancel_failed");
+    }
+  }
+
+  private async handleListAccountLoginSessionsRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_account_login_sessions_request" }>,
+  ): Promise<void> {
+    try {
+      const sessions = this.requireAccountOnboardingService().listSessions(msg.provider);
+      this.emit({
+        type: "list_account_login_sessions_response",
+        payload: {
+          sessions,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitAccountLoginRpcError(msg, error, "account_login_sessions_list_failed");
+    }
+  }
+
+  private async handleListRuntimeProfilesRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_runtime_profiles_request" }>,
+  ): Promise<void> {
+    try {
+      const profiles = await this.requireRuntimeProfileService().listProfiles(msg.provider);
+      this.emit({
+        type: "list_runtime_profiles_response",
+        payload: {
+          profiles,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitRuntimeProfileRpcError(msg, error, "runtime_profiles_list_failed");
+    }
+  }
+
+  private async handleCreateRuntimeProfileRequest(
+    msg: Extract<SessionInboundMessage, { type: "create_runtime_profile_request" }>,
+  ): Promise<void> {
+    try {
+      const profile = await this.requireRuntimeProfileService().createProfile(msg.profile);
+      this.emit({
+        type: "create_runtime_profile_response",
+        payload: {
+          profile,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitRuntimeProfileRpcError(msg, error, "runtime_profile_create_failed");
+    }
+  }
+
+  private async handleUpdateRuntimeProfileRequest(
+    msg: Extract<SessionInboundMessage, { type: "update_runtime_profile_request" }>,
+  ): Promise<void> {
+    try {
+      const profile = await this.requireRuntimeProfileService().updateProfile(
+        msg.profileId,
+        msg.patch,
+      );
+      this.emit({
+        type: "update_runtime_profile_response",
+        payload: {
+          profile,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitRuntimeProfileRpcError(msg, error, "runtime_profile_update_failed");
+    }
+  }
+
+  private async handleDeleteRuntimeProfileRequest(
+    msg: Extract<SessionInboundMessage, { type: "delete_runtime_profile_request" }>,
+  ): Promise<void> {
+    try {
+      await this.requireRuntimeProfileService().deleteProfile(msg.profileId);
+      this.emit({
+        type: "delete_runtime_profile_response",
+        payload: {
+          profileId: msg.profileId,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitRuntimeProfileRpcError(msg, error, "runtime_profile_delete_failed");
+    }
+  }
+
   private requireProviderAuthService(): ProviderAuthService {
     if (!this.providerAuthService) {
       throw new Error("Provider auth profiles are not available");
     }
     return this.providerAuthService;
+  }
+
+  private requireAccountOnboardingService(): AccountOnboardingService {
+    if (!this.accountOnboardingService) {
+      throw new Error("Provider account login is not available");
+    }
+    return this.accountOnboardingService;
+  }
+
+  private requireRuntimeProfileService(): RuntimeProfileService {
+    if (!this.runtimeProfileService) {
+      throw new Error("Runtime profiles are not available");
+    }
+    return this.runtimeProfileService;
   }
 
   private emitProviderAuthRpcError(
@@ -4001,6 +4246,60 @@ export class Session {
   ): void {
     const err = error instanceof Error ? error : new Error(String(error));
     this.sessionLogger.warn({ err, requestType: msg.type }, "Provider auth RPC failed");
+    this.emit({
+      type: "rpc_error",
+      payload: {
+        requestId: msg.requestId,
+        requestType: msg.type,
+        error: err.message,
+        code,
+      },
+    });
+  }
+
+  private emitAccountLoginRpcError(
+    msg: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "list_account_login_methods_request"
+          | "start_account_login_request"
+          | "cancel_account_login_request"
+          | "list_account_login_sessions_request";
+      }
+    >,
+    error: unknown,
+    code: string,
+  ): void {
+    const err = error instanceof Error ? error : new Error(String(error));
+    this.sessionLogger.warn({ err, requestType: msg.type }, "Account login RPC failed");
+    this.emit({
+      type: "rpc_error",
+      payload: {
+        requestId: msg.requestId,
+        requestType: msg.type,
+        error: err.message,
+        code,
+      },
+    });
+  }
+
+  private emitRuntimeProfileRpcError(
+    msg: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "list_runtime_profiles_request"
+          | "create_runtime_profile_request"
+          | "update_runtime_profile_request"
+          | "delete_runtime_profile_request";
+      }
+    >,
+    error: unknown,
+    code: string,
+  ): void {
+    const err = error instanceof Error ? error : new Error(String(error));
+    this.sessionLogger.warn({ err, requestType: msg.type }, "Runtime profile RPC failed");
     this.emit({
       type: "rpc_error",
       payload: {
@@ -4470,6 +4769,57 @@ export class Session {
           agentId,
           accepted: false,
           error: getErrorMessageOr(error, "Failed to restart agent with auth profile"),
+        },
+      });
+    }
+  }
+
+  private async handleRestartAgentWithRuntimeProfileRequest(
+    agentId: string,
+    runtimeProfileId: string,
+    profileOverrides: AgentSessionConfig["profileOverrides"] | undefined,
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { agentId, runtimeProfileId, requestId },
+      "session: restart_agent_with_runtime_profile_request",
+    );
+
+    try {
+      await this.agentManager.restartAgentWithRuntimeProfile(
+        agentId,
+        runtimeProfileId,
+        profileOverrides,
+      );
+      this.sessionLogger.info(
+        { agentId, runtimeProfileId, requestId },
+        "session: restart_agent_with_runtime_profile_request success",
+      );
+      this.emit({
+        type: "restart_agent_with_runtime_profile_response",
+        payload: { requestId, agentId, accepted: true, error: null },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId, runtimeProfileId, requestId },
+        "session: restart_agent_with_runtime_profile_request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to restart agent with runtime profile: ${getErrorMessage(error)}`,
+        },
+      });
+      this.emit({
+        type: "restart_agent_with_runtime_profile_response",
+        payload: {
+          requestId,
+          agentId,
+          accepted: false,
+          error: getErrorMessageOr(error, "Failed to restart agent with runtime profile"),
         },
       });
     }
@@ -8390,6 +8740,14 @@ export class Session {
     if (this.unsubscribeProviderSnapshotEvents) {
       this.unsubscribeProviderSnapshotEvents();
       this.unsubscribeProviderSnapshotEvents = null;
+    }
+    if (this.unsubscribeAccountLoginEvents) {
+      this.unsubscribeAccountLoginEvents();
+      this.unsubscribeAccountLoginEvents = null;
+    }
+    if (this.unsubscribeRuntimeProfileEvents) {
+      this.unsubscribeRuntimeProfileEvents();
+      this.unsubscribeRuntimeProfileEvents = null;
     }
 
     // Abort any ongoing operations

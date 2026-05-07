@@ -2,6 +2,7 @@ import { AlertCircle, RotateCw, Search, Trash2 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   type PressableStateCallbackType,
   ScrollView,
@@ -15,8 +16,10 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { isWeb } from "@/constants/platform";
 import { Fonts } from "@/constants/theme";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useAccountLogin } from "@/hooks/use-account-login";
 import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { useRuntimeProfiles, resolveRuntimeProfileSummary } from "@/hooks/use-runtime-profiles";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
@@ -26,6 +29,7 @@ import type {
   AgentModelDefinition,
   AgentProvider,
   ProviderAuthProfile,
+  RuntimeProfile,
 } from "@server/server/agent/agent-sdk-types";
 import type { ProviderProfileModel } from "@server/server/agent/provider-launch-config";
 
@@ -292,6 +296,12 @@ function ProviderAuthProfilesSection(props: { provider: string; serverId: string
     remove,
   } = useProviderAuthProfiles(serverId, provider as AgentProvider);
   const [error, setError] = useState<string | null>(null);
+  const [loginSessionId, setLoginSessionId] = useState<string | null>(null);
+  const accountLogin = useAccountLogin(serverId, provider as AgentProvider);
+  const loginSession = useMemo(
+    () => accountLogin.sessions.find((session) => session.id === loginSessionId) ?? null,
+    [accountLogin.sessions, loginSessionId],
+  );
 
   const runAuthAction = useCallback(async (action: () => Promise<unknown>) => {
     setError(null);
@@ -305,6 +315,21 @@ function ProviderAuthProfilesSection(props: { provider: string; serverId: string
   const handleImportCurrent = useCallback(() => {
     void runAuthAction(() => importCurrent({ setDefault: true }));
   }, [importCurrent, runAuthAction]);
+  const handleAddAccount = useCallback(() => {
+    void runAuthAction(async () => {
+      const session = await accountLogin.start({
+        method: "chatgpt-device-code",
+        setDefault: profiles.length === 0,
+      });
+      setLoginSessionId(session.id);
+    });
+  }, [accountLogin, profiles.length, runAuthAction]);
+  const handleCloseLogin = useCallback(() => {
+    if (loginSession && ["starting", "pending-user", "importing"].includes(loginSession.status)) {
+      void accountLogin.cancel(loginSession.id).catch(() => undefined);
+    }
+    setLoginSessionId(null);
+  }, [accountLogin, loginSession]);
   const handleRefresh = useCallback(
     (profileKey: string) => {
       void runAuthAction(() => refreshProfile(profileKey));
@@ -325,18 +350,38 @@ function ProviderAuthProfilesSection(props: { provider: string; serverId: string
   );
   const importCurrentAction = useMemo(
     () => (
-      <Button
-        variant="ghost"
-        size="xs"
-        onPress={handleImportCurrent}
-        disabled={isRefreshing}
-        loading={isRefreshing && profiles.length === 0}
-        accessibilityLabel="Import current provider account"
-      >
-        Import current
-      </Button>
+      <View style={sheetStyles.trailingActions}>
+        {accountLogin.methods.includes("chatgpt-device-code") ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            onPress={handleAddAccount}
+            disabled={isRefreshing || accountLogin.isRefreshing}
+            accessibilityLabel="Add provider account"
+          >
+            Add account
+          </Button>
+        ) : null}
+        <Button
+          variant="ghost"
+          size="xs"
+          onPress={handleImportCurrent}
+          disabled={isRefreshing}
+          loading={isRefreshing && profiles.length === 0}
+          accessibilityLabel="Import current provider account"
+        >
+          Import current
+        </Button>
+      </View>
     ),
-    [handleImportCurrent, isRefreshing, profiles.length],
+    [
+      accountLogin.isRefreshing,
+      accountLogin.methods,
+      handleAddAccount,
+      handleImportCurrent,
+      isRefreshing,
+      profiles.length,
+    ],
   );
 
   if (!isSupported) {
@@ -344,32 +389,224 @@ function ProviderAuthProfilesSection(props: { provider: string; serverId: string
   }
 
   return (
-    <SettingsSection title="Accounts" trailing={importCurrentAction}>
+    <>
+      <SettingsSection title="Accounts" trailing={importCurrentAction}>
+        <View style={settingsStyles.card}>
+          {isLoading && profiles.length === 0 ? (
+            <View style={sheetStyles.emptyRow}>
+              <ActivityIndicator size="small" />
+              <Text style={sheetStyles.mutedText}>Loading accounts…</Text>
+            </View>
+          ) : null}
+          {!isLoading && profiles.length === 0 ? (
+            <View style={sheetStyles.emptyRow}>
+              <Text style={sheetStyles.mutedText}>No accounts imported</Text>
+            </View>
+          ) : null}
+          {profiles.map((profile) => (
+            <AuthProfileRow
+              key={profile.key}
+              profile={profile}
+              busy={isRefreshing}
+              onRefresh={handleRefresh}
+              onSetDefault={handleSetDefault}
+              onRemove={handleRemove}
+            />
+          ))}
+        </View>
+        {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
+      </SettingsSection>
+      <AccountLoginSheet
+        session={loginSession}
+        visible={!!loginSession}
+        onClose={handleCloseLogin}
+      />
+    </>
+  );
+}
+
+function RuntimeProfilesSection(props: {
+  provider: string;
+  serverId: string;
+  models: AgentModelDefinition[];
+}) {
+  const { provider, serverId, models } = props;
+  const runtimeProfiles = useRuntimeProfiles(serverId, provider as AgentProvider);
+  const accounts = useProviderAuthProfiles(serverId, provider as AgentProvider);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCreate = useCallback(() => {
+    void (async () => {
+      setError(null);
+      try {
+        const defaultAccount = accounts.profiles?.find((profile) => profile.isDefault);
+        const defaultModel = models.find((model) => model.isDefault) ?? models[0];
+        await runtimeProfiles.create({
+          name: `${provider} default`,
+          provider: provider as AgentProvider,
+          accountKey: defaultAccount?.key ?? null,
+          model: defaultModel?.id ?? null,
+          concurrencyPolicy: "warn",
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Runtime profile action failed");
+      }
+    })();
+  }, [accounts.profiles, models, provider, runtimeProfiles]);
+
+  const handleDelete = useCallback(
+    (profileId: string) => {
+      void runtimeProfiles.deleteProfile(profileId).catch((err) => {
+        setError(err instanceof Error ? err.message : "Runtime profile action failed");
+      });
+    },
+    [runtimeProfiles],
+  );
+  const trailing = useMemo(
+    () => (
+      <Button
+        variant="ghost"
+        size="xs"
+        onPress={handleCreate}
+        disabled={runtimeProfiles.isRefreshing}
+      >
+        Create
+      </Button>
+    ),
+    [handleCreate, runtimeProfiles.isRefreshing],
+  );
+
+  if (!runtimeProfiles.isSupported) {
+    return null;
+  }
+
+  return (
+    <SettingsSection title="Runtime profiles" trailing={trailing}>
       <View style={settingsStyles.card}>
-        {isLoading && profiles.length === 0 ? (
+        {runtimeProfiles.isLoading && runtimeProfiles.profiles.length === 0 ? (
           <View style={sheetStyles.emptyRow}>
             <ActivityIndicator size="small" />
-            <Text style={sheetStyles.mutedText}>Loading accounts…</Text>
+            <Text style={sheetStyles.mutedText}>Loading profiles…</Text>
           </View>
         ) : null}
-        {!isLoading && profiles.length === 0 ? (
+        {!runtimeProfiles.isLoading && runtimeProfiles.profiles.length === 0 ? (
           <View style={sheetStyles.emptyRow}>
-            <Text style={sheetStyles.mutedText}>No accounts imported</Text>
+            <Text style={sheetStyles.mutedText}>No runtime profiles</Text>
           </View>
         ) : null}
-        {profiles.map((profile) => (
-          <AuthProfileRow
-            key={profile.key}
+        {runtimeProfiles.profiles.map((profile) => (
+          <RuntimeProfileRow
+            key={profile.id}
             profile={profile}
-            busy={isRefreshing}
-            onRefresh={handleRefresh}
-            onSetDefault={handleSetDefault}
-            onRemove={handleRemove}
+            disabled={runtimeProfiles.isRefreshing}
+            onDelete={handleDelete}
           />
         ))}
       </View>
       {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
     </SettingsSection>
+  );
+}
+
+function RuntimeProfileRow({
+  profile,
+  disabled,
+  onDelete,
+}: {
+  profile: RuntimeProfile;
+  disabled: boolean;
+  onDelete: (profileId: string) => void;
+}) {
+  const handlePressDelete = useCallback(() => {
+    onDelete(profile.id);
+  }, [onDelete, profile.id]);
+
+  return (
+    <View style={MODEL_ROW_STYLE}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {profile.name}
+        </Text>
+        <Text style={sheetStyles.monoHint} numberOfLines={1}>
+          {resolveRuntimeProfileSummary(profile)}
+        </Text>
+      </View>
+      <Button variant="ghost" size="xs" onPress={handlePressDelete} disabled={disabled}>
+        Delete
+      </Button>
+    </View>
+  );
+}
+
+function AccountLoginSheet(props: {
+  session: ReturnType<typeof useAccountLogin>["sessions"][number] | null;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { session, visible, onClose } = props;
+  const openVerificationUrl = useCallback(() => {
+    if (session?.verificationUrl) {
+      void Linking.openURL(session.verificationUrl);
+    }
+  }, [session?.verificationUrl]);
+
+  return (
+    <AdaptiveModalSheet
+      title="Add Codex account"
+      visible={visible}
+      onClose={onClose}
+      snapPoints={ACCOUNT_LOGIN_SNAP_POINTS}
+    >
+      <View style={sheetStyles.loginSheetContent}>
+        {!session || session.status === "starting" ? (
+          <View style={sheetStyles.emptyRow}>
+            <ActivityIndicator size="small" />
+            <Text style={sheetStyles.mutedText}>Starting login…</Text>
+          </View>
+        ) : null}
+        {session?.status === "pending-user" ? (
+          <>
+            <Text style={settingsStyles.rowTitle}>Device code</Text>
+            <Text style={sheetStyles.deviceCode} selectable>
+              {session.userCode}
+            </Text>
+            {session.verificationUrl ? (
+              <Button variant="default" onPress={openVerificationUrl}>
+                Open login page
+              </Button>
+            ) : null}
+            <Text style={sheetStyles.monoHint} selectable>
+              {session.verificationUrl}
+            </Text>
+          </>
+        ) : null}
+        {session?.status === "importing" ? (
+          <View style={sheetStyles.emptyRow}>
+            <ActivityIndicator size="small" />
+            <Text style={sheetStyles.mutedText}>Importing account…</Text>
+          </View>
+        ) : null}
+        {session?.status === "completed" ? (
+          <>
+            <Text style={settingsStyles.rowTitle}>Account added</Text>
+            <Text style={sheetStyles.mutedText}>
+              {session.account?.alias || session.account?.email || "Codex account"}
+            </Text>
+            <Button variant="default" onPress={onClose}>
+              Done
+            </Button>
+          </>
+        ) : null}
+        {session?.status === "failed" ? (
+          <>
+            <Text style={sheetStyles.errorText}>{session.error ?? "Account login failed"}</Text>
+            <Button variant="default" onPress={onClose}>
+              Close
+            </Button>
+          </>
+        ) : null}
+      </View>
+    </AdaptiveModalSheet>
   );
 }
 
@@ -426,7 +663,7 @@ export function ProviderDiagnosticSheet({
     () => snapshotEntries?.find((entry) => entry.provider === provider),
     [snapshotEntries, provider],
   );
-  const models = providerEntry?.models ?? [];
+  const models = providerEntry?.models ?? EMPTY_PROVIDER_MODELS;
   const providerSnapshotRefreshing = providerEntry?.status === "loading";
   const providerErrorMessage =
     providerEntry?.status === "error" ? (providerEntry.error ?? "Unknown error") : null;
@@ -602,6 +839,8 @@ export function ProviderDiagnosticSheet({
 
       <ProviderAuthProfilesSection provider={provider} serverId={serverId} />
 
+      <RuntimeProfilesSection provider={provider} serverId={serverId} models={models} />
+
       <View>
         <View style={sheetStyles.modelsHeader}>
           <Text style={settingsStyles.sectionHeaderTitle}>Models</Text>
@@ -710,6 +949,11 @@ const sheetStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
   },
+  trailingActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
   profileActions: {
     flexDirection: "row",
     alignItems: "center",
@@ -721,6 +965,16 @@ const sheetStyles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     paddingHorizontal: theme.spacing[2],
+  },
+  loginSheetContent: {
+    gap: theme.spacing[4],
+  },
+  deviceCode: {
+    fontFamily: Fonts.mono,
+    fontSize: theme.fontSize.xl,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
+    letterSpacing: 0,
   },
   modelsScroll: {
     maxHeight: 360,
@@ -741,6 +995,8 @@ const sheetStyles = StyleSheet.create((theme) => ({
 }));
 
 const DIAGNOSTIC_SHEET_SNAP_POINTS = ["50%", "85%"];
+const ACCOUNT_LOGIN_SNAP_POINTS = ["45%", "70%"];
+const EMPTY_PROVIDER_MODELS: AgentModelDefinition[] = [];
 const DIAGNOSTIC_SEARCH_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
 const DIAGNOSTIC_INLINE_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
 const MODEL_ROW_STYLE = [settingsStyles.row, settingsStyles.rowBorder];

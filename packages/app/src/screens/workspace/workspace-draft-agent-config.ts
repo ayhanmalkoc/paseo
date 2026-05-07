@@ -6,6 +6,7 @@ export function buildWorkspaceDraftAgentConfig(input: {
   modeId?: string;
   model?: string;
   authProfileKey?: string;
+  runtimeProfileId?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
 }): AgentSessionConfig {
@@ -15,6 +16,7 @@ export function buildWorkspaceDraftAgentConfig(input: {
     ...(input.modeId ? { modeId: input.modeId } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.authProfileKey ? { authProfileKey: input.authProfileKey } : {}),
+    ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
     ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
     ...(input.featureValues ? { featureValues: input.featureValues } : {}),
   };

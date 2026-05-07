@@ -132,6 +132,12 @@ import type {
   ToolCallTimelineItem,
   AgentUsage,
   ProviderAuthProfile,
+  RuntimeProfile,
+  RuntimeProfileLaunchOverrides,
+  AgentProfileSnapshot,
+  AccountLoginSession,
+  AccountLoginMethod,
+  RuntimeLaunchWarning,
 } from "../server/agent/agent-sdk-types.js";
 
 export const AgentStatusSchema = z.enum(AGENT_LIFECYCLE_STATUSES);
@@ -225,7 +231,7 @@ export const ProviderAuthProfileSchema: z.ZodType<ProviderAuthProfile> = z.objec
   accountName: z.string().optional(),
   accountId: z.string().optional(),
   userId: z.string().optional(),
-  authMode: z.enum(["chatgpt", "api-key", "unknown"]),
+  authMode: z.enum(["chatgpt", "api-key", "oauth", "external", "unknown"]),
   plan: z.string().optional(),
   status: z.enum(["ready", "needs-login", "invalid", "refreshing"]),
   isDefault: z.boolean().optional(),
@@ -233,6 +239,111 @@ export const ProviderAuthProfileSchema: z.ZodType<ProviderAuthProfile> = z.objec
   updatedAt: z.string(),
   lastUsedAt: z.string().optional(),
   usage: ProviderAuthUsageSnapshotSchema.optional(),
+});
+
+const RuntimeProfileConcurrencyPolicySchema = z.enum(["allow", "warn", "single-active"]);
+
+const RuntimeProfileWorkspaceDefaultsSchema = z
+  .object({
+    cwd: z.string().optional(),
+    worktreePolicy: z.enum(["current", "new-worktree", "ask"]).optional(),
+  })
+  .optional();
+
+const RuntimeProfileFieldsSchema = z.object({
+  provider: AgentProviderSchema.optional(),
+  accountKey: z.string().nullable().optional(),
+  model: z.string().nullable().optional(),
+  modeId: z.string().nullable().optional(),
+  thinkingOptionId: z.string().nullable().optional(),
+  permissionPresetId: z.string().nullable().optional(),
+  mcpServerIds: z.array(z.string()).optional(),
+  skillIds: z.array(z.string()).optional(),
+  instructionOverlay: z.string().nullable().optional(),
+  systemPrompt: z.string().nullable().optional(),
+  featureDefaults: z.record(z.unknown()).optional(),
+  featureValues: z.record(z.unknown()).optional(),
+  envOverlay: z.record(z.string()).optional(),
+  mcpServers: z.record(z.lazy(() => McpServerConfigSchema)).optional(),
+  workspaceDefaults: RuntimeProfileWorkspaceDefaultsSchema,
+  concurrencyPolicy: RuntimeProfileConcurrencyPolicySchema.optional(),
+});
+
+export const RuntimeProfileLaunchOverridesSchema: z.ZodType<RuntimeProfileLaunchOverrides> =
+  RuntimeProfileFieldsSchema.omit({ provider: true }).partial();
+
+export const RuntimeProfileSchema: z.ZodType<RuntimeProfile> = RuntimeProfileFieldsSchema.extend({
+  id: z.string(),
+  version: z.number().int().positive(),
+  name: z.string().min(1),
+  provider: AgentProviderSchema,
+  concurrencyPolicy: RuntimeProfileConcurrencyPolicySchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const AgentProfileSnapshotSchema: z.ZodType<AgentProfileSnapshot> = z.object({
+  sourceProfileId: z.string().optional(),
+  sourceProfileVersion: z.number().int().positive().optional(),
+  sourceProfileName: z.string().optional(),
+  provider: AgentProviderSchema,
+  accountKey: z.string().nullable().optional(),
+  model: z.string().nullable().optional(),
+  modeId: z.string().nullable().optional(),
+  thinkingOptionId: z.string().nullable().optional(),
+  permissionPresetId: z.string().nullable().optional(),
+  mcpServerIds: z.array(z.string()).optional(),
+  skillIds: z.array(z.string()).optional(),
+  instructionOverlay: z.string().nullable().optional(),
+  systemPrompt: z.string().nullable().optional(),
+  featureDefaults: z.record(z.unknown()).optional(),
+  featureValues: z.record(z.unknown()).optional(),
+  envOverlay: z.record(z.string()).optional(),
+  workspaceDefaults: RuntimeProfileWorkspaceDefaultsSchema,
+  concurrencyPolicy: RuntimeProfileConcurrencyPolicySchema.optional(),
+  resolvedAt: z.string(),
+});
+
+const AccountLoginMethodSchema: z.ZodType<AccountLoginMethod> = z.enum([
+  "chatgpt-device-code",
+  "chatgpt-browser",
+  "api-key",
+]);
+
+export const AccountLoginSessionSchema: z.ZodType<AccountLoginSession> = z.object({
+  id: z.string(),
+  provider: AgentProviderSchema,
+  method: AccountLoginMethodSchema,
+  status: z.enum([
+    "starting",
+    "pending-user",
+    "importing",
+    "completed",
+    "failed",
+    "cancelled",
+    "expired",
+  ]),
+  verificationUrl: z.string().optional(),
+  userCode: z.string().optional(),
+  account: ProviderAuthProfileSchema.optional(),
+  error: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  expiresAt: z.string().optional(),
+});
+
+export const RuntimeLaunchWarningSchema: z.ZodType<RuntimeLaunchWarning> = z.object({
+  code: z.enum([
+    "account-in-use",
+    "runtime-profile-in-use",
+    "missing-account",
+    "invalid-account",
+    "provider-unavailable",
+  ]),
+  message: z.string(),
+  accountKey: z.string().nullable().optional(),
+  runtimeProfileId: z.string().nullable().optional(),
+  agentIds: z.array(z.string()).optional(),
 });
 
 const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z.object({
@@ -285,6 +396,9 @@ const AgentSessionConfigSchema = z.object({
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
   authProfileKey: z.string().nullable().optional(),
+  runtimeProfileId: z.string().nullable().optional(),
+  profileOverrides: RuntimeProfileLaunchOverridesSchema.optional(),
+  profileSnapshot: AgentProfileSnapshotSchema.optional(),
   featureValues: z.record(z.unknown()).optional(),
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
   approvalPolicy: z.string().optional(),
@@ -639,6 +753,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   cwd: z.string(),
   model: z.string().nullable(),
   authProfileKey: z.string().nullable().optional(),
+  profileSnapshot: AgentProfileSnapshotSchema.optional(),
   features: z.array(AgentFeatureSchema).optional(),
   thinkingOptionId: z.string().nullable().optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
@@ -1038,6 +1153,8 @@ export const CreateAgentRequestMessageSchema = z.object({
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
   git: GitSetupOptionsSchema.optional(),
+  runtimeProfileId: z.string().nullable().optional(),
+  profileOverrides: RuntimeProfileLaunchOverridesSchema.optional(),
   labels: z.record(z.string()).default({}),
   requestId: z.string(),
 });
@@ -1114,6 +1231,62 @@ export const RefreshProviderAuthProfileRequestMessageSchema = z.object({
   type: z.literal("refresh_provider_auth_profile_request"),
   provider: AgentProviderSchema,
   profileKey: z.string(),
+  requestId: z.string(),
+});
+
+export const ListAccountLoginMethodsRequestMessageSchema = z.object({
+  type: z.literal("list_account_login_methods_request"),
+  provider: AgentProviderSchema,
+  requestId: z.string(),
+});
+
+export const StartAccountLoginRequestMessageSchema = z.object({
+  type: z.literal("start_account_login_request"),
+  provider: AgentProviderSchema,
+  method: AccountLoginMethodSchema,
+  setDefault: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+export const CancelAccountLoginRequestMessageSchema = z.object({
+  type: z.literal("cancel_account_login_request"),
+  sessionId: z.string(),
+  requestId: z.string(),
+});
+
+export const ListAccountLoginSessionsRequestMessageSchema = z.object({
+  type: z.literal("list_account_login_sessions_request"),
+  provider: AgentProviderSchema.optional(),
+  requestId: z.string(),
+});
+
+export const ListRuntimeProfilesRequestMessageSchema = z.object({
+  type: z.literal("list_runtime_profiles_request"),
+  provider: AgentProviderSchema.optional(),
+  requestId: z.string(),
+});
+
+export const CreateRuntimeProfileRequestMessageSchema = z.object({
+  type: z.literal("create_runtime_profile_request"),
+  profile: RuntimeProfileFieldsSchema.extend({
+    name: z.string().min(1),
+    provider: AgentProviderSchema,
+  }),
+  requestId: z.string(),
+});
+
+export const UpdateRuntimeProfileRequestMessageSchema = z.object({
+  type: z.literal("update_runtime_profile_request"),
+  profileId: z.string(),
+  patch: RuntimeProfileFieldsSchema.extend({
+    name: z.string().min(1).optional(),
+  }).partial(),
+  requestId: z.string(),
+});
+
+export const DeleteRuntimeProfileRequestMessageSchema = z.object({
+  type: z.literal("delete_runtime_profile_request"),
+  profileId: z.string(),
   requestId: z.string(),
 });
 
@@ -1226,6 +1399,21 @@ export const RestartAgentWithAuthProfileRequestMessageSchema = z.object({
 export const RestartAgentWithAuthProfileResponseMessageSchema = z.object({
   type: z.literal("restart_agent_with_auth_profile_response"),
   payload: AgentActionResponsePayloadSchema,
+});
+
+export const RestartAgentWithRuntimeProfileRequestMessageSchema = z.object({
+  type: z.literal("restart_agent_with_runtime_profile_request"),
+  agentId: z.string(),
+  runtimeProfileId: z.string(),
+  profileOverrides: RuntimeProfileLaunchOverridesSchema.optional(),
+  requestId: z.string(),
+});
+
+export const RestartAgentWithRuntimeProfileResponseMessageSchema = z.object({
+  type: z.literal("restart_agent_with_runtime_profile_response"),
+  payload: AgentActionResponsePayloadSchema.extend({
+    warnings: z.array(RuntimeLaunchWarningSchema).optional(),
+  }),
 });
 
 export const SetAgentFeatureRequestMessageSchema = z.object({
@@ -1781,6 +1969,14 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RemoveProviderAuthProfileRequestMessageSchema,
   SetDefaultProviderAuthProfileRequestMessageSchema,
   RefreshProviderAuthProfileRequestMessageSchema,
+  ListAccountLoginMethodsRequestMessageSchema,
+  StartAccountLoginRequestMessageSchema,
+  CancelAccountLoginRequestMessageSchema,
+  ListAccountLoginSessionsRequestMessageSchema,
+  ListRuntimeProfilesRequestMessageSchema,
+  CreateRuntimeProfileRequestMessageSchema,
+  UpdateRuntimeProfileRequestMessageSchema,
+  DeleteRuntimeProfileRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -1792,6 +1988,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
   RestartAgentWithAuthProfileRequestMessageSchema,
+  RestartAgentWithRuntimeProfileRequestMessageSchema,
   SetAgentFeatureRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
   CheckoutStatusRequestSchema,
@@ -2026,6 +2223,10 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         providersSnapshot: z.boolean().optional(),
         providerAuthProfiles: z.boolean().optional(),
+        providerAuthAccounts: z.boolean().optional(),
+        providerAccountOnboarding: z.boolean().optional(),
+        runtimeProfiles: z.boolean().optional(),
+        agentProfileSnapshots: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3269,6 +3470,85 @@ export const RefreshProviderAuthProfileResponseMessageSchema = z.object({
   }),
 });
 
+export const ListAccountLoginMethodsResponseMessageSchema = z.object({
+  type: z.literal("list_account_login_methods_response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    methods: z.array(AccountLoginMethodSchema),
+    requestId: z.string(),
+  }),
+});
+
+export const StartAccountLoginResponseMessageSchema = z.object({
+  type: z.literal("start_account_login_response"),
+  payload: z.object({
+    session: AccountLoginSessionSchema,
+    requestId: z.string(),
+  }),
+});
+
+export const CancelAccountLoginResponseMessageSchema = z.object({
+  type: z.literal("cancel_account_login_response"),
+  payload: z.object({
+    session: AccountLoginSessionSchema,
+    requestId: z.string(),
+  }),
+});
+
+export const ListAccountLoginSessionsResponseMessageSchema = z.object({
+  type: z.literal("list_account_login_sessions_response"),
+  payload: z.object({
+    sessions: z.array(AccountLoginSessionSchema),
+    requestId: z.string(),
+  }),
+});
+
+export const AccountLoginUpdateMessageSchema = z.object({
+  type: z.literal("account_login_update"),
+  payload: z.object({
+    session: AccountLoginSessionSchema,
+  }),
+});
+
+export const ListRuntimeProfilesResponseMessageSchema = z.object({
+  type: z.literal("list_runtime_profiles_response"),
+  payload: z.object({
+    profiles: z.array(RuntimeProfileSchema),
+    requestId: z.string(),
+  }),
+});
+
+export const CreateRuntimeProfileResponseMessageSchema = z.object({
+  type: z.literal("create_runtime_profile_response"),
+  payload: z.object({
+    profile: RuntimeProfileSchema,
+    requestId: z.string(),
+  }),
+});
+
+export const UpdateRuntimeProfileResponseMessageSchema = z.object({
+  type: z.literal("update_runtime_profile_response"),
+  payload: z.object({
+    profile: RuntimeProfileSchema,
+    requestId: z.string(),
+  }),
+});
+
+export const DeleteRuntimeProfileResponseMessageSchema = z.object({
+  type: z.literal("delete_runtime_profile_response"),
+  payload: z.object({
+    profileId: z.string(),
+    requestId: z.string(),
+  }),
+});
+
+export const RuntimeProfilesUpdateMessageSchema = z.object({
+  type: z.literal("runtime_profiles_update"),
+  payload: z.object({
+    profiles: z.array(RuntimeProfileSchema),
+  }),
+});
+
 const AgentSlashCommandSchema = z.object({
   name: z.string(),
   description: z.string(),
@@ -3448,6 +3728,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
   RestartAgentWithAuthProfileResponseMessageSchema,
+  RestartAgentWithRuntimeProfileResponseMessageSchema,
   SetAgentFeatureResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   WaitForFinishResponseMessageSchema,
@@ -3495,6 +3776,16 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RemoveProviderAuthProfileResponseMessageSchema,
   SetDefaultProviderAuthProfileResponseMessageSchema,
   RefreshProviderAuthProfileResponseMessageSchema,
+  ListAccountLoginMethodsResponseMessageSchema,
+  StartAccountLoginResponseMessageSchema,
+  CancelAccountLoginResponseMessageSchema,
+  ListAccountLoginSessionsResponseMessageSchema,
+  AccountLoginUpdateMessageSchema,
+  ListRuntimeProfilesResponseMessageSchema,
+  CreateRuntimeProfileResponseMessageSchema,
+  UpdateRuntimeProfileResponseMessageSchema,
+  DeleteRuntimeProfileResponseMessageSchema,
+  RuntimeProfilesUpdateMessageSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,
@@ -3587,6 +3878,9 @@ export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingRes
 export type RestartAgentWithAuthProfileResponseMessage = z.infer<
   typeof RestartAgentWithAuthProfileResponseMessageSchema
 >;
+export type RestartAgentWithRuntimeProfileResponseMessage = z.infer<
+  typeof RestartAgentWithRuntimeProfileResponseMessageSchema
+>;
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type WaitForFinishResponseMessage = z.infer<typeof WaitForFinishResponseMessageSchema>;
@@ -3628,6 +3922,32 @@ export type SetDefaultProviderAuthProfileResponseMessage = z.infer<
 export type RefreshProviderAuthProfileResponseMessage = z.infer<
   typeof RefreshProviderAuthProfileResponseMessageSchema
 >;
+export type ListAccountLoginMethodsResponseMessage = z.infer<
+  typeof ListAccountLoginMethodsResponseMessageSchema
+>;
+export type StartAccountLoginResponseMessage = z.infer<
+  typeof StartAccountLoginResponseMessageSchema
+>;
+export type CancelAccountLoginResponseMessage = z.infer<
+  typeof CancelAccountLoginResponseMessageSchema
+>;
+export type ListAccountLoginSessionsResponseMessage = z.infer<
+  typeof ListAccountLoginSessionsResponseMessageSchema
+>;
+export type AccountLoginUpdateMessage = z.infer<typeof AccountLoginUpdateMessageSchema>;
+export type ListRuntimeProfilesResponseMessage = z.infer<
+  typeof ListRuntimeProfilesResponseMessageSchema
+>;
+export type CreateRuntimeProfileResponseMessage = z.infer<
+  typeof CreateRuntimeProfileResponseMessageSchema
+>;
+export type UpdateRuntimeProfileResponseMessage = z.infer<
+  typeof UpdateRuntimeProfileResponseMessageSchema
+>;
+export type DeleteRuntimeProfileResponseMessage = z.infer<
+  typeof DeleteRuntimeProfileResponseMessageSchema
+>;
+export type RuntimeProfilesUpdateMessage = z.infer<typeof RuntimeProfilesUpdateMessageSchema>;
 export type ChatCreateResponse = z.infer<typeof ChatCreateResponseSchema>;
 export type ChatListResponse = z.infer<typeof ChatListResponseSchema>;
 export type ChatInspectResponse = z.infer<typeof ChatInspectResponseSchema>;
@@ -3702,6 +4022,28 @@ export type SetDefaultProviderAuthProfileRequestMessage = z.infer<
 >;
 export type RefreshProviderAuthProfileRequestMessage = z.infer<
   typeof RefreshProviderAuthProfileRequestMessageSchema
+>;
+export type ListAccountLoginMethodsRequestMessage = z.infer<
+  typeof ListAccountLoginMethodsRequestMessageSchema
+>;
+export type StartAccountLoginRequestMessage = z.infer<typeof StartAccountLoginRequestMessageSchema>;
+export type CancelAccountLoginRequestMessage = z.infer<
+  typeof CancelAccountLoginRequestMessageSchema
+>;
+export type ListAccountLoginSessionsRequestMessage = z.infer<
+  typeof ListAccountLoginSessionsRequestMessageSchema
+>;
+export type ListRuntimeProfilesRequestMessage = z.infer<
+  typeof ListRuntimeProfilesRequestMessageSchema
+>;
+export type CreateRuntimeProfileRequestMessage = z.infer<
+  typeof CreateRuntimeProfileRequestMessageSchema
+>;
+export type UpdateRuntimeProfileRequestMessage = z.infer<
+  typeof UpdateRuntimeProfileRequestMessageSchema
+>;
+export type DeleteRuntimeProfileRequestMessage = z.infer<
+  typeof DeleteRuntimeProfileRequestMessageSchema
 >;
 export type ChatCreateRequest = z.infer<typeof ChatCreateRequestSchema>;
 export type ChatListRequest = z.infer<typeof ChatListRequestSchema>;

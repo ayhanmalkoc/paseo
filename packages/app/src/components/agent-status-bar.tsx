@@ -34,6 +34,7 @@ import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import { useSessionStore } from "@/stores/session-store";
 import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
+import { useRuntimeProfiles } from "@/hooks/use-runtime-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import {
@@ -55,8 +56,10 @@ import type {
   AgentFeature,
   AgentMode,
   AgentModelDefinition,
+  AgentProfileSnapshot,
   AgentProvider,
   ProviderAuthProfile,
+  RuntimeProfile,
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import { getModeVisuals, type AgentModeColorTier } from "@server/server/agent/provider-manifest";
@@ -83,8 +86,17 @@ interface PendingAuthProfileRestart {
   label: string;
 }
 
+interface PendingRuntimeProfileRestart {
+  id: string;
+  label: string;
+}
+
 interface AuthProfileRestartClient {
   restartAgentWithAuthProfile(agentId: string, authProfileKey: string | null): Promise<void>;
+}
+
+interface RuntimeProfileRestartClient {
+  restartAgentWithRuntimeProfile(agentId: string, runtimeProfileId: string): Promise<void>;
 }
 
 type StatusSelector =
@@ -93,6 +105,7 @@ type StatusSelector =
   | "model"
   | "thinking"
   | "auth-profile"
+  | "runtime-profile"
   | `feature-${string}`;
 
 interface ControlledAgentStatusBarProps {
@@ -111,6 +124,11 @@ interface ControlledAgentStatusBarProps {
   selectedAuthProfileKey?: string;
   onSelectAuthProfile?: (authProfileKey: string) => void;
   isAuthProfilesLoading?: boolean;
+  runtimeProfiles?: RuntimeProfile[];
+  selectedRuntimeProfileId?: string;
+  onSelectRuntimeProfile?: (runtimeProfileId: string) => void;
+  isRuntimeProfilesLoading?: boolean;
+  allowAdHocRuntimeProfile?: boolean;
   thinkingOptions?: StatusOption[];
   selectedThinkingOptionId?: string;
   onSelectThinkingOption?: (thinkingOptionId: string) => void;
@@ -141,6 +159,11 @@ export interface DraftAgentStatusBarProps {
   selectedAuthProfileKey?: string;
   onSelectAuthProfile?: (authProfileKey: string) => void;
   isAuthProfilesLoading?: boolean;
+  runtimeProfiles?: RuntimeProfile[];
+  selectedRuntimeProfileId?: string;
+  onSelectRuntimeProfile?: (runtimeProfileId: string) => void;
+  isRuntimeProfilesLoading?: boolean;
+  allowAdHocRuntimeProfile?: boolean;
   isModelLoading: boolean;
   allProviderModels: Map<string, AgentModelDefinition[]>;
   isAllModelsLoading: boolean;
@@ -212,6 +235,7 @@ const MODE_ICONS = {
 } as const;
 
 const EMPTY_AUTH_PROFILES: ProviderAuthProfile[] = [];
+const EMPTY_RUNTIME_PROFILES: RuntimeProfile[] = [];
 
 function alwaysTrue() {
   return true;
@@ -233,6 +257,7 @@ function resolveHasAnyControl({
   modeOptions,
   canSelectModel,
   hasAuthProfileControl,
+  hasRuntimeProfileControl,
   thinkingOptions,
   features,
 }: {
@@ -240,6 +265,7 @@ function resolveHasAnyControl({
   modeOptions: StatusOption[] | undefined;
   canSelectModel: boolean;
   hasAuthProfileControl: boolean;
+  hasRuntimeProfileControl: boolean;
   thinkingOptions: StatusOption[] | undefined;
   features: AgentFeature[] | undefined;
 }) {
@@ -248,6 +274,7 @@ function resolveHasAnyControl({
     Boolean(modeOptions?.length) ||
     canSelectModel ||
     hasAuthProfileControl ||
+    hasRuntimeProfileControl ||
     Boolean(thinkingOptions?.length) ||
     Boolean(features?.length)
   );
@@ -274,6 +301,14 @@ function normalizeAuthProfileSelection(value: string | null | undefined): string
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeRuntimeProfileSelection(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function resolveAuthProfileRestartLabel(
   authProfiles: ProviderAuthProfile[],
   authProfileKey: string | null,
@@ -283,6 +318,14 @@ function resolveAuthProfileRestartLabel(
   }
   const profile = authProfiles.find((candidate) => candidate.key === authProfileKey);
   return profile ? formatAuthProfileLabel(profile) : "Selected account";
+}
+
+function resolveRuntimeProfileRestartLabel(
+  runtimeProfiles: RuntimeProfile[],
+  runtimeProfileId: string,
+): string {
+  const profile = runtimeProfiles.find((candidate) => candidate.id === runtimeProfileId);
+  return profile?.name ?? "Selected profile";
 }
 
 function resolveDisplayAuthProfile(input: {
@@ -318,6 +361,60 @@ function resolveAuthProfileControlState(input: {
       isLoading: input.isLoading,
     }),
   };
+}
+
+function resolveRuntimeProfileControlState(input: {
+  runtimeProfiles: RuntimeProfile[];
+  selectedRuntimeProfileId: string | undefined;
+  isLoading: boolean;
+  onSelectRuntimeProfile?: (runtimeProfileId: string) => void;
+  allowAdHoc: boolean;
+}) {
+  const selected = input.runtimeProfiles.find(
+    (profile) => profile.id === input.selectedRuntimeProfileId,
+  );
+  let display = "Runtime profile";
+  if (input.isLoading) {
+    display = "Loading profiles...";
+  } else if (selected) {
+    display = selected.name;
+  } else if (input.allowAdHoc) {
+    display = "Ad-hoc settings";
+  }
+  return {
+    hasControl:
+      input.isLoading ||
+      input.runtimeProfiles.length > 0 ||
+      Boolean(input.selectedRuntimeProfileId),
+    canSelect: Boolean(
+      input.onSelectRuntimeProfile && (input.allowAdHoc || input.runtimeProfiles.length > 0),
+    ),
+    display,
+  };
+}
+
+function resolveHasPreferencesControl(input: {
+  hasRuntimeProfileControl: boolean;
+  hasAuthProfileControl: boolean;
+  canSelectThinking: boolean;
+  canSelectMode: boolean;
+  features?: AgentFeature[];
+}) {
+  return Boolean(
+    input.hasRuntimeProfileControl ||
+    input.hasAuthProfileControl ||
+    input.canSelectThinking ||
+    input.canSelectMode ||
+    input.features?.length,
+  );
+}
+
+function resolveAgentStatusBarDisabled(input: {
+  client: unknown;
+  isAuthProfileRestarting: boolean;
+  isRuntimeProfileRestarting: boolean;
+}) {
+  return !input.client || input.isAuthProfileRestarting || input.isRuntimeProfileRestarting;
 }
 
 function resolveStatusSelectability(input: {
@@ -459,6 +556,7 @@ type AgentStatusBarSlice = {
   runtimeModelId: string | null;
   model: string | null | undefined;
   authProfileKey: string | null | undefined;
+  profileSnapshot: AgentProfileSnapshot | undefined;
   features: AgentFeature[] | undefined;
   thinkingOptionId: string | null | undefined;
   lastUsage: unknown;
@@ -480,6 +578,7 @@ function selectAgentStatusBarSlice(
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
     model: currentAgent.model,
     authProfileKey: currentAgent.authProfileKey,
+    profileSnapshot: currentAgent.profileSnapshot,
     features: currentAgent.features,
     thinkingOptionId: currentAgent.thinkingOptionId,
     lastUsage: currentAgent.lastUsage,
@@ -503,6 +602,16 @@ function useAgentStatusBarAuthProfileState(serverId: string, agent: AgentStatusB
     authProfiles: providerAuthProfiles.profiles ?? EMPTY_AUTH_PROFILES,
     selectedAuthProfileKey: agent?.authProfileKey ?? undefined,
     isAuthProfilesLoading: providerAuthProfiles.isLoading,
+  };
+}
+
+function useAgentStatusBarRuntimeProfileState(serverId: string, agent: AgentStatusBarSlice) {
+  const runtimeProfiles = useRuntimeProfiles(serverId, agent?.provider);
+
+  return {
+    runtimeProfiles: runtimeProfiles.profiles ?? EMPTY_RUNTIME_PROFILES,
+    selectedRuntimeProfileId: agent?.profileSnapshot?.sourceProfileId ?? undefined,
+    isRuntimeProfilesLoading: runtimeProfiles.isLoading,
   };
 }
 
@@ -639,6 +748,11 @@ function ControlledStatusBar({
   selectedAuthProfileKey,
   onSelectAuthProfile,
   isAuthProfilesLoading = false,
+  runtimeProfiles = EMPTY_RUNTIME_PROFILES,
+  selectedRuntimeProfileId,
+  onSelectRuntimeProfile,
+  isRuntimeProfilesLoading = false,
+  allowAdHocRuntimeProfile = true,
   thinkingOptions,
   selectedThinkingOptionId,
   onSelectThinkingOption,
@@ -684,12 +798,22 @@ function ControlledStatusBar({
   });
   const hasAuthProfileControl = authProfileControl.hasControl;
   const canSelectAuthProfile = authProfileControl.canSelect;
+  const runtimeProfileControl = resolveRuntimeProfileControlState({
+    runtimeProfiles,
+    selectedRuntimeProfileId,
+    isLoading: isRuntimeProfilesLoading,
+    onSelectRuntimeProfile,
+    allowAdHoc: allowAdHocRuntimeProfile,
+  });
+  const hasRuntimeProfileControl = runtimeProfileControl.hasControl;
+  const canSelectRuntimeProfile = runtimeProfileControl.canSelect;
   const canSelectThinking = selectability.thinking;
 
   const displayProvider = findOptionLabel(providerOptions, selectedProviderId, "Provider");
   const displayMode = findOptionLabel(modeOptions, selectedModeId, "Default");
   const displayModel = resolveDisplayModel(isModelLoading, modelOptions, selectedModelId);
   const displayAuthProfile = authProfileControl.display;
+  const displayRuntimeProfile = runtimeProfileControl.display;
   const displayThinking = findOptionLabel(
     thinkingOptions,
     selectedThinkingOptionId,
@@ -709,6 +833,7 @@ function ControlledStatusBar({
     modeOptions,
     canSelectModel,
     hasAuthProfileControl,
+    hasRuntimeProfileControl,
     thinkingOptions,
     features,
   });
@@ -774,6 +899,10 @@ function ControlledStatusBar({
     () => handleOpenChange("auth-profile"),
     [handleOpenChange],
   );
+  const handleRuntimeProfileOpenChange = useMemo(
+    () => handleOpenChange("runtime-profile"),
+    [handleOpenChange],
+  );
   const handleModeOpenChange = useMemo(() => handleOpenChange("mode"), [handleOpenChange]);
 
   const handleProviderSelect = useCallback(
@@ -791,6 +920,14 @@ function ControlledStatusBar({
       onSelectAuthProfile?.(id);
     },
     [onSelectAuthProfile],
+  );
+  const handleRuntimeProfileSelect = useCallback(
+    (id: string) => {
+      setOpenSelector(null);
+      setPrefsOpen(false);
+      onSelectRuntimeProfile?.(id);
+    },
+    [onSelectRuntimeProfile],
   );
   const handleModeSelect = useCallback((id: string) => onSelectMode?.(id), [onSelectMode]);
 
@@ -885,6 +1022,11 @@ function ControlledStatusBar({
     [canSelectAuthProfile, disabled],
   );
 
+  const sheetRuntimeProfilePressableStyle = useMemo(
+    () => makeSheetPressableStyle(disabled || !canSelectRuntimeProfile),
+    [canSelectRuntimeProfile, disabled],
+  );
+
   const sheetModePressableStyle = useMemo(
     () => makeSheetPressableStyle(disabled || !canSelectMode),
     [canSelectMode, disabled],
@@ -917,11 +1059,13 @@ function ControlledStatusBar({
     isWeb: platformIsWeb,
     isCompact,
   });
-  const hasPreferencesControl =
-    hasAuthProfileControl ||
-    canSelectThinking ||
-    canSelectMode ||
-    Boolean(features && features.length > 0);
+  const hasPreferencesControl = resolveHasPreferencesControl({
+    hasRuntimeProfileControl,
+    hasAuthProfileControl,
+    canSelectThinking,
+    canSelectMode,
+    features,
+  });
 
   return (
     <View style={styles.container}>
@@ -1001,6 +1145,12 @@ function ControlledStatusBar({
           hasAuthProfileControl={hasAuthProfileControl}
           canSelectAuthProfile={canSelectAuthProfile}
           isAuthProfilesLoading={isAuthProfilesLoading}
+          runtimeProfiles={runtimeProfiles}
+          selectedRuntimeProfileId={selectedRuntimeProfileId}
+          hasRuntimeProfileControl={hasRuntimeProfileControl}
+          canSelectRuntimeProfile={canSelectRuntimeProfile}
+          allowAdHocRuntimeProfile={allowAdHocRuntimeProfile}
+          isRuntimeProfilesLoading={isRuntimeProfilesLoading}
           thinkingOptions={thinkingOptions}
           selectedThinkingOptionId={selectedThinkingOptionId}
           features={features}
@@ -1024,6 +1174,7 @@ function ControlledStatusBar({
           displayMode={displayMode}
           displayModel={displayModel}
           displayAuthProfile={displayAuthProfile}
+          displayRuntimeProfile={displayRuntimeProfile}
           displayThinking={displayThinking}
           ModeIconComponent={ModeIconComponent}
           modeIconColor={modeIconColor}
@@ -1036,12 +1187,15 @@ function ControlledStatusBar({
           splitControls={splitSheetControls}
           hasPreferencesControl={hasPreferencesControl}
           sheetThinkingPressableStyle={sheetThinkingPressableStyle}
+          sheetRuntimeProfilePressableStyle={sheetRuntimeProfilePressableStyle}
           sheetAuthProfilePressableStyle={sheetAuthProfilePressableStyle}
           sheetModePressableStyle={sheetModePressableStyle}
           handleSheetModelSelect={handleSheetModelSelect}
           handleThinkingOpenChange={handleThinkingOpenChange}
+          handleRuntimeProfileOpenChange={handleRuntimeProfileOpenChange}
           handleAuthProfileOpenChange={handleAuthProfileOpenChange}
           handleModeOpenChange={handleModeOpenChange}
+          handleRuntimeProfileSelect={handleRuntimeProfileSelect}
           handleAuthProfileSelect={handleAuthProfileSelect}
           handleOpenChange={handleOpenChange}
           renderSheetModelTrigger={renderSheetModelTrigger}
@@ -1439,6 +1593,116 @@ function SheetAuthProfileSection({
   );
 }
 
+function RuntimeProfileAutoMenuItem({
+  selected,
+  onSelectRuntimeProfile,
+}: {
+  selected: boolean;
+  onSelectRuntimeProfile?: (runtimeProfileId: string) => void;
+}) {
+  const handleSelect = useCallback(() => {
+    onSelectRuntimeProfile?.("");
+  }, [onSelectRuntimeProfile]);
+
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      Ad-hoc settings
+    </DropdownMenuItem>
+  );
+}
+
+function RuntimeProfileMenuItem({
+  profile,
+  selected,
+  onSelectRuntimeProfile,
+}: {
+  profile: RuntimeProfile;
+  selected: boolean;
+  onSelectRuntimeProfile?: (runtimeProfileId: string) => void;
+}) {
+  const handleSelect = useCallback(() => {
+    onSelectRuntimeProfile?.(profile.id);
+  }, [onSelectRuntimeProfile, profile.id]);
+
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {profile.name}
+    </DropdownMenuItem>
+  );
+}
+
+function SheetRuntimeProfileSection({
+  visible,
+  runtimeProfiles,
+  selectedRuntimeProfileId,
+  canSelectRuntimeProfile,
+  allowAdHocRuntimeProfile,
+  disabled,
+  displayRuntimeProfile,
+  openSelector,
+  sheetRuntimeProfilePressableStyle,
+  handleRuntimeProfileOpenChange,
+  handleRuntimeProfileSelect,
+}: {
+  visible: boolean;
+  runtimeProfiles: RuntimeProfile[];
+  selectedRuntimeProfileId?: string;
+  canSelectRuntimeProfile: boolean;
+  allowAdHocRuntimeProfile: boolean;
+  disabled: boolean;
+  displayRuntimeProfile: string;
+  openSelector: StatusSelector | null;
+  sheetRuntimeProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  handleRuntimeProfileOpenChange: (open: boolean) => void;
+  handleRuntimeProfileSelect: (id: string) => void;
+}) {
+  const { theme } = useUnistyles();
+
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <View style={styles.sheetSection}>
+      <DropdownMenu
+        open={openSelector === "runtime-profile"}
+        onOpenChange={handleRuntimeProfileOpenChange}
+      >
+        <DropdownMenuTrigger
+          disabled={disabled || !canSelectRuntimeProfile}
+          style={sheetRuntimeProfilePressableStyle}
+          accessibilityRole="button"
+          accessibilityLabel="Select runtime profile"
+          testID="agent-preferences-runtime-profile"
+        >
+          <Settings2 size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+          <Text style={styles.sheetSelectText}>Profile</Text>
+          <Text ellipsizeMode="tail" numberOfLines={1} style={styles.sheetSelectValueText}>
+            {displayRuntimeProfile}
+          </Text>
+          <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="start">
+          {allowAdHocRuntimeProfile ? (
+            <RuntimeProfileAutoMenuItem
+              selected={!selectedRuntimeProfileId}
+              onSelectRuntimeProfile={handleRuntimeProfileSelect}
+            />
+          ) : null}
+          {runtimeProfiles.map((profile) => (
+            <RuntimeProfileMenuItem
+              key={profile.id}
+              profile={profile}
+              selected={profile.id === selectedRuntimeProfileId}
+              onSelectRuntimeProfile={handleRuntimeProfileSelect}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
 interface SheetStatusBarContentProps {
   provider: string;
   modeOptions?: StatusOption[];
@@ -1449,6 +1713,12 @@ interface SheetStatusBarContentProps {
   hasAuthProfileControl: boolean;
   canSelectAuthProfile: boolean;
   isAuthProfilesLoading: boolean;
+  runtimeProfiles: RuntimeProfile[];
+  selectedRuntimeProfileId?: string;
+  hasRuntimeProfileControl: boolean;
+  canSelectRuntimeProfile: boolean;
+  allowAdHocRuntimeProfile: boolean;
+  isRuntimeProfilesLoading: boolean;
   thinkingOptions?: StatusOption[];
   selectedThinkingOptionId?: string;
   features?: AgentFeature[];
@@ -1472,6 +1742,7 @@ interface SheetStatusBarContentProps {
   displayMode: string;
   displayModel: string;
   displayAuthProfile: string;
+  displayRuntimeProfile: string;
   displayThinking: string;
   ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
   modeIconColor: string;
@@ -1484,12 +1755,15 @@ interface SheetStatusBarContentProps {
   splitControls: boolean;
   hasPreferencesControl: boolean;
   sheetThinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  sheetRuntimeProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   sheetAuthProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   sheetModePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
   handleThinkingOpenChange: (open: boolean) => void;
+  handleRuntimeProfileOpenChange: (open: boolean) => void;
   handleAuthProfileOpenChange: (open: boolean) => void;
   handleModeOpenChange: (open: boolean) => void;
+  handleRuntimeProfileSelect: (id: string) => void;
   handleAuthProfileSelect: (id: string) => void;
   handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
   renderSheetModelTrigger: (args: { selectedModelLabel: string }) => ReactElement;
@@ -1506,6 +1780,11 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     selectedAuthProfileKey,
     hasAuthProfileControl,
     canSelectAuthProfile,
+    runtimeProfiles,
+    selectedRuntimeProfileId,
+    hasRuntimeProfileControl,
+    canSelectRuntimeProfile,
+    allowAdHocRuntimeProfile,
     thinkingOptions,
     selectedThinkingOptionId,
     features,
@@ -1529,6 +1808,7 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     displayMode,
     displayModel,
     displayAuthProfile,
+    displayRuntimeProfile,
     displayThinking,
     ModeIconComponent,
     modeIconColor,
@@ -1541,12 +1821,15 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     splitControls,
     hasPreferencesControl,
     sheetThinkingPressableStyle,
+    sheetRuntimeProfilePressableStyle,
     sheetAuthProfilePressableStyle,
     sheetModePressableStyle,
     handleSheetModelSelect,
     handleThinkingOpenChange,
+    handleRuntimeProfileOpenChange,
     handleAuthProfileOpenChange,
     handleModeOpenChange,
+    handleRuntimeProfileSelect,
     handleAuthProfileSelect,
     handleOpenChange,
     renderSheetModelTrigger,
@@ -1616,6 +1899,20 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
             />
           </View>
         ) : null}
+
+        <SheetRuntimeProfileSection
+          visible={hasRuntimeProfileControl}
+          runtimeProfiles={runtimeProfiles}
+          selectedRuntimeProfileId={selectedRuntimeProfileId}
+          canSelectRuntimeProfile={canSelectRuntimeProfile}
+          allowAdHocRuntimeProfile={allowAdHocRuntimeProfile}
+          disabled={disabled}
+          displayRuntimeProfile={displayRuntimeProfile}
+          openSelector={openSelector}
+          sheetRuntimeProfilePressableStyle={sheetRuntimeProfilePressableStyle}
+          handleRuntimeProfileOpenChange={handleRuntimeProfileOpenChange}
+          handleRuntimeProfileSelect={handleRuntimeProfileSelect}
+        />
 
         {hasAuthProfileControl ? (
           <SheetAuthProfileSection
@@ -2155,6 +2452,72 @@ function useActiveAuthProfileRestartController(options: {
   };
 }
 
+function useActiveRuntimeProfileRestartController(options: {
+  agentId: string;
+  runtimeProfiles: RuntimeProfile[];
+  selectedRuntimeProfileId: string | undefined;
+  client: RuntimeProfileRestartClient | null;
+  toast: ReturnType<typeof useToast>;
+}) {
+  const { agentId, runtimeProfiles, selectedRuntimeProfileId, client, toast } = options;
+  const [pending, setPending] = useState<PendingRuntimeProfileRestart | null>(null);
+  const [isRestarting, setIsRestarting] = useState(false);
+
+  const requestRestart = useCallback(
+    (runtimeProfileId: string) => {
+      if (!client) {
+        return;
+      }
+      const normalizedNextId = normalizeRuntimeProfileSelection(runtimeProfileId);
+      const normalizedCurrentId = normalizeRuntimeProfileSelection(selectedRuntimeProfileId);
+      if (!normalizedNextId || normalizedNextId === normalizedCurrentId) {
+        return;
+      }
+      setPending({
+        id: normalizedNextId,
+        label: resolveRuntimeProfileRestartLabel(runtimeProfiles, normalizedNextId),
+      });
+    },
+    [client, runtimeProfiles, selectedRuntimeProfileId],
+  );
+
+  const close = useCallback(() => {
+    if (isRestarting) {
+      return;
+    }
+    setPending(null);
+  }, [isRestarting]);
+
+  const confirm = useCallback(() => {
+    if (!client || !pending) {
+      return;
+    }
+    const nextId = pending.id;
+    const nextLabel = pending.label;
+    setIsRestarting(true);
+    void (async () => {
+      try {
+        await client.restartAgentWithRuntimeProfile(agentId, nextId);
+        toast.show(`Restarting agent with ${nextLabel}`, { variant: "success" });
+      } catch (error) {
+        console.warn("[AgentStatusBar] restartAgentWithRuntimeProfile failed", error);
+        toast.error(toErrorMessage(error));
+      } finally {
+        setIsRestarting(false);
+        setPending(null);
+      }
+    })();
+  }, [agentId, client, pending, toast]);
+
+  return {
+    pending,
+    isRestarting,
+    requestRestart,
+    close,
+    confirm,
+  };
+}
+
 function AuthProfileRestartConfirmationSheet({
   pending,
   isRestarting,
@@ -2225,6 +2588,76 @@ function AuthProfileRestartConfirmationSheet({
   );
 }
 
+function RuntimeProfileRestartConfirmationSheet({
+  pending,
+  isRestarting,
+  onClose,
+  onConfirm,
+}: {
+  pending: PendingRuntimeProfileRestart | null;
+  isRestarting: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const restartTargetLabel = pending?.label ?? "Selected profile";
+  const secondaryButtonStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.restartConfirmButton,
+      styles.restartConfirmSecondaryButton,
+      pressed && styles.restartConfirmButtonPressed,
+      isRestarting && styles.disabledBadge,
+    ],
+    [isRestarting],
+  );
+  const primaryButtonStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.restartConfirmButton,
+      styles.restartConfirmPrimaryButton,
+      pressed && styles.restartConfirmPrimaryButtonPressed,
+      isRestarting && styles.disabledBadge,
+    ],
+    [isRestarting],
+  );
+
+  return (
+    <AdaptiveModalSheet
+      title="Restart agent with profile"
+      visible={pending !== null}
+      onClose={onClose}
+      snapPoints={AUTH_PROFILE_RESTART_SNAP_POINTS}
+      desktopMaxWidth={420}
+      testID="agent-runtime-profile-restart-confirmation"
+    >
+      <View style={styles.restartConfirmContent}>
+        <Text style={styles.restartConfirmText}>
+          Switch this agent to {restartTargetLabel}. Any running turn will stop and the provider
+          process will restart with the selected runtime profile.
+        </Text>
+        <View style={styles.restartConfirmActions}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isRestarting}
+            onPress={onClose}
+            style={secondaryButtonStyle}
+          >
+            <Text style={styles.restartConfirmSecondaryText}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isRestarting}
+            onPress={onConfirm}
+            style={primaryButtonStyle}
+          >
+            <Text style={styles.restartConfirmPrimaryText}>
+              {isRestarting ? "Restarting..." : "Restart"}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
+
 export const AgentStatusBar = memo(function AgentStatusBar({
   agentId,
   serverId,
@@ -2249,10 +2682,18 @@ export const AgentStatusBar = memo(function AgentStatusBar({
   } = useProvidersSnapshot(serverId);
   const agentProvider = agent?.provider;
   const authProfileState = useAgentStatusBarAuthProfileState(serverId, agent);
+  const runtimeProfileState = useAgentStatusBarRuntimeProfileState(serverId, agent);
   const authProfileRestart = useActiveAuthProfileRestartController({
     agentId,
     authProfiles: authProfileState.authProfiles,
     selectedAuthProfileKey: authProfileState.selectedAuthProfileKey,
+    client,
+    toast,
+  });
+  const runtimeProfileRestart = useActiveRuntimeProfileRestartController({
+    agentId,
+    runtimeProfiles: runtimeProfileState.runtimeProfiles,
+    selectedRuntimeProfileId: runtimeProfileState.selectedRuntimeProfileId,
     client,
     toast,
   });
@@ -2428,6 +2869,11 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         : [{ id: agent?.currentModeId ?? "", label: displayMode }],
     [agent?.currentModeId, displayMode, modeOptions],
   );
+  const statusBarDisabled = resolveAgentStatusBarDisabled({
+    client,
+    isAuthProfileRestarting: authProfileRestart.isRestarting,
+    isRuntimeProfileRestarting: runtimeProfileRestart.isRestarting,
+  });
 
   if (!agent) {
     return null;
@@ -2456,16 +2902,27 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         selectedAuthProfileKey={authProfileState.selectedAuthProfileKey}
         onSelectAuthProfile={authProfileRestart.requestRestart}
         isAuthProfilesLoading={authProfileState.isAuthProfilesLoading}
+        runtimeProfiles={runtimeProfileState.runtimeProfiles}
+        selectedRuntimeProfileId={runtimeProfileState.selectedRuntimeProfileId}
+        onSelectRuntimeProfile={runtimeProfileRestart.requestRestart}
+        isRuntimeProfilesLoading={runtimeProfileState.isRuntimeProfilesLoading}
+        allowAdHocRuntimeProfile={false}
         isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
         onModelSelectorOpen={handleModelSelectorOpen}
         onDropdownClose={onDropdownClose}
-        disabled={!client || authProfileRestart.isRestarting}
+        disabled={statusBarDisabled}
       />
       <AuthProfileRestartConfirmationSheet
         pending={authProfileRestart.pending}
         isRestarting={authProfileRestart.isRestarting}
         onClose={authProfileRestart.close}
         onConfirm={authProfileRestart.confirm}
+      />
+      <RuntimeProfileRestartConfirmationSheet
+        pending={runtimeProfileRestart.pending}
+        isRestarting={runtimeProfileRestart.isRestarting}
+        onClose={runtimeProfileRestart.close}
+        onConfirm={runtimeProfileRestart.confirm}
       />
     </>
   );
@@ -2485,6 +2942,11 @@ export function DraftAgentStatusBar({
   selectedAuthProfileKey,
   onSelectAuthProfile,
   isAuthProfilesLoading,
+  runtimeProfiles = EMPTY_RUNTIME_PROFILES,
+  selectedRuntimeProfileId,
+  onSelectRuntimeProfile,
+  isRuntimeProfilesLoading,
+  allowAdHocRuntimeProfile = true,
   isModelLoading: _isModelLoading,
   allProviderModels,
   isAllModelsLoading,
@@ -2581,6 +3043,11 @@ export function DraftAgentStatusBar({
             selectedAuthProfileKey={selectedAuthProfileKey}
             onSelectAuthProfile={onSelectAuthProfile}
             isAuthProfilesLoading={isAuthProfilesLoading}
+            runtimeProfiles={runtimeProfiles}
+            selectedRuntimeProfileId={selectedRuntimeProfileId}
+            onSelectRuntimeProfile={onSelectRuntimeProfile}
+            isRuntimeProfilesLoading={isRuntimeProfilesLoading}
+            allowAdHocRuntimeProfile={allowAdHocRuntimeProfile}
             onDropdownClose={onDropdownClose}
             disabled={disabled}
           />
@@ -2605,6 +3072,11 @@ export function DraftAgentStatusBar({
       selectedAuthProfileKey={selectedAuthProfileKey}
       onSelectAuthProfile={onSelectAuthProfile}
       isAuthProfilesLoading={isAuthProfilesLoading}
+      runtimeProfiles={runtimeProfiles}
+      selectedRuntimeProfileId={selectedRuntimeProfileId}
+      onSelectRuntimeProfile={onSelectRuntimeProfile}
+      isRuntimeProfilesLoading={isRuntimeProfilesLoading}
+      allowAdHocRuntimeProfile={allowAdHocRuntimeProfile}
       isModelLoading={isAllModelsLoading}
       favoriteKeys={favoriteKeys}
       onToggleFavoriteModel={handleToggleFavorite}
