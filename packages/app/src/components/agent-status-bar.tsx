@@ -78,6 +78,15 @@ interface StatusOption {
   label: string;
 }
 
+interface PendingAuthProfileRestart {
+  key: string | null;
+  label: string;
+}
+
+interface AuthProfileRestartClient {
+  restartAgentWithAuthProfile(agentId: string, authProfileKey: string | null): Promise<void>;
+}
+
 type StatusSelector =
   | "provider"
   | "mode"
@@ -255,6 +264,25 @@ function formatAuthProfileLabel(profile: ProviderAuthProfile): string {
     profile.alias ||
     (profile.authMode === "api-key" ? "Codex API key" : "Codex account")
   );
+}
+
+function normalizeAuthProfileSelection(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveAuthProfileRestartLabel(
+  authProfiles: ProviderAuthProfile[],
+  authProfileKey: string | null,
+): string {
+  if (!authProfileKey) {
+    return "Default account";
+  }
+  const profile = authProfiles.find((candidate) => candidate.key === authProfileKey);
+  return profile ? formatAuthProfileLabel(profile) : "Selected account";
 }
 
 function resolveDisplayAuthProfile(input: {
@@ -757,7 +785,11 @@ function ControlledStatusBar({
     [onSelectThinkingOption],
   );
   const handleAuthProfileSelect = useCallback(
-    (id: string) => onSelectAuthProfile?.(id),
+    (id: string) => {
+      setOpenSelector(null);
+      setPrefsOpen(false);
+      onSelectAuthProfile?.(id);
+    },
     [onSelectAuthProfile],
   );
   const handleModeSelect = useCallback((id: string) => onSelectMode?.(id), [onSelectMode]);
@@ -2055,6 +2087,143 @@ function ModeMenuItem({
 }
 
 const EMPTY_MODES: AgentMode[] = [];
+const AUTH_PROFILE_RESTART_SNAP_POINTS = ["42%", "70%"];
+
+function useActiveAuthProfileRestartController(options: {
+  agentId: string;
+  authProfiles: ProviderAuthProfile[];
+  selectedAuthProfileKey: string | undefined;
+  client: AuthProfileRestartClient | null;
+  toast: ReturnType<typeof useToast>;
+}) {
+  const { agentId, authProfiles, selectedAuthProfileKey, client, toast } = options;
+  const [pending, setPending] = useState<PendingAuthProfileRestart | null>(null);
+  const [isRestarting, setIsRestarting] = useState(false);
+
+  const requestRestart = useCallback(
+    (authProfileKey: string) => {
+      if (!client) {
+        return;
+      }
+      const normalizedNextKey = normalizeAuthProfileSelection(authProfileKey);
+      const normalizedCurrentKey = normalizeAuthProfileSelection(selectedAuthProfileKey);
+      if (normalizedNextKey === normalizedCurrentKey) {
+        return;
+      }
+      setPending({
+        key: normalizedNextKey,
+        label: resolveAuthProfileRestartLabel(authProfiles, normalizedNextKey),
+      });
+    },
+    [authProfiles, client, selectedAuthProfileKey],
+  );
+
+  const close = useCallback(() => {
+    if (isRestarting) {
+      return;
+    }
+    setPending(null);
+  }, [isRestarting]);
+
+  const confirm = useCallback(() => {
+    if (!client || !pending) {
+      return;
+    }
+    const nextKey = pending.key;
+    const nextLabel = pending.label;
+    setIsRestarting(true);
+    void (async () => {
+      try {
+        await client.restartAgentWithAuthProfile(agentId, nextKey);
+        toast.show(`Restarting agent with ${nextLabel}`, { variant: "success" });
+      } catch (error) {
+        console.warn("[AgentStatusBar] restartAgentWithAuthProfile failed", error);
+        toast.error(toErrorMessage(error));
+      } finally {
+        setIsRestarting(false);
+        setPending(null);
+      }
+    })();
+  }, [agentId, client, pending, toast]);
+
+  return {
+    pending,
+    isRestarting,
+    requestRestart,
+    close,
+    confirm,
+  };
+}
+
+function AuthProfileRestartConfirmationSheet({
+  pending,
+  isRestarting,
+  onClose,
+  onConfirm,
+}: {
+  pending: PendingAuthProfileRestart | null;
+  isRestarting: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const restartTargetLabel = pending?.label ?? "Selected account";
+  const secondaryButtonStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.restartConfirmButton,
+      styles.restartConfirmSecondaryButton,
+      pressed && styles.restartConfirmButtonPressed,
+      isRestarting && styles.disabledBadge,
+    ],
+    [isRestarting],
+  );
+  const primaryButtonStyle = useCallback(
+    ({ pressed }: PressableStateCallbackType) => [
+      styles.restartConfirmButton,
+      styles.restartConfirmPrimaryButton,
+      pressed && styles.restartConfirmPrimaryButtonPressed,
+      isRestarting && styles.disabledBadge,
+    ],
+    [isRestarting],
+  );
+
+  return (
+    <AdaptiveModalSheet
+      title="Restart agent with account"
+      visible={pending !== null}
+      onClose={onClose}
+      snapPoints={AUTH_PROFILE_RESTART_SNAP_POINTS}
+      desktopMaxWidth={420}
+      testID="agent-auth-profile-restart-confirmation"
+    >
+      <View style={styles.restartConfirmContent}>
+        <Text style={styles.restartConfirmText}>
+          Switch this agent to {restartTargetLabel}. Any running turn will stop and the provider
+          process will restart with the selected account.
+        </Text>
+        <View style={styles.restartConfirmActions}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isRestarting}
+            onPress={onClose}
+            style={secondaryButtonStyle}
+          >
+            <Text style={styles.restartConfirmSecondaryText}>Cancel</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isRestarting}
+            onPress={onConfirm}
+            style={primaryButtonStyle}
+          >
+            <Text style={styles.restartConfirmPrimaryText}>
+              {isRestarting ? "Restarting..." : "Restart"}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
 
 export const AgentStatusBar = memo(function AgentStatusBar({
   agentId,
@@ -2080,6 +2249,13 @@ export const AgentStatusBar = memo(function AgentStatusBar({
   } = useProvidersSnapshot(serverId);
   const agentProvider = agent?.provider;
   const authProfileState = useAgentStatusBarAuthProfileState(serverId, agent);
+  const authProfileRestart = useActiveAuthProfileRestartController({
+    agentId,
+    authProfiles: authProfileState.authProfiles,
+    selectedAuthProfileKey: authProfileState.selectedAuthProfileKey,
+    client,
+    toast,
+  });
 
   const snapshotSelectedEntry = useMemo(
     () => resolveSnapshotSelectedEntry(snapshotEntries, agent?.provider),
@@ -2258,31 +2434,40 @@ export const AgentStatusBar = memo(function AgentStatusBar({
   }
 
   return (
-    <ControlledStatusBar
-      provider={agent.provider}
-      modeOptions={fallbackModeOptions}
-      selectedModeId={agent.currentModeId ?? undefined}
-      providerDefinitions={agentProviderDefinitions}
-      allProviderModels={agentProviderModels}
-      onSelectMode={handleSelectMode}
-      modelOptions={modelOptions}
-      selectedModelId={modelSelection.activeModelId ?? undefined}
-      onSelectModel={handleSelectModel}
-      favoriteKeys={favoriteKeys}
-      onToggleFavoriteModel={handleToggleFavoriteModel}
-      thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
-      selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
-      onSelectThinkingOption={handleSelectThinkingOption}
-      features={agent.features}
-      onSetFeature={handleSetFeature}
-      authProfiles={authProfileState.authProfiles}
-      selectedAuthProfileKey={authProfileState.selectedAuthProfileKey}
-      isAuthProfilesLoading={authProfileState.isAuthProfilesLoading}
-      isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
-      onModelSelectorOpen={handleModelSelectorOpen}
-      onDropdownClose={onDropdownClose}
-      disabled={!client}
-    />
+    <>
+      <ControlledStatusBar
+        provider={agent.provider}
+        modeOptions={fallbackModeOptions}
+        selectedModeId={agent.currentModeId ?? undefined}
+        providerDefinitions={agentProviderDefinitions}
+        allProviderModels={agentProviderModels}
+        onSelectMode={handleSelectMode}
+        modelOptions={modelOptions}
+        selectedModelId={modelSelection.activeModelId ?? undefined}
+        onSelectModel={handleSelectModel}
+        favoriteKeys={favoriteKeys}
+        onToggleFavoriteModel={handleToggleFavoriteModel}
+        thinkingOptions={thinkingOptions.length > 1 ? thinkingOptions : undefined}
+        selectedThinkingOptionId={modelSelection.selectedThinkingId ?? undefined}
+        onSelectThinkingOption={handleSelectThinkingOption}
+        features={agent.features}
+        onSetFeature={handleSetFeature}
+        authProfiles={authProfileState.authProfiles}
+        selectedAuthProfileKey={authProfileState.selectedAuthProfileKey}
+        onSelectAuthProfile={authProfileRestart.requestRestart}
+        isAuthProfilesLoading={authProfileState.isAuthProfilesLoading}
+        isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
+        onModelSelectorOpen={handleModelSelectorOpen}
+        onDropdownClose={onDropdownClose}
+        disabled={!client || authProfileRestart.isRestarting}
+      />
+      <AuthProfileRestartConfirmationSheet
+        pending={authProfileRestart.pending}
+        isRestarting={authProfileRestart.isRestarting}
+        onClose={authProfileRestart.close}
+        onConfirm={authProfileRestart.confirm}
+      />
+    </>
   );
 });
 
@@ -2535,5 +2720,52 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     textAlign: "right",
+  },
+  restartConfirmContent: {
+    gap: theme.spacing[4],
+  },
+  restartConfirmText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    lineHeight: theme.fontSize.base * 1.45,
+  },
+  restartConfirmActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[3],
+  },
+  restartConfirmButton: {
+    minHeight: 40,
+    minWidth: 96,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.lg,
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[2],
+    borderWidth: 1,
+  },
+  restartConfirmSecondaryButton: {
+    backgroundColor: theme.colors.surface0,
+    borderColor: theme.colors.surface2,
+  },
+  restartConfirmPrimaryButton: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent,
+  },
+  restartConfirmButtonPressed: {
+    backgroundColor: theme.colors.surface2,
+  },
+  restartConfirmPrimaryButtonPressed: {
+    opacity: 0.9,
+  },
+  restartConfirmSecondaryText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  restartConfirmPrimaryText: {
+    color: theme.colors.accentForeground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.semibold,
   },
 }));

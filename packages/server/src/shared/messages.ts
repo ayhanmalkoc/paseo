@@ -1216,6 +1216,18 @@ export const SetAgentThinkingResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
+export const RestartAgentWithAuthProfileRequestMessageSchema = z.object({
+  type: z.literal("restart_agent_with_auth_profile_request"),
+  agentId: z.string(),
+  authProfileKey: z.string().nullable(),
+  requestId: z.string(),
+});
+
+export const RestartAgentWithAuthProfileResponseMessageSchema = z.object({
+  type: z.literal("restart_agent_with_auth_profile_response"),
+  payload: AgentActionResponsePayloadSchema,
+});
+
 export const SetAgentFeatureRequestMessageSchema = z.object({
   type: z.literal("set_agent_feature_request"),
   agentId: z.string(),
@@ -1779,6 +1791,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
+  RestartAgentWithAuthProfileRequestMessageSchema,
   SetAgentFeatureRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
   CheckoutStatusRequestSchema,
@@ -3434,6 +3447,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentModeResponseMessageSchema,
   SetAgentModelResponseMessageSchema,
   SetAgentThinkingResponseMessageSchema,
+  RestartAgentWithAuthProfileResponseMessageSchema,
   SetAgentFeatureResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   WaitForFinishResponseMessageSchema,
@@ -3570,6 +3584,9 @@ export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMes
 export type SetAgentModeResponseMessage = z.infer<typeof SetAgentModeResponseMessageSchema>;
 export type SetAgentModelResponseMessage = z.infer<typeof SetAgentModelResponseMessageSchema>;
 export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingResponseMessageSchema>;
+export type RestartAgentWithAuthProfileResponseMessage = z.infer<
+  typeof RestartAgentWithAuthProfileResponseMessageSchema
+>;
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type WaitForFinishResponseMessage = z.infer<typeof WaitForFinishResponseMessageSchema>;
@@ -3713,6 +3730,9 @@ export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessage
 export type SetAgentModeRequestMessage = z.infer<typeof SetAgentModeRequestMessageSchema>;
 export type SetAgentModelRequestMessage = z.infer<typeof SetAgentModelRequestMessageSchema>;
 export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequestMessageSchema>;
+export type RestartAgentWithAuthProfileRequestMessage = z.infer<
+  typeof RestartAgentWithAuthProfileRequestMessageSchema
+>;
 export type SetAgentFeatureRequestMessage = z.infer<typeof SetAgentFeatureRequestMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;

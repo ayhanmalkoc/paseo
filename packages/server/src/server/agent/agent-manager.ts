@@ -125,6 +125,11 @@ interface AgentManagerRescueTimeouts {
   interruptSessionMs?: number;
 }
 
+interface ReloadAgentSessionOptions {
+  forceCreateSession?: boolean;
+  resolveDefaultAuthProfile?: boolean;
+}
+
 interface ProviderEnabledFlag {
   enabled: boolean;
 }
@@ -911,6 +916,7 @@ export class AgentManager {
   async reloadAgentSession(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
+    options?: ReloadAgentSessionOptions,
   ): Promise<ManagedAgent> {
     let existing = this.requireSessionAgent(agentId);
     if (this.hasInFlightRun(agentId)) {
@@ -931,14 +937,15 @@ export class AgentManager {
     } as AgentSessionConfig;
     const normalizedConfig = await this.normalizeConfig(refreshConfig);
     const authLaunch = await this.resolveProviderAuthLaunchContext(normalizedConfig, {
-      resolveDefault: false,
+      resolveDefault: options?.resolveDefaultAuthProfile === true,
     });
     const authConfig = this.withResolvedAuthProfile(normalizedConfig, authLaunch.profileKey);
     const launchContext = this.buildLaunchContext(agentId, authLaunch.env);
 
-    const session = handle
-      ? await client.resumeSession(handle, authConfig, launchContext)
-      : await client.createSession(authConfig, launchContext);
+    const session =
+      handle && options?.forceCreateSession !== true
+        ? await client.resumeSession(handle, authConfig, launchContext)
+        : await client.createSession(authConfig, launchContext);
 
     this.agentStreamCoalescer.flushAndDiscard(agentId);
     // Remove the existing agent entry before swapping sessions
@@ -1121,6 +1128,44 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  async restartAgentWithAuthProfile(
+    agentId: string,
+    authProfileKey: string | null,
+  ): Promise<ManagedAgent> {
+    const agent = this.requireSessionAgent(agentId);
+    const providerAuthService = this.providerAuthService;
+    if (!providerAuthService) {
+      throw new Error("Provider auth profiles are not available");
+    }
+    if (!providerAuthService.supportsProvider(agent.provider)) {
+      throw new Error(`Provider '${agent.provider}' does not support auth profiles`);
+    }
+
+    const requestedProfileKey = normalizeAuthProfileKey(authProfileKey);
+    const requestedConfig = {
+      ...agent.config,
+      authProfileKey: requestedProfileKey ?? undefined,
+    } as AgentSessionConfig;
+    const normalizedConfig = await this.normalizeConfig(requestedConfig);
+    const authLaunch = await this.resolveProviderAuthLaunchContext(normalizedConfig, {
+      resolveDefault: true,
+    });
+    if (!authLaunch.profileKey) {
+      throw new Error(`No ready auth profile is available for provider '${agent.provider}'`);
+    }
+
+    const currentProfileKey = normalizeAuthProfileKey(agent.config.authProfileKey);
+    if (authLaunch.profileKey === currentProfileKey) {
+      return agent;
+    }
+
+    return this.reloadAgentSession(
+      agentId,
+      { authProfileKey: authLaunch.profileKey },
+      { forceCreateSession: true },
+    );
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {

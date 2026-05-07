@@ -1,6 +1,7 @@
 # Provider Auth Profiles Plan
 
-Status: Codex MVP implemented on `codex/provider-auth-profiles`
+Status: Codex MVP, automatic current-auth sync, and controlled account switch implemented on
+`codex/provider-auth-profiles`
 Branch: `codex/provider-auth-profiles`
 Reference: [Loongphy/codex-auth](https://github.com/Loongphy/codex-auth), inspected at `d3102f0`
 
@@ -17,16 +18,21 @@ The Codex MVP is implemented behind a provider-neutral auth profile service:
 - composer Preferences expose a separate Account row while leaving
   provider/model selection unchanged;
 - local Codex rollout usage scanning and default/auto-ready selection are
-  implemented server-side.
+  implemented server-side;
+- automatic current-auth sync imports or updates the current global Codex login
+  during bootstrap, profile listing, and new-agent launch selection;
+- active agents can switch accounts through an explicit restart that preserves
+  the Paseo agent id and visible timeline while starting a fresh provider
+  process for the selected auth profile.
 
 Future provider support still requires provider-specific adapters for Claude,
 OpenCode, Pi, or custom providers; the app/RPC contract is intended to remain
 unchanged for those additions.
 
-## Next Scope: Automatic Current Auth Sync
+## Implemented Scope: Automatic Current Auth Sync
 
-This is the next implementation scope. It is intentionally narrower than full
-account rotation.
+This scope is implemented. It is intentionally narrower than full account
+rotation.
 
 Goal:
 
@@ -216,6 +222,252 @@ Follow the repo validation rules:
 - Existing/running/resumed agents stay pinned to their original auth profile.
 - Missing or invalid global Codex auth does not delete or corrupt stored
   profiles.
+- No provider secrets are sent to the app or written to logs.
+
+## Implemented Scope: Controlled Account Switch
+
+This scope is implemented. It lets a user move an existing agent to a different
+provider account through an explicit, controlled restart. It is not a live token
+swap and it is not automatic fallback.
+
+Target scenario:
+
+- a Codex agent was started with Account A;
+- Account A later hits a limit or returns a stale-auth error;
+- the user logs into Account B externally with Codex, and Paseo auto-syncs it;
+- the user opens the existing agent Preferences, selects Account B, confirms the
+  restart, and the agent restarts under Account B.
+
+### Controlled Switch Goals
+
+- Let active agents switch to another ready provider-auth profile without
+  forcing the user to create a new workspace or tab manually.
+- Preserve the logical Paseo agent identity, workspace, visible timeline, title,
+  model, mode, thinking option, feature toggles, permissions, and labels.
+- Start a new provider process with the selected `authProfileKey` and matching
+  provider auth environment, for Codex `CODEX_HOME=<selected profile codex-home>`.
+- Make the restart explicit in the UI before interrupting or replacing the
+  provider process.
+- Keep existing draft-agent account selection behavior unchanged.
+
+### Controlled Switch Non-Goals
+
+- Do not mutate a running provider process in place.
+- Do not silently move an agent to a different account based on usage, quota, or
+  auth errors.
+- Do not rewrite the user's global provider auth file.
+- Do not implement provider login or isolated profile re-auth in this scope.
+- Do not promise provider-side conversation/session continuity across accounts.
+  The Paseo timeline can remain visible, but the provider process should be
+  treated as restarted under a new identity.
+- Do not add automatic account rotation or fallback in this scope.
+
+### Controlled Switch Decisions
+
+1. Account switch means controlled restart, not hot token replacement.
+
+   Selecting a different Account on an active agent should open a confirmation
+   surface. After confirmation, Paseo restarts the provider session with the
+   selected profile. Draft agents keep their current direct account selection
+   behavior because no provider process exists yet.
+
+2. Preserve the logical Paseo agent, but do not reuse cross-account provider
+   persistence.
+
+   The restart should keep the same Paseo agent id and existing timeline so the
+   workspace UI remains stable. If the selected `authProfileKey` differs from the
+   current one, the server should start a fresh provider session instead of
+   resuming the previous provider persistence handle under a different account.
+   This avoids cross-account provider resume bugs and stale provider session
+   ownership.
+
+3. Resolve "Default account" to a concrete profile before restart.
+
+   Active-agent restart should not pass an empty `authProfileKey` through the
+   existing reload path. If the user selects "Default account", the daemon should
+   resolve the provider default at request time, pin the resulting profile key,
+   and restart with that concrete key. If no ready default exists, return a clear
+   error and keep the current agent running.
+
+4. Same-account selection is a no-op.
+
+   If the requested profile key resolves to the current `authProfileKey`, the
+   daemon should return success without restarting the provider process.
+
+5. The old session stays alive if the new launch fails.
+
+   The server should create or resume the replacement session before closing the
+   current session, matching the existing safe reload pattern. If the selected
+   profile is stale or invalid and launch fails, surface the error and keep the
+   previous agent state instead of leaving the UI without a session.
+
+6. In-flight turns require explicit interruption.
+
+   If the agent is currently running, the confirmation copy must state that the
+   current run will stop. The daemon can reuse the existing reload/cancel path,
+   but the user-facing action must be explicit.
+
+7. Provider-neutral API, Codex-first behavior.
+
+   The RPC and manager method should use provider-auth profile terminology, not
+   Codex-only names. Codex is the first adapter because it already maps profile
+   selection to `CODEX_HOME`, but the control path should support future Claude,
+   OpenCode, Pi, and custom provider adapters.
+
+### Controlled Switch Server Plan
+
+Add an additive WebSocket request/response family:
+
+- `restart_agent_with_auth_profile_request`
+  - `agentId: string`
+  - `authProfileKey: string | null`
+  - `requestId: string`
+- `restart_agent_with_auth_profile_response`
+  - reuse the existing agent action response shape where possible;
+  - optionally include the refreshed agent snapshot as an additive field if the
+    current app update flow needs it.
+
+Daemon client:
+
+- add `restartAgentWithAuthProfile(agentId, authProfileKey)` next to
+  `setAgentMode`, `setAgentModel`, and `setAgentThinkingOption`;
+- keep request/response schemas backward-compatible and optional-field-only for
+  any new response data.
+
+Session handler:
+
+- add a handler that validates the agent exists;
+- sync the agent provider's current auth profile before resolving the target, so
+  a just-imported global Codex login is visible;
+- resolve null/default to a concrete ready profile key;
+- call a manager method such as `restartAgentWithAuthProfile(agentId,
+resolvedProfileKey)`;
+- emit accepted/error responses and activity-log errors using the existing
+  session patterns.
+
+Agent manager:
+
+- implement account switching as a reload specialization, not a separate agent
+  creation path;
+- preserve agent id, labels, created/updated timestamps, visible timeline,
+  last usage, last error, and attention state;
+- when the auth profile changes, skip the old provider persistence handle and
+  create a fresh provider session with the new launch context;
+- when the auth profile does not change, return the current managed agent
+  without closing or recreating the session;
+- persist the resolved `authProfileKey` in the stored agent config so future
+  reload/resume stays pinned to the selected account.
+
+Provider auth service integration:
+
+- use the provider-neutral auth launch resolver to resolve a restart target to a
+  concrete ready profile key;
+- distinguish unsupported provider and missing ready-profile failures in the
+  manager while preserving profile lookup errors from the service;
+- never return provider secrets to the app.
+
+### Controlled Switch App Plan
+
+Active agent status bar:
+
+- pass `onSelectAuthProfile` for active agents, not only draft agents;
+- keep Account disabled only when the client is unavailable, the provider has no
+  auth-profile support, or no ready profiles exist;
+- selecting the current account closes the menu without prompting;
+- selecting a different account opens a confirmation sheet/modal.
+
+Confirmation surface:
+
+- title: "Restart agent with account"
+- body should name the current and target accounts when labels are available;
+- if the agent has an in-flight run, mention that the current run will stop;
+- primary action: "Restart"
+- secondary action: "Cancel"
+
+Client behavior:
+
+- show a pending state while the restart request is in flight;
+- call `restartAgentWithAuthProfile`;
+- after success, rely on existing agent snapshot/timeline updates and refetch the
+  active agent if needed;
+- after failure, show a toast with the server error and keep the old selection
+  visible.
+
+Draft behavior:
+
+- keep draft Preferences Account selection direct and non-confirming;
+- when a draft becomes a new agent, pass the selected `authProfileKey` through
+  the existing create path.
+
+### Controlled Switch Edge Cases
+
+- Target profile was removed after the menu opened: show an error, refetch
+  profiles, keep the current agent running.
+- Target profile exists but auth is stale: restart may fail or the next provider
+  turn may report the provider auth error; do not auto-fallback.
+- Default account points to the same current profile: no-op success.
+- Default account is missing: show "No default account is available" and keep the
+  current agent running.
+- Provider does not support auth profiles: do not show active account switching.
+- Old mobile/web clients: continue to work because all RPC additions are new and
+  optional.
+
+### Controlled Switch Tests
+
+Server targeted tests:
+
+- message schemas parse `restart_agent_with_auth_profile_request` and response;
+- daemon client sends the correct request and handles success/error responses;
+- manager restarts with a different `authProfileKey` and passes the selected
+  provider launch env;
+- manager preserves logical agent id and timeline across the switch;
+- manager does not reuse the old provider persistence handle when the account
+  changes;
+- manager returns no-op success when the resolved account is already selected;
+- failed target launch leaves the previous session registered and running;
+- default-account restart resolves to a concrete profile key before reload;
+- resume after switch stays pinned to the new `authProfileKey`.
+
+App targeted tests:
+
+- active Account row is selectable when ready profiles exist;
+- selecting a different active account opens the restart confirmation;
+- cancel does not call the daemon client;
+- confirm calls `restartAgentWithAuthProfile` with the target profile key;
+- draft Account selection remains direct and does not show the restart prompt;
+- server error keeps the old selected account visible and shows a toast.
+
+### Controlled Switch Validation
+
+Follow the repo validation rules:
+
+- run targeted agent-manager tests for account-switch reload behavior;
+- run targeted session/message/daemon-client tests for the new RPC;
+- run targeted app component/hook tests for the active Account row;
+- run `npm run format:files -- <changed files>`;
+- run `npm run lint -- <changed files>`;
+- run `npm run typecheck`;
+- live validation:
+  - start a Codex agent with Account A;
+  - switch/login Codex globally to Account B and confirm Paseo auto-syncs it;
+  - open the existing agent Preferences and choose Account B;
+  - confirm the restart;
+  - verify the same Paseo agent remains visible, the Account row shows Account B,
+    the next provider process uses Account B, and Account A is not silently
+    retried or removed.
+
+### Controlled Switch Definition of Done
+
+- Active agents can be restarted with a selected account from Preferences.
+- The UI clearly communicates that account change restarts the agent.
+- Same-account selection does not restart.
+- Switching accounts preserves the Paseo agent id and visible timeline.
+- Switching accounts starts a fresh provider process with the selected profile
+  launch env.
+- Provider persistence from the previous account is not reused under the new
+  account.
+- Failed restart leaves the old agent usable.
+- Draft/new-agent account selection remains unchanged.
 - No provider secrets are sent to the app or written to logs.
 
 ## Goal
@@ -543,9 +795,9 @@ global auth and should not move already-running sessions.
   may need account-aware refresh after the first working auth-profile launch.
 - API usage refresh touches provider services with user tokens. Keep it
   explicit opt-in and clearly labeled.
-- Active session switching can corrupt expectations. Only future sessions
-  should auto-switch unless a provider adapter later proves a safe live-switch
-  operation.
+- Automatic active session switching can corrupt expectations. Keep account
+  changes explicit and controlled unless a provider adapter later proves a safe
+  live-switch operation.
 - Windows file permission hardening is weaker than POSIX mode changes. Avoid
   exposing sensitive paths and keep copies under Paseo-owned app data.
 

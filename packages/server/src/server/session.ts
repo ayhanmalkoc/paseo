@@ -1888,6 +1888,12 @@ export class Session {
         );
       case "set_agent_thinking_request":
         return this.handleSetAgentThinkingRequest(msg.agentId, msg.thinkingOptionId, msg.requestId);
+      case "restart_agent_with_auth_profile_request":
+        return this.handleRestartAgentWithAuthProfileRequest(
+          msg.agentId,
+          msg.authProfileKey,
+          msg.requestId,
+        );
       case "get_daemon_config_request":
         this.emit({
           type: "get_daemon_config_response",
@@ -4418,6 +4424,52 @@ export class Session {
           agentId,
           accepted: false,
           error: getErrorMessageOr(error, "Failed to set agent thinking option"),
+        },
+      });
+    }
+  }
+
+  private async handleRestartAgentWithAuthProfileRequest(
+    agentId: string,
+    authProfileKey: string | null,
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { agentId, authProfileKey, requestId },
+      "session: restart_agent_with_auth_profile_request",
+    );
+
+    try {
+      await this.agentManager.restartAgentWithAuthProfile(agentId, authProfileKey);
+      this.sessionLogger.info(
+        { agentId, authProfileKey, requestId },
+        "session: restart_agent_with_auth_profile_request success",
+      );
+      this.emit({
+        type: "restart_agent_with_auth_profile_response",
+        payload: { requestId, agentId, accepted: true, error: null },
+      });
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, agentId, authProfileKey, requestId },
+        "session: restart_agent_with_auth_profile_request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to restart agent with auth profile: ${getErrorMessage(error)}`,
+        },
+      });
+      this.emit({
+        type: "restart_agent_with_auth_profile_response",
+        payload: {
+          requestId,
+          agentId,
+          accepted: false,
+          error: getErrorMessageOr(error, "Failed to restart agent with auth profile"),
         },
       });
     }
