@@ -53,7 +53,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
   AgentFeature,
   AgentMode,
@@ -68,7 +67,6 @@ import { getModeVisuals, type AgentModeColorTier } from "@server/server/agent/pr
 import {
   getFeatureHighlightColor,
   getFeatureTooltip,
-  getStatusSelectorHint,
   resolveAgentStatusBarSurface,
   resolveAgentModelSelection,
   shouldSplitAgentStatusBarControls,
@@ -245,17 +243,6 @@ const DEFAULT_RUNTIME_PROFILE_LABEL = "Default profile";
 
 function alwaysTrue() {
   return true;
-}
-
-function resolveDisplayModel(
-  isModelLoading: boolean,
-  modelOptions: StatusOption[] | undefined,
-  selectedModelId: string | undefined,
-) {
-  if (isModelLoading && (!modelOptions || modelOptions.length === 0)) {
-    return "Loading models...";
-  }
-  return findOptionLabel(modelOptions, selectedModelId, "Select model");
 }
 
 function resolveHasAnyControl({
@@ -562,22 +549,6 @@ function pickSheetModel({
   onSelectModel?.(modelId);
 }
 
-function pickDesktopModel({
-  nextProviderId,
-  modelId,
-  currentProvider,
-  onSelectModel,
-}: {
-  nextProviderId: string;
-  modelId: string;
-  currentProvider: string;
-  onSelectModel?: (modelId: string) => void;
-}) {
-  if (nextProviderId === currentProvider) {
-    onSelectModel?.(modelId);
-  }
-}
-
 function resolveModeVisualsForProvider(
   provider: string,
   selectedModeId: string | undefined,
@@ -854,7 +825,6 @@ function ControlledStatusBar({
 
   const displayProvider = findOptionLabel(providerOptions, selectedProviderId, "Provider");
   const displayMode = findOptionLabel(modeOptions, selectedModeId, "Default");
-  const displayModel = resolveDisplayModel(isModelLoading, modelOptions, selectedModelId);
   const displayAuthProfile = authProfileControl.display;
   const displayRuntimeProfile = runtimeProfileControl.display;
   const displayThinking = findOptionLabel(
@@ -973,18 +943,6 @@ function ControlledStatusBar({
     [onSelectRuntimeProfile],
   );
   const handleModeSelect = useCallback((id: string) => onSelectMode?.(id), [onSelectMode]);
-
-  const handleDesktopModelSelect = useCallback(
-    (nextProviderId: string, modelId: string) => {
-      pickDesktopModel({
-        nextProviderId,
-        modelId,
-        currentProvider: provider,
-        onSelectModel,
-      });
-    },
-    [onSelectModel, provider],
-  );
 
   const providerPressableStyle = useMemo(
     () =>
@@ -1172,7 +1130,6 @@ function ControlledStatusBar({
           comboboxModeOptions={comboboxModeOptions}
           comboboxThinkingOptions={comboboxThinkingOptions}
           displayProvider={displayProvider}
-          displayModel={displayModel}
           displayAuthProfile={displayAuthProfile}
           displayRuntimeProfile={displayRuntimeProfile}
           displayThinking={displayThinking}
@@ -1195,7 +1152,6 @@ function ControlledStatusBar({
           handleRuntimeProfileSelect={handleRuntimeProfileSelect}
           handleAuthProfileSelect={handleAuthProfileSelect}
           handleModeSelect={handleModeSelect}
-          handleDesktopModelSelect={handleDesktopModelSelect}
           handleProviderOpenChange={handleProviderOpenChange}
           handleThinkingOpenChange={handleThinkingOpenChange}
           handleRuntimeProfileOpenChange={handleRuntimeProfileOpenChange}
@@ -1254,7 +1210,6 @@ function ControlledStatusBar({
           effectiveProviderDefinitions={effectiveProviderDefinitions}
           effectiveAllProviderModels={effectiveAllProviderModels}
           displayMode={displayMode}
-          displayModel={displayModel}
           displayAuthProfile={displayAuthProfile}
           displayRuntimeProfile={displayRuntimeProfile}
           displayThinking={displayThinking}
@@ -1332,7 +1287,6 @@ interface DesktopStatusBarContentProps {
   comboboxModeOptions: ComboboxOption[];
   comboboxThinkingOptions: ComboboxOption[];
   displayProvider: string;
-  displayModel: string;
   displayAuthProfile: string;
   displayRuntimeProfile: string;
   displayThinking: string;
@@ -1357,7 +1311,6 @@ interface DesktopStatusBarContentProps {
   handleRuntimeProfileSelect: (id: string) => void;
   handleAuthProfileSelect: (id: string) => void;
   handleModeSelect: (id: string) => void;
-  handleDesktopModelSelect: (providerId: string, modelId: string) => void;
   handleProviderOpenChange: (open: boolean) => void;
   handleThinkingOpenChange: (open: boolean) => void;
   handleRuntimeProfileOpenChange: (open: boolean) => void;
@@ -1415,7 +1368,6 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     modelDisabled,
     effectiveProviderDefinitions,
     effectiveAllProviderModels,
-    displayModel,
     displayAuthProfile,
     displayRuntimeProfile,
     displayThinking,
@@ -1425,7 +1377,6 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     prefsOpen,
     handleRuntimeProfileSelect,
     handleAuthProfileSelect,
-    handleDesktopModelSelect,
     handleThinkingOpenChange,
     handleRuntimeProfileOpenChange,
     handleAuthProfileOpenChange,
@@ -1444,43 +1395,10 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
   } = props;
 
   const hasSavedRuntimeProfile = Boolean(selectedRuntimeProfileId);
-  const shouldRenderDesktopModelSelector = canSelectModel && !hasSavedRuntimeProfile;
   const shouldRenderPreferencesButton = hasPreferencesControl || canSelectModel;
-  const modelTooltip = getStatusSelectorHint("model");
 
   return (
     <>
-      {shouldRenderDesktopModelSelector ? (
-        <Tooltip
-          key={`model-${displayModel}`}
-          delayDuration={0}
-          enabledOnDesktop
-          enabledOnMobile={false}
-        >
-          <TooltipTrigger asChild triggerRefProp="ref">
-            <View>
-              <CombinedModelSelector
-                providerDefinitions={effectiveProviderDefinitions}
-                allProviderModels={effectiveAllProviderModels}
-                selectedProvider={provider}
-                selectedModel={selectedModelId ?? ""}
-                canSelectProvider={canSelectProviderInModelMenu}
-                onSelect={handleDesktopModelSelect}
-                favoriteKeys={favoriteKeys}
-                onToggleFavorite={onToggleFavoriteModel}
-                isLoading={isModelLoading}
-                disabled={modelDisabled}
-                onOpen={onModelSelectorOpen}
-                onClose={onDropdownClose}
-              />
-            </View>
-          </TooltipTrigger>
-          <TooltipContent side="top" align="center" offset={8}>
-            <Text style={styles.tooltipText}>{modelTooltip}</Text>
-          </TooltipContent>
-        </Tooltip>
-      ) : null}
-
       {shouldRenderPreferencesButton ? (
         <Pressable
           onPress={handleOpenPrefs}
@@ -1770,7 +1688,6 @@ interface SheetStatusBarContentProps {
   effectiveProviderDefinitions: AgentProviderDefinition[];
   effectiveAllProviderModels: Map<string, AgentModelDefinition[]>;
   displayMode: string;
-  displayModel: string;
   displayAuthProfile: string;
   displayRuntimeProfile: string;
   displayThinking: string;
@@ -3255,6 +3172,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   sheetSelect: {
+    width: "100%",
+    alignSelf: "stretch",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",

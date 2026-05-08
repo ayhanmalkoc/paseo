@@ -863,6 +863,8 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.normal,
   },
   customTriggerWrapper: {
+    width: "100%",
+    alignSelf: "stretch",
     paddingHorizontal: 0,
     paddingVertical: 0,
     height: "auto",
