@@ -1404,7 +1404,7 @@ export const RestartAgentWithAuthProfileResponseMessageSchema = z.object({
 export const RestartAgentWithRuntimeProfileRequestMessageSchema = z.object({
   type: z.literal("restart_agent_with_runtime_profile_request"),
   agentId: z.string(),
-  runtimeProfileId: z.string(),
+  runtimeProfileId: z.string().nullable(),
   profileOverrides: RuntimeProfileLaunchOverridesSchema.optional(),
   requestId: z.string(),
 });

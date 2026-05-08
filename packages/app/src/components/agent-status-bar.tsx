@@ -23,6 +23,7 @@ import {
   Brain,
   ChevronDown,
   ListTodo,
+  Pencil,
   Settings2,
   ShieldAlert,
   ShieldCheck,
@@ -30,6 +31,7 @@ import {
   User,
   Zap,
 } from "lucide-react-native";
+import { router } from "expo-router";
 import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import { useSessionStore } from "@/stores/session-store";
@@ -49,7 +51,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
+import { ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
@@ -75,6 +77,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb as platformIsWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
+import { buildSettingsHostRoute } from "@/utils/host-routes";
 
 interface StatusOption {
   id: string;
@@ -87,7 +90,7 @@ interface PendingAuthProfileRestart {
 }
 
 interface PendingRuntimeProfileRestart {
-  id: string;
+  id: string | null;
   label: string;
 }
 
@@ -96,7 +99,7 @@ interface AuthProfileRestartClient {
 }
 
 interface RuntimeProfileRestartClient {
-  restartAgentWithRuntimeProfile(agentId: string, runtimeProfileId: string): Promise<void>;
+  restartAgentWithRuntimeProfile(agentId: string, runtimeProfileId: string | null): Promise<void>;
 }
 
 type StatusSelector =
@@ -143,6 +146,7 @@ interface ControlledAgentStatusBarProps {
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
+  onEditRuntimeProfiles?: () => void;
 }
 
 export interface DraftAgentStatusBarProps {
@@ -175,6 +179,7 @@ export interface DraftAgentStatusBarProps {
   onSetFeature?: (featureId: string, value: unknown) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
+  onEditRuntimeProfiles?: () => void;
   disabled?: boolean;
 }
 
@@ -236,6 +241,7 @@ const MODE_ICONS = {
 
 const EMPTY_AUTH_PROFILES: ProviderAuthProfile[] = [];
 const EMPTY_RUNTIME_PROFILES: RuntimeProfile[] = [];
+const DEFAULT_RUNTIME_PROFILE_LABEL = "Default profile";
 
 function alwaysTrue() {
   return true;
@@ -322,8 +328,11 @@ function resolveAuthProfileRestartLabel(
 
 function resolveRuntimeProfileRestartLabel(
   runtimeProfiles: RuntimeProfile[],
-  runtimeProfileId: string,
+  runtimeProfileId: string | null,
 ): string {
+  if (!runtimeProfileId) {
+    return DEFAULT_RUNTIME_PROFILE_LABEL;
+  }
   const profile = runtimeProfiles.find((candidate) => candidate.id === runtimeProfileId);
   return profile?.name ?? "Selected profile";
 }
@@ -373,13 +382,13 @@ function resolveRuntimeProfileControlState(input: {
   const selected = input.runtimeProfiles.find(
     (profile) => profile.id === input.selectedRuntimeProfileId,
   );
-  let display = "Runtime profile";
+  let display = DEFAULT_RUNTIME_PROFILE_LABEL;
   if (input.isLoading) {
     display = "Loading profiles...";
   } else if (selected) {
     display = selected.name;
   } else if (input.allowAdHoc) {
-    display = "Ad-hoc settings";
+    display = DEFAULT_RUNTIME_PROFILE_LABEL;
   }
   return {
     hasControl:
@@ -391,6 +400,47 @@ function resolveRuntimeProfileControlState(input: {
     ),
     display,
   };
+}
+
+function findRuntimeProfile(
+  runtimeProfiles: RuntimeProfile[],
+  selectedRuntimeProfileId: string | undefined,
+): RuntimeProfile | null {
+  if (!selectedRuntimeProfileId) {
+    return null;
+  }
+  return runtimeProfiles.find((profile) => profile.id === selectedRuntimeProfileId) ?? null;
+}
+
+function resolveProviderLabelFromDefinitions(
+  provider: string,
+  providerDefinitions: AgentProviderDefinition[],
+): string {
+  return providerDefinitions.find((definition) => definition.id === provider)?.label ?? provider;
+}
+
+function resolveAuthProfileDisplayByKey(
+  authProfiles: ProviderAuthProfile[],
+  accountKey: string | null | undefined,
+): string {
+  if (!accountKey) {
+    return "Default account";
+  }
+  const profile = authProfiles.find((candidate) => candidate.key === accountKey);
+  return profile ? formatAuthProfileLabel(profile) : accountKey;
+}
+
+function formatRuntimeProfileValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") {
+    return "Not set";
+  }
+  if (typeof value === "boolean") {
+    return value ? "On" : "Off";
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 function resolveHasPreferencesControl(input: {
@@ -483,8 +533,8 @@ function makePrefsButtonStyle({ pressed }: PressableStateCallbackType) {
   return [styles.prefsButton, pressed && styles.prefsButtonPressed];
 }
 
-function makePrefsIconButtonStyle({ pressed }: PressableStateCallbackType) {
-  return [styles.prefsIconButton, pressed && styles.prefsButtonPressed];
+function makeProfileEditButtonStyle({ pressed }: PressableStateCallbackType) {
+  return [styles.profileEditButton, pressed && styles.prefsButtonPressed];
 }
 
 function pickSheetModel({
@@ -683,28 +733,19 @@ function SheetModelTriggerView({
 }
 
 function SheetPreferencesTriggerContent({
-  splitControls,
-  ProviderIcon,
-  displayModel,
+  displayRuntimeProfile,
 }: {
-  splitControls: boolean;
-  ProviderIcon: ReturnType<typeof getProviderIcon> | null;
-  displayModel: string;
+  displayRuntimeProfile: string;
 }) {
   const { theme } = useUnistyles();
 
-  if (splitControls) {
-    return <Settings2 size={theme.iconSize.md} color={theme.colors.foregroundMuted} />;
-  }
-
   return (
     <>
-      {ProviderIcon ? (
-        <ProviderIcon size={theme.iconSize.lg} color={theme.colors.foregroundMuted} />
-      ) : null}
+      <Settings2 size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
       <Text style={styles.prefsButtonText} numberOfLines={1}>
-        {displayModel}
+        {displayRuntimeProfile || DEFAULT_RUNTIME_PROFILE_LABEL}
       </Text>
+      <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
     </>
   );
 }
@@ -767,6 +808,7 @@ function ControlledStatusBar({
   onSetFeature,
   onDropdownClose,
   onModelSelectorOpen,
+  onEditRuntimeProfiles,
 }: ControlledAgentStatusBarProps) {
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
@@ -987,6 +1029,17 @@ function ControlledStatusBar({
     [canSelectMode, disabled, openSelector],
   );
 
+  const desktopRuntimeProfilePressableStyle = useMemo(
+    () =>
+      makeBadgePressableStyle(
+        styles.modeBadge,
+        styles.disabledBadge,
+        disabled || !canSelectRuntimeProfile,
+        openSelector === "runtime-profile",
+      ),
+    [canSelectRuntimeProfile, disabled, openSelector],
+  );
+
   const handleOpenPrefs = useCallback(() => {
     Keyboard.dismiss();
     setPrefsOpen(true);
@@ -995,6 +1048,12 @@ function ControlledStatusBar({
   const handleClosePrefs = useCallback(() => {
     setPrefsOpen(false);
   }, []);
+
+  const handleEditRuntimeProfiles = useCallback(() => {
+    setPrefsOpen(false);
+    setOpenSelector(null);
+    onEditRuntimeProfiles?.();
+  }, [onEditRuntimeProfiles]);
 
   const prefsButtonStyle = makePrefsButtonStyle;
 
@@ -1083,6 +1142,12 @@ function ControlledStatusBar({
           hasAuthProfileControl={hasAuthProfileControl}
           canSelectAuthProfile={canSelectAuthProfile}
           isAuthProfilesLoading={isAuthProfilesLoading}
+          runtimeProfiles={runtimeProfiles}
+          selectedRuntimeProfileId={selectedRuntimeProfileId}
+          hasRuntimeProfileControl={hasRuntimeProfileControl}
+          canSelectRuntimeProfile={canSelectRuntimeProfile}
+          allowAdHocRuntimeProfile={allowAdHocRuntimeProfile}
+          isRuntimeProfilesLoading={isRuntimeProfilesLoading}
           thinkingOptions={thinkingOptions}
           selectedThinkingOptionId={selectedThinkingOptionId}
           features={features}
@@ -1108,6 +1173,7 @@ function ControlledStatusBar({
           displayProvider={displayProvider}
           displayModel={displayModel}
           displayAuthProfile={displayAuthProfile}
+          displayRuntimeProfile={displayRuntimeProfile}
           displayThinking={displayThinking}
           ModeIconComponent={ModeIconComponent}
           modeIconColor={modeIconColor}
@@ -1118,20 +1184,35 @@ function ControlledStatusBar({
           providerPressableStyle={providerPressableStyle}
           thinkingPressableStyle={thinkingPressableStyle}
           authProfilePressableStyle={authProfilePressableStyle}
+          desktopRuntimeProfilePressableStyle={desktopRuntimeProfilePressableStyle}
           modePressableStyle={modePressableStyle}
           handleProviderPress={handleProviderPress}
           handleThinkingPress={handleThinkingPress}
           handleModePress={handleModePress}
           handleProviderSelect={handleProviderSelect}
           handleThinkingSelect={handleThinkingSelect}
+          handleRuntimeProfileSelect={handleRuntimeProfileSelect}
           handleAuthProfileSelect={handleAuthProfileSelect}
           handleModeSelect={handleModeSelect}
           handleDesktopModelSelect={handleDesktopModelSelect}
           handleProviderOpenChange={handleProviderOpenChange}
           handleThinkingOpenChange={handleThinkingOpenChange}
+          handleRuntimeProfileOpenChange={handleRuntimeProfileOpenChange}
           handleAuthProfileOpenChange={handleAuthProfileOpenChange}
           handleModeOpenChange={handleModeOpenChange}
           handleOpenChange={handleOpenChange}
+          prefsOpen={prefsOpen}
+          handleOpenPrefs={handleOpenPrefs}
+          handleClosePrefs={handleClosePrefs}
+          sheetThinkingPressableStyle={sheetThinkingPressableStyle}
+          sheetRuntimeProfilePressableStyle={sheetRuntimeProfilePressableStyle}
+          sheetAuthProfilePressableStyle={sheetAuthProfilePressableStyle}
+          sheetModePressableStyle={sheetModePressableStyle}
+          handleSheetModelSelect={handleSheetModelSelect}
+          renderSheetModelTrigger={renderSheetModelTrigger}
+          ProviderIcon={ProviderIcon}
+          hasPreferencesControl={hasPreferencesControl}
+          onEditRuntimeProfiles={handleEditRuntimeProfiles}
           renderModeOption={renderModeOption}
         />
       ) : (
@@ -1199,6 +1280,7 @@ function ControlledStatusBar({
           handleAuthProfileSelect={handleAuthProfileSelect}
           handleOpenChange={handleOpenChange}
           renderSheetModelTrigger={renderSheetModelTrigger}
+          onEditRuntimeProfiles={handleEditRuntimeProfiles}
         />
       )}
     </View>
@@ -1218,10 +1300,18 @@ interface DesktopStatusBarContentProps {
   hasAuthProfileControl: boolean;
   canSelectAuthProfile: boolean;
   isAuthProfilesLoading: boolean;
+  runtimeProfiles: RuntimeProfile[];
+  selectedRuntimeProfileId?: string;
+  hasRuntimeProfileControl: boolean;
+  canSelectRuntimeProfile: boolean;
+  allowAdHocRuntimeProfile: boolean;
+  isRuntimeProfilesLoading: boolean;
   thinkingOptions?: StatusOption[];
   selectedThinkingOptionId?: string;
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
+  onSelectMode?: (modeId: string) => void;
+  onSelectThinkingOption?: (thinkingOptionId: string) => void;
   onToggleFavoriteModel?: (provider: string, modelId: string) => void;
   onDropdownClose?: () => void;
   onModelSelectorOpen?: () => void;
@@ -1243,30 +1333,46 @@ interface DesktopStatusBarContentProps {
   displayProvider: string;
   displayModel: string;
   displayAuthProfile: string;
+  displayRuntimeProfile: string;
   displayThinking: string;
   ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
   modeIconColor: string;
   openSelector: StatusSelector | null;
+  ProviderIcon: ReturnType<typeof getProviderIcon> | null;
+  prefsOpen: boolean;
   providerAnchorRef: RefObject<View | null>;
   thinkingAnchorRef: RefObject<View | null>;
   modeAnchorRef: RefObject<View | null>;
   providerPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   thinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   authProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  desktopRuntimeProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   modePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   handleProviderPress: () => void;
   handleThinkingPress: () => void;
   handleModePress: () => void;
   handleProviderSelect: (id: string) => void;
   handleThinkingSelect: (id: string) => void;
+  handleRuntimeProfileSelect: (id: string) => void;
   handleAuthProfileSelect: (id: string) => void;
   handleModeSelect: (id: string) => void;
   handleDesktopModelSelect: (providerId: string, modelId: string) => void;
   handleProviderOpenChange: (open: boolean) => void;
   handleThinkingOpenChange: (open: boolean) => void;
+  handleRuntimeProfileOpenChange: (open: boolean) => void;
   handleAuthProfileOpenChange: (open: boolean) => void;
   handleModeOpenChange: (open: boolean) => void;
   handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
+  handleOpenPrefs: () => void;
+  handleClosePrefs: () => void;
+  sheetThinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  sheetRuntimeProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  sheetAuthProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  sheetModePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  handleSheetModelSelect: (providerId: string, modelId: string) => void;
+  renderSheetModelTrigger: (args: { selectedModelLabel: string }) => ReactElement;
+  hasPreferencesControl: boolean;
+  onEditRuntimeProfiles?: () => void;
   renderModeOption: (args: {
     option: ComboboxOption;
     selected: boolean;
@@ -1275,14 +1381,9 @@ interface DesktopStatusBarContentProps {
   }) => ReactElement;
 }
 
-const DESKTOP_SEARCH_THRESHOLD = 6;
-
 function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
-  const { theme } = useUnistyles();
   const {
     provider,
-    providerOptions,
-    selectedProviderId,
     modeOptions,
     selectedModeId,
     selectedModelId,
@@ -1290,17 +1391,22 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     selectedAuthProfileKey,
     hasAuthProfileControl,
     canSelectAuthProfile,
+    runtimeProfiles,
+    selectedRuntimeProfileId,
+    hasRuntimeProfileControl,
+    canSelectRuntimeProfile,
+    allowAdHocRuntimeProfile,
     thinkingOptions,
     selectedThinkingOptionId,
     features,
     onSetFeature,
+    onSelectMode,
+    onSelectThinkingOption,
     onToggleFavoriteModel,
     onDropdownClose,
     onModelSelectorOpen,
-    favoriteKeys,
     disabled,
     isModelLoading,
-    canSelectProvider,
     canSelectMode,
     canSelectModel,
     canSelectThinking,
@@ -1308,70 +1414,42 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     modelDisabled,
     effectiveProviderDefinitions,
     effectiveAllProviderModels,
-    comboboxProviderOptions,
-    comboboxModeOptions,
-    comboboxThinkingOptions,
-    displayProvider,
     displayModel,
     displayAuthProfile,
+    displayRuntimeProfile,
     displayThinking,
     ModeIconComponent,
     modeIconColor,
     openSelector,
-    providerAnchorRef,
-    thinkingAnchorRef,
-    modeAnchorRef,
-    providerPressableStyle,
-    thinkingPressableStyle,
-    authProfilePressableStyle,
-    modePressableStyle,
-    handleProviderPress,
-    handleThinkingPress,
-    handleModePress,
-    handleProviderSelect,
-    handleThinkingSelect,
+    prefsOpen,
+    handleRuntimeProfileSelect,
     handleAuthProfileSelect,
-    handleModeSelect,
     handleDesktopModelSelect,
-    handleProviderOpenChange,
     handleThinkingOpenChange,
+    handleRuntimeProfileOpenChange,
     handleAuthProfileOpenChange,
     handleModeOpenChange,
     handleOpenChange,
-    renderModeOption,
+    handleOpenPrefs,
+    handleClosePrefs,
+    sheetThinkingPressableStyle,
+    sheetRuntimeProfilePressableStyle,
+    sheetAuthProfilePressableStyle,
+    sheetModePressableStyle,
+    renderSheetModelTrigger,
+    favoriteKeys,
+    hasPreferencesControl,
+    onEditRuntimeProfiles,
   } = props;
+
+  const hasSavedRuntimeProfile = Boolean(selectedRuntimeProfileId);
+  const shouldRenderDesktopModelSelector = canSelectModel && !hasSavedRuntimeProfile;
+  const shouldRenderPreferencesButton = hasPreferencesControl || canSelectModel;
+  const modelTooltip = getStatusSelectorHint("model");
 
   return (
     <>
-      {providerOptions && providerOptions.length > 0 ? (
-        <>
-          <Pressable
-            ref={providerAnchorRef}
-            collapsable={false}
-            disabled={disabled || !canSelectProvider}
-            onPress={handleProviderPress}
-            style={providerPressableStyle}
-            accessibilityRole="button"
-            accessibilityLabel="Select agent provider"
-            testID="agent-provider-selector"
-          >
-            <Text style={styles.modeBadgeText}>{displayProvider}</Text>
-            <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-          </Pressable>
-          <Combobox
-            options={comboboxProviderOptions}
-            value={selectedProviderId ?? ""}
-            onSelect={handleProviderSelect}
-            searchable={comboboxProviderOptions.length > DESKTOP_SEARCH_THRESHOLD}
-            open={openSelector === "provider"}
-            onOpenChange={handleProviderOpenChange}
-            anchorRef={providerAnchorRef}
-            desktopPlacement="top-start"
-          />
-        </>
-      ) : null}
-
-      {canSelectModel ? (
+      {shouldRenderDesktopModelSelector ? (
         <Tooltip
           key={`model-${displayModel}`}
           delayDuration={0}
@@ -1397,136 +1475,87 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
             </View>
           </TooltipTrigger>
           <TooltipContent side="top" align="center" offset={8}>
-            <Text style={styles.tooltipText}>{getStatusSelectorHint("model")}</Text>
+            <Text style={styles.tooltipText}>{modelTooltip}</Text>
           </TooltipContent>
         </Tooltip>
       ) : null}
 
-      {hasAuthProfileControl ? (
-        <DropdownMenu
-          open={openSelector === "auth-profile"}
-          onOpenChange={handleAuthProfileOpenChange}
+      {shouldRenderPreferencesButton ? (
+        <Pressable
+          onPress={handleOpenPrefs}
+          style={makePrefsButtonStyle}
+          accessibilityRole="button"
+          accessibilityLabel={`Agent preferences (${displayRuntimeProfile})`}
+          testID="agent-preferences-button"
         >
-          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-            <TooltipTrigger asChild triggerRefProp="ref">
-              <DropdownMenuTrigger
-                disabled={disabled || !canSelectAuthProfile}
-                style={authProfilePressableStyle}
-                accessibilityRole="button"
-                accessibilityLabel={`Select agent account (${displayAuthProfile})`}
-                testID="agent-auth-profile-selector"
-              >
-                <User size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                <Text style={styles.modeBadgeText}>{displayAuthProfile}</Text>
-                <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="top" align="center" offset={8}>
-              <Text style={styles.tooltipText}>Select account</Text>
-            </TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent side="top" align="start">
-            <AuthProfileAutoMenuItem
-              selected={!selectedAuthProfileKey}
-              onSelectAuthProfile={handleAuthProfileSelect}
-            />
-            {authProfiles.map((profile) => (
-              <AuthProfileMenuItem
-                key={profile.key}
-                profile={profile}
-                selected={profile.key === selectedAuthProfileKey}
-                onSelectAuthProfile={handleAuthProfileSelect}
-              />
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+          <SheetPreferencesTriggerContent displayRuntimeProfile={displayRuntimeProfile} />
+        </Pressable>
       ) : null}
 
-      {thinkingOptions && thinkingOptions.length > 0 ? (
-        <>
-          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-            <TooltipTrigger asChild triggerRefProp="ref">
-              <Pressable
-                ref={thinkingAnchorRef}
-                collapsable={false}
-                disabled={disabled || !canSelectThinking}
-                onPress={handleThinkingPress}
-                style={thinkingPressableStyle}
-                accessibilityRole="button"
-                accessibilityLabel={`Select thinking option (${displayThinking})`}
-                testID="agent-thinking-selector"
-              >
-                <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                <Text style={styles.modeBadgeText}>{displayThinking}</Text>
-                <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-              </Pressable>
-            </TooltipTrigger>
-            <TooltipContent side="top" align="center" offset={8}>
-              <Text style={styles.tooltipText}>{getStatusSelectorHint("thinking")}</Text>
-            </TooltipContent>
-          </Tooltip>
-          <Combobox
-            options={comboboxThinkingOptions}
-            value={selectedThinkingOptionId ?? ""}
-            onSelect={handleThinkingSelect}
-            searchable={comboboxThinkingOptions.length > DESKTOP_SEARCH_THRESHOLD}
-            open={openSelector === "thinking"}
-            onOpenChange={handleThinkingOpenChange}
-            anchorRef={thinkingAnchorRef}
-            desktopPlacement="top-start"
-          />
-        </>
-      ) : null}
-
-      {modeOptions && modeOptions.length > 0 ? (
-        <>
-          <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-            <TooltipTrigger asChild triggerRefProp="ref">
-              <Pressable
-                ref={modeAnchorRef}
-                collapsable={false}
-                disabled={disabled || !canSelectMode}
-                onPress={handleModePress}
-                style={modePressableStyle}
-                accessibilityRole="button"
-                accessibilityLabel={`Select agent mode (${selectedModeId ?? ""})`}
-                testID="agent-mode-selector"
-              >
-                {ModeIconComponent ? (
-                  <ModeIconComponent size={theme.iconSize.md} color={modeIconColor} />
-                ) : (
-                  <ShieldCheck size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                )}
-              </Pressable>
-            </TooltipTrigger>
-            <TooltipContent side="top" align="center" offset={8}>
-              <Text style={styles.tooltipText}>{getStatusSelectorHint("mode")}</Text>
-            </TooltipContent>
-          </Tooltip>
-          <Combobox
-            options={comboboxModeOptions}
-            value={selectedModeId ?? ""}
-            onSelect={handleModeSelect}
-            searchable={comboboxModeOptions.length > DESKTOP_SEARCH_THRESHOLD}
-            open={openSelector === "mode"}
-            onOpenChange={handleModeOpenChange}
-            anchorRef={modeAnchorRef}
-            desktopPlacement="top-start"
-            renderOption={renderModeOption}
-          />
-        </>
-      ) : null}
-
-      {features?.map((feature) => (
-        <DesktopFeatureItem
-          key={`feature-${feature.id}`}
-          feature={feature}
-          disabled={disabled}
-          openSelector={openSelector}
-          handleOpenChange={handleOpenChange}
+      <AdaptiveModalSheet
+        title="Preferences"
+        visible={prefsOpen && shouldRenderPreferencesButton}
+        onClose={handleClosePrefs}
+        testID="agent-preferences-sheet"
+      >
+        <PreferencesSheetBody
+          provider={provider}
+          modeOptions={modeOptions}
+          selectedModeId={selectedModeId}
+          selectedModelId={selectedModelId}
+          authProfiles={authProfiles}
+          selectedAuthProfileKey={selectedAuthProfileKey}
+          hasAuthProfileControl={hasAuthProfileControl}
+          canSelectAuthProfile={canSelectAuthProfile}
+          runtimeProfiles={runtimeProfiles}
+          selectedRuntimeProfileId={selectedRuntimeProfileId}
+          hasRuntimeProfileControl={hasRuntimeProfileControl}
+          canSelectRuntimeProfile={canSelectRuntimeProfile}
+          allowAdHocRuntimeProfile={allowAdHocRuntimeProfile}
+          thinkingOptions={thinkingOptions}
+          selectedThinkingOptionId={selectedThinkingOptionId}
+          features={features}
           onSetFeature={onSetFeature}
+          onSelectMode={onSelectMode}
+          onSelectThinkingOption={onSelectThinkingOption}
+          onToggleFavoriteModel={onToggleFavoriteModel}
+          onDropdownClose={onDropdownClose}
+          onModelSelectorOpen={onModelSelectorOpen}
+          providerDefinitions={props.providerDefinitions}
+          favoriteKeys={favoriteKeys}
+          disabled={disabled}
+          isModelLoading={isModelLoading}
+          canSelectMode={canSelectMode}
+          canSelectThinking={canSelectThinking}
+          canSelectProviderInModelMenu={canSelectProviderInModelMenu}
+          modelDisabled={modelDisabled}
+          effectiveProviderDefinitions={effectiveProviderDefinitions}
+          effectiveAllProviderModels={effectiveAllProviderModels}
+          displayMode={findOptionLabel(modeOptions, selectedModeId, "Default")}
+          displayAuthProfile={displayAuthProfile}
+          displayRuntimeProfile={displayRuntimeProfile}
+          displayThinking={displayThinking}
+          ModeIconComponent={ModeIconComponent}
+          modeIconColor={modeIconColor}
+          openSelector={openSelector}
+          sheetThinkingPressableStyle={sheetThinkingPressableStyle}
+          sheetRuntimeProfilePressableStyle={sheetRuntimeProfilePressableStyle}
+          sheetAuthProfilePressableStyle={sheetAuthProfilePressableStyle}
+          sheetModePressableStyle={sheetModePressableStyle}
+          handleSheetModelSelect={props.handleSheetModelSelect}
+          handleThinkingOpenChange={handleThinkingOpenChange}
+          handleRuntimeProfileOpenChange={handleRuntimeProfileOpenChange}
+          handleAuthProfileOpenChange={handleAuthProfileOpenChange}
+          handleModeOpenChange={handleModeOpenChange}
+          handleRuntimeProfileSelect={handleRuntimeProfileSelect}
+          handleAuthProfileSelect={handleAuthProfileSelect}
+          handleOpenChange={handleOpenChange}
+          renderSheetModelTrigger={renderSheetModelTrigger}
+          onEditRuntimeProfiles={onEditRuntimeProfiles}
+          renderModelControl={canSelectModel}
+          shouldRenderDirectRuntimeControls={!hasSavedRuntimeProfile}
         />
-      ))}
+      </AdaptiveModalSheet>
     </>
   );
 }
@@ -1606,7 +1635,7 @@ function RuntimeProfileAutoMenuItem({
 
   return (
     <DropdownMenuItem selected={selected} onSelect={handleSelect}>
-      Ad-hoc settings
+      {DEFAULT_RUNTIME_PROFILE_LABEL}
     </DropdownMenuItem>
   );
 }
@@ -1767,9 +1796,70 @@ interface SheetStatusBarContentProps {
   handleAuthProfileSelect: (id: string) => void;
   handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
   renderSheetModelTrigger: (args: { selectedModelLabel: string }) => ReactElement;
+  onEditRuntimeProfiles?: () => void;
 }
 
-function SheetStatusBarContent(props: SheetStatusBarContentProps) {
+type PreferencesSheetBodyProps = Pick<
+  SheetStatusBarContentProps,
+  | "provider"
+  | "modeOptions"
+  | "selectedModeId"
+  | "selectedModelId"
+  | "authProfiles"
+  | "selectedAuthProfileKey"
+  | "hasAuthProfileControl"
+  | "canSelectAuthProfile"
+  | "runtimeProfiles"
+  | "selectedRuntimeProfileId"
+  | "hasRuntimeProfileControl"
+  | "canSelectRuntimeProfile"
+  | "allowAdHocRuntimeProfile"
+  | "thinkingOptions"
+  | "selectedThinkingOptionId"
+  | "features"
+  | "onSetFeature"
+  | "onSelectMode"
+  | "onSelectThinkingOption"
+  | "onToggleFavoriteModel"
+  | "onDropdownClose"
+  | "onModelSelectorOpen"
+  | "providerDefinitions"
+  | "favoriteKeys"
+  | "disabled"
+  | "isModelLoading"
+  | "canSelectMode"
+  | "canSelectThinking"
+  | "canSelectProviderInModelMenu"
+  | "modelDisabled"
+  | "effectiveProviderDefinitions"
+  | "effectiveAllProviderModels"
+  | "displayMode"
+  | "displayAuthProfile"
+  | "displayRuntimeProfile"
+  | "displayThinking"
+  | "ModeIconComponent"
+  | "modeIconColor"
+  | "openSelector"
+  | "sheetThinkingPressableStyle"
+  | "sheetRuntimeProfilePressableStyle"
+  | "sheetAuthProfilePressableStyle"
+  | "sheetModePressableStyle"
+  | "handleSheetModelSelect"
+  | "handleThinkingOpenChange"
+  | "handleRuntimeProfileOpenChange"
+  | "handleAuthProfileOpenChange"
+  | "handleModeOpenChange"
+  | "handleRuntimeProfileSelect"
+  | "handleAuthProfileSelect"
+  | "handleOpenChange"
+  | "renderSheetModelTrigger"
+  | "onEditRuntimeProfiles"
+> & {
+  renderModelControl: boolean;
+  shouldRenderDirectRuntimeControls: boolean;
+};
+
+function PreferencesSheetBody(props: PreferencesSheetBodyProps) {
   const { theme } = useUnistyles();
   const {
     provider,
@@ -1799,27 +1889,18 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     disabled,
     isModelLoading,
     canSelectMode,
-    canSelectModel,
     canSelectThinking,
     canSelectProviderInModelMenu,
     modelDisabled,
     effectiveProviderDefinitions,
     effectiveAllProviderModels,
     displayMode,
-    displayModel,
     displayAuthProfile,
     displayRuntimeProfile,
     displayThinking,
     ModeIconComponent,
     modeIconColor,
     openSelector,
-    ProviderIcon,
-    prefsOpen,
-    handleOpenPrefs,
-    handleClosePrefs,
-    prefsButtonStyle,
-    splitControls,
-    hasPreferencesControl,
     sheetThinkingPressableStyle,
     sheetRuntimeProfilePressableStyle,
     sheetAuthProfilePressableStyle,
@@ -1833,44 +1914,269 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     handleAuthProfileSelect,
     handleOpenChange,
     renderSheetModelTrigger,
+    onEditRuntimeProfiles,
+    renderModelControl,
+    shouldRenderDirectRuntimeControls,
   } = props;
-
-  const shouldRenderModelSelector = splitControls && canSelectModel;
-  const shouldRenderPreferencesButton = !splitControls || hasPreferencesControl;
-  const preferencesButtonStyle = splitControls ? makePrefsIconButtonStyle : prefsButtonStyle;
+  const selectedRuntimeProfile = findRuntimeProfile(runtimeProfiles, selectedRuntimeProfileId);
 
   return (
     <>
-      {shouldRenderModelSelector ? (
-        <CombinedModelSelector
-          providerDefinitions={effectiveProviderDefinitions}
-          allProviderModels={effectiveAllProviderModels}
-          selectedProvider={provider}
-          selectedModel={selectedModelId ?? ""}
-          canSelectProvider={canSelectProviderInModelMenu}
-          onSelect={handleSheetModelSelect}
-          favoriteKeys={favoriteKeys}
-          onToggleFavorite={onToggleFavoriteModel}
-          isLoading={isModelLoading}
-          disabled={modelDisabled}
-          onOpen={onModelSelectorOpen}
-          onClose={onDropdownClose}
+      <SheetRuntimeProfileSection
+        visible={hasRuntimeProfileControl}
+        runtimeProfiles={runtimeProfiles}
+        selectedRuntimeProfileId={selectedRuntimeProfileId}
+        canSelectRuntimeProfile={canSelectRuntimeProfile}
+        allowAdHocRuntimeProfile={allowAdHocRuntimeProfile}
+        disabled={disabled}
+        displayRuntimeProfile={displayRuntimeProfile}
+        openSelector={openSelector}
+        sheetRuntimeProfilePressableStyle={sheetRuntimeProfilePressableStyle}
+        handleRuntimeProfileOpenChange={handleRuntimeProfileOpenChange}
+        handleRuntimeProfileSelect={handleRuntimeProfileSelect}
+      />
+
+      {renderModelControl && shouldRenderDirectRuntimeControls ? (
+        <View style={styles.sheetSection}>
+          <CombinedModelSelector
+            providerDefinitions={effectiveProviderDefinitions}
+            allProviderModels={effectiveAllProviderModels}
+            selectedProvider={provider}
+            selectedModel={selectedModelId ?? ""}
+            canSelectProvider={canSelectProviderInModelMenu}
+            onSelect={handleSheetModelSelect}
+            favoriteKeys={favoriteKeys}
+            onToggleFavorite={onToggleFavoriteModel}
+            isLoading={isModelLoading}
+            disabled={modelDisabled}
+            onOpen={onModelSelectorOpen}
+            onClose={onDropdownClose}
+            renderTrigger={renderSheetModelTrigger}
+          />
+        </View>
+      ) : null}
+
+      {!shouldRenderDirectRuntimeControls && selectedRuntimeProfile ? (
+        <RuntimeProfileDetailsSection
+          profile={selectedRuntimeProfile}
+          authProfiles={authProfiles}
+          providerDefinitions={providerDefinitions}
+          modeOptions={modeOptions}
+          thinkingOptions={thinkingOptions}
+          features={features}
+          onEditRuntimeProfiles={onEditRuntimeProfiles}
         />
       ) : null}
 
+      {hasAuthProfileControl && shouldRenderDirectRuntimeControls ? (
+        <SheetAuthProfileSection
+          authProfiles={authProfiles}
+          selectedAuthProfileKey={selectedAuthProfileKey}
+          canSelectAuthProfile={canSelectAuthProfile}
+          disabled={disabled}
+          displayAuthProfile={displayAuthProfile}
+          openSelector={openSelector}
+          sheetAuthProfilePressableStyle={sheetAuthProfilePressableStyle}
+          handleAuthProfileOpenChange={handleAuthProfileOpenChange}
+          handleAuthProfileSelect={handleAuthProfileSelect}
+        />
+      ) : null}
+
+      {shouldRenderDirectRuntimeControls && thinkingOptions && thinkingOptions.length > 0 ? (
+        <View style={styles.sheetSection}>
+          <DropdownMenu open={openSelector === "thinking"} onOpenChange={handleThinkingOpenChange}>
+            <DropdownMenuTrigger
+              disabled={disabled || !canSelectThinking}
+              style={sheetThinkingPressableStyle}
+              accessibilityRole="button"
+              accessibilityLabel="Select thinking option"
+              testID="agent-preferences-thinking"
+            >
+              <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+              <Text style={styles.sheetSelectText}>{displayThinking}</Text>
+              <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start">
+              {thinkingOptions.map((thinking) => (
+                <ThinkingMenuItem
+                  key={thinking.id}
+                  thinking={thinking}
+                  selected={thinking.id === selectedThinkingOptionId}
+                  onSelectThinkingOption={onSelectThinkingOption}
+                />
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </View>
+      ) : null}
+
+      {shouldRenderDirectRuntimeControls && modeOptions && modeOptions.length > 0 ? (
+        <View style={styles.sheetSection}>
+          <DropdownMenu open={openSelector === "mode"} onOpenChange={handleModeOpenChange}>
+            <DropdownMenuTrigger
+              disabled={disabled || !canSelectMode}
+              style={sheetModePressableStyle}
+              accessibilityRole="button"
+              accessibilityLabel="Select agent mode"
+              testID="agent-preferences-mode"
+            >
+              {ModeIconComponent ? (
+                <ModeIconComponent size={theme.iconSize.md} color={modeIconColor} />
+              ) : null}
+              <Text style={styles.sheetSelectText}>{displayMode}</Text>
+              <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start">
+              {modeOptions.map((mode) => (
+                <ModeMenuItem
+                  key={mode.id}
+                  mode={mode}
+                  provider={provider}
+                  providerDefinitions={providerDefinitions}
+                  selected={mode.id === selectedModeId}
+                  onSelectMode={onSelectMode}
+                />
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </View>
+      ) : null}
+
+      {shouldRenderDirectRuntimeControls
+        ? features?.map((feature) => (
+            <SheetFeatureItem
+              key={`feature-${feature.id}`}
+              feature={feature}
+              disabled={disabled}
+              openSelector={openSelector}
+              handleOpenChange={handleOpenChange}
+              onSetFeature={onSetFeature}
+            />
+          ))
+        : null}
+    </>
+  );
+}
+
+function RuntimeProfileDetailsSection({
+  profile,
+  authProfiles,
+  providerDefinitions,
+  modeOptions,
+  thinkingOptions,
+  features,
+  onEditRuntimeProfiles,
+}: {
+  profile: RuntimeProfile;
+  authProfiles: ProviderAuthProfile[];
+  providerDefinitions: AgentProviderDefinition[];
+  modeOptions?: StatusOption[];
+  thinkingOptions?: StatusOption[];
+  features?: AgentFeature[];
+  onEditRuntimeProfiles?: () => void;
+}) {
+  const { theme } = useUnistyles();
+  const featureValues = {
+    ...profile.featureDefaults,
+    ...profile.featureValues,
+  };
+  const featureRows = Object.entries(featureValues).map(([featureId, value]) => {
+    const featureLabel = features?.find((feature) => feature.id === featureId)?.label ?? featureId;
+    return {
+      label: featureLabel,
+      value: formatRuntimeProfileValue(value),
+    };
+  });
+  const rows = [
+    {
+      label: "Provider",
+      value: resolveProviderLabelFromDefinitions(profile.provider, providerDefinitions),
+    },
+    {
+      label: "Account",
+      value: resolveAuthProfileDisplayByKey(authProfiles, profile.accountKey),
+    },
+    {
+      label: "Model",
+      value: formatRuntimeProfileValue(profile.model),
+    },
+    {
+      label: "Permission",
+      value: findOptionLabel(modeOptions, profile.modeId ?? undefined, profile.modeId ?? "Default"),
+    },
+    {
+      label: "Thinking",
+      value: findOptionLabel(
+        thinkingOptions,
+        profile.thinkingOptionId ?? undefined,
+        profile.thinkingOptionId ?? "Default",
+      ),
+    },
+    ...featureRows,
+  ];
+
+  return (
+    <View style={styles.profileDetailsSection} testID="agent-preferences-profile-details">
+      <View style={styles.profileDetailsHeader}>
+        <View style={styles.profileDetailsTitleGroup}>
+          <Text style={styles.profileDetailsTitle}>Profile details</Text>
+          <Text style={styles.profileDetailsName} numberOfLines={1}>
+            {profile.name}
+          </Text>
+        </View>
+        {onEditRuntimeProfiles ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Edit ${profile.name}`}
+            onPress={onEditRuntimeProfiles}
+            style={makeProfileEditButtonStyle}
+            testID="agent-preferences-edit-profile"
+          >
+            <Pencil size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            <Text style={styles.profileEditButtonText}>Edit</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      {rows.map((row) => (
+        <View key={row.label} style={styles.profileDetailsRow}>
+          <Text style={styles.profileDetailsLabel}>{row.label}</Text>
+          <Text style={styles.profileDetailsValue} numberOfLines={1}>
+            {row.value}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// eslint-disable-next-line complexity
+function SheetStatusBarContent(props: SheetStatusBarContentProps) {
+  const {
+    canSelectModel,
+    displayRuntimeProfile,
+    selectedRuntimeProfileId,
+    prefsOpen,
+    handleOpenPrefs,
+    handleClosePrefs,
+    prefsButtonStyle,
+    hasPreferencesControl,
+  } = props;
+
+  const isRuntimeProfileSelected = Boolean(selectedRuntimeProfileId);
+  const shouldRenderDirectRuntimeControls = !isRuntimeProfileSelected;
+  const shouldRenderPreferencesButton = hasPreferencesControl || canSelectModel;
+
+  return (
+    <>
       {shouldRenderPreferencesButton ? (
         <Pressable
           onPress={handleOpenPrefs}
-          style={preferencesButtonStyle}
+          style={prefsButtonStyle}
           accessibilityRole="button"
           accessibilityLabel="Agent preferences"
           testID="agent-preferences-button"
         >
-          <SheetPreferencesTriggerContent
-            splitControls={splitControls}
-            ProviderIcon={ProviderIcon}
-            displayModel={displayModel}
-          />
+          <SheetPreferencesTriggerContent displayRuntimeProfile={displayRuntimeProfile} />
         </Pressable>
       ) : null}
 
@@ -1880,255 +2186,14 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
         onClose={handleClosePrefs}
         testID="agent-preferences-sheet"
       >
-        {!splitControls && canSelectModel ? (
-          <View style={styles.sheetSection}>
-            <CombinedModelSelector
-              providerDefinitions={effectiveProviderDefinitions}
-              allProviderModels={effectiveAllProviderModels}
-              selectedProvider={provider}
-              selectedModel={selectedModelId ?? ""}
-              canSelectProvider={canSelectProviderInModelMenu}
-              onSelect={handleSheetModelSelect}
-              favoriteKeys={favoriteKeys}
-              onToggleFavorite={onToggleFavoriteModel}
-              isLoading={isModelLoading}
-              disabled={modelDisabled}
-              onOpen={onModelSelectorOpen}
-              onClose={onDropdownClose}
-              renderTrigger={renderSheetModelTrigger}
-            />
-          </View>
-        ) : null}
-
-        <SheetRuntimeProfileSection
-          visible={hasRuntimeProfileControl}
-          runtimeProfiles={runtimeProfiles}
-          selectedRuntimeProfileId={selectedRuntimeProfileId}
-          canSelectRuntimeProfile={canSelectRuntimeProfile}
-          allowAdHocRuntimeProfile={allowAdHocRuntimeProfile}
-          disabled={disabled}
-          displayRuntimeProfile={displayRuntimeProfile}
-          openSelector={openSelector}
-          sheetRuntimeProfilePressableStyle={sheetRuntimeProfilePressableStyle}
-          handleRuntimeProfileOpenChange={handleRuntimeProfileOpenChange}
-          handleRuntimeProfileSelect={handleRuntimeProfileSelect}
+        <PreferencesSheetBody
+          {...props}
+          renderModelControl={canSelectModel}
+          shouldRenderDirectRuntimeControls={shouldRenderDirectRuntimeControls}
         />
-
-        {hasAuthProfileControl ? (
-          <SheetAuthProfileSection
-            authProfiles={authProfiles}
-            selectedAuthProfileKey={selectedAuthProfileKey}
-            canSelectAuthProfile={canSelectAuthProfile}
-            disabled={disabled}
-            displayAuthProfile={displayAuthProfile}
-            openSelector={openSelector}
-            sheetAuthProfilePressableStyle={sheetAuthProfilePressableStyle}
-            handleAuthProfileOpenChange={handleAuthProfileOpenChange}
-            handleAuthProfileSelect={handleAuthProfileSelect}
-          />
-        ) : null}
-
-        {thinkingOptions && thinkingOptions.length > 0 ? (
-          <View style={styles.sheetSection}>
-            <DropdownMenu
-              open={openSelector === "thinking"}
-              onOpenChange={handleThinkingOpenChange}
-            >
-              <DropdownMenuTrigger
-                disabled={disabled || !canSelectThinking}
-                style={sheetThinkingPressableStyle}
-                accessibilityRole="button"
-                accessibilityLabel="Select thinking option"
-                testID="agent-preferences-thinking"
-              >
-                <Brain size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-                <Text style={styles.sheetSelectText}>{displayThinking}</Text>
-                <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side="top" align="start">
-                {thinkingOptions.map((thinking) => (
-                  <ThinkingMenuItem
-                    key={thinking.id}
-                    thinking={thinking}
-                    selected={thinking.id === selectedThinkingOptionId}
-                    onSelectThinkingOption={onSelectThinkingOption}
-                  />
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </View>
-        ) : null}
-
-        {modeOptions && modeOptions.length > 0 ? (
-          <View style={styles.sheetSection}>
-            <DropdownMenu open={openSelector === "mode"} onOpenChange={handleModeOpenChange}>
-              <DropdownMenuTrigger
-                disabled={disabled || !canSelectMode}
-                style={sheetModePressableStyle}
-                accessibilityRole="button"
-                accessibilityLabel="Select agent mode"
-                testID="agent-preferences-mode"
-              >
-                {ModeIconComponent ? (
-                  <ModeIconComponent size={theme.iconSize.md} color={modeIconColor} />
-                ) : null}
-                <Text style={styles.sheetSelectText}>{displayMode}</Text>
-                <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side="top" align="start">
-                {modeOptions.map((mode) => (
-                  <ModeMenuItem
-                    key={mode.id}
-                    mode={mode}
-                    provider={provider}
-                    providerDefinitions={providerDefinitions}
-                    selected={mode.id === selectedModeId}
-                    onSelectMode={onSelectMode}
-                  />
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </View>
-        ) : null}
-
-        {features?.map((feature) => (
-          <SheetFeatureItem
-            key={`feature-${feature.id}`}
-            feature={feature}
-            disabled={disabled}
-            openSelector={openSelector}
-            handleOpenChange={handleOpenChange}
-            onSetFeature={onSetFeature}
-          />
-        ))}
       </AdaptiveModalSheet>
     </>
   );
-}
-
-function DesktopFeatureItem({
-  feature,
-  disabled,
-  openSelector,
-  handleOpenChange,
-  onSetFeature,
-}: {
-  feature: AgentFeature;
-  disabled: boolean;
-  openSelector: StatusSelector | null;
-  handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
-  onSetFeature?: (featureId: string, value: unknown) => void;
-}) {
-  const { theme } = useUnistyles();
-  const featureSelector: StatusSelector = `feature-${feature.id}`;
-
-  const handleFeatureOpenChange = useMemo(
-    () => handleOpenChange(featureSelector),
-    [handleOpenChange, featureSelector],
-  );
-
-  const handleTogglePress = useCallback(() => {
-    if (feature.type === "toggle") {
-      onSetFeature?.(feature.id, !feature.value);
-    }
-  }, [feature, onSetFeature]);
-
-  const handleSelectOption = useCallback(
-    (optionId: string) => {
-      onSetFeature?.(feature.id, optionId);
-    },
-    [feature.id, onSetFeature],
-  );
-
-  const togglePressableStyle = useCallback(
-    ({ pressed, hovered }: PressableStateCallbackType) => [
-      styles.modeIconBadge,
-      hovered && styles.modeBadgeHovered,
-      pressed && styles.modeBadgePressed,
-      disabled && styles.disabledBadge,
-    ],
-    [disabled],
-  );
-
-  const selectPressableStyle = useCallback(
-    ({ pressed, hovered }: PressableStateCallbackType) => [
-      styles.modeBadge,
-      hovered && styles.modeBadgeHovered,
-      (pressed || openSelector === featureSelector) && styles.modeBadgePressed,
-      disabled && styles.disabledBadge,
-    ],
-    [disabled, openSelector, featureSelector],
-  );
-
-  if (feature.type === "toggle") {
-    const FeatureIcon = getFeatureIcon(feature.icon);
-    return (
-      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-        <TooltipTrigger asChild triggerRefProp="ref">
-          <Pressable
-            disabled={disabled}
-            onPress={handleTogglePress}
-            style={togglePressableStyle}
-            accessibilityRole="button"
-            accessibilityLabel={getFeatureTooltip(feature)}
-            testID={`agent-feature-${feature.id}`}
-          >
-            <FeatureIcon
-              size={theme.iconSize.md}
-              color={getFeatureIconColor(
-                feature.id,
-                feature.value,
-                theme.colors.palette,
-                theme.colors.foregroundMuted,
-              )}
-            />
-          </Pressable>
-        </TooltipTrigger>
-        <TooltipContent side="top" align="center" offset={8}>
-          <Text style={styles.tooltipText}>{getFeatureTooltip(feature)}</Text>
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  if (feature.type === "select") {
-    const FeatureIcon = getFeatureIcon(feature.icon);
-    const selectedOption = feature.options.find((o) => o.id === feature.value);
-    return (
-      <DropdownMenu open={openSelector === featureSelector} onOpenChange={handleFeatureOpenChange}>
-        <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger asChild triggerRefProp="ref">
-            <DropdownMenuTrigger
-              disabled={disabled}
-              style={selectPressableStyle}
-              accessibilityRole="button"
-              accessibilityLabel={getFeatureTooltip(feature)}
-              testID={`agent-feature-${feature.id}`}
-            >
-              <FeatureIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
-              <Text style={styles.modeBadgeText}>{selectedOption?.label ?? feature.label}</Text>
-              <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-            </DropdownMenuTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="top" align="center" offset={8}>
-            <Text style={styles.tooltipText}>{getFeatureTooltip(feature)}</Text>
-          </TooltipContent>
-        </Tooltip>
-        <DropdownMenuContent side="top" align="start">
-          {feature.options.map((option) => (
-            <FeatureOptionMenuItem
-              key={option.id}
-              option={option}
-              selected={option.id === feature.value}
-              onSelect={handleSelectOption}
-            />
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  }
-
-  return null;
 }
 
 function SheetFeatureItem({
@@ -2470,7 +2535,7 @@ function useActiveRuntimeProfileRestartController(options: {
       }
       const normalizedNextId = normalizeRuntimeProfileSelection(runtimeProfileId);
       const normalizedCurrentId = normalizeRuntimeProfileSelection(selectedRuntimeProfileId);
-      if (!normalizedNextId || normalizedNextId === normalizedCurrentId) {
+      if (normalizedNextId === normalizedCurrentId) {
         return;
       }
       setPending({
@@ -2862,6 +2927,10 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     refetchSnapshotIfStale(agentProvider);
   }, [agentProvider, refetchSnapshotIfStale]);
 
+  const handleEditRuntimeProfiles = useCallback(() => {
+    router.push(buildSettingsHostRoute(serverId));
+  }, [serverId]);
+
   const fallbackModeOptions = useMemo<StatusOption[]>(
     () =>
       modeOptions.length > 0
@@ -2906,10 +2975,11 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         selectedRuntimeProfileId={runtimeProfileState.selectedRuntimeProfileId}
         onSelectRuntimeProfile={runtimeProfileRestart.requestRestart}
         isRuntimeProfilesLoading={runtimeProfileState.isRuntimeProfilesLoading}
-        allowAdHocRuntimeProfile={false}
+        allowAdHocRuntimeProfile={true}
         isModelLoading={snapshotIsLoading || selectedProviderIsLoading}
         onModelSelectorOpen={handleModelSelectorOpen}
         onDropdownClose={onDropdownClose}
+        onEditRuntimeProfiles={handleEditRuntimeProfiles}
         disabled={statusBarDisabled}
       />
       <AuthProfileRestartConfirmationSheet
@@ -2958,6 +3028,7 @@ export function DraftAgentStatusBar({
   onSetFeature,
   onDropdownClose,
   onModelSelectorOpen,
+  onEditRuntimeProfiles,
   disabled = false,
 }: DraftAgentStatusBarProps) {
   const { preferences, updatePreferences } = useFormPreferences();
@@ -3049,6 +3120,7 @@ export function DraftAgentStatusBar({
             isRuntimeProfilesLoading={isRuntimeProfilesLoading}
             allowAdHocRuntimeProfile={allowAdHocRuntimeProfile}
             onDropdownClose={onDropdownClose}
+            onEditRuntimeProfiles={onEditRuntimeProfiles}
             disabled={disabled}
           />
         ) : null}
@@ -3086,6 +3158,7 @@ export function DraftAgentStatusBar({
       features={features}
       onSetFeature={onSetFeature}
       onModelSelectorOpen={onModelSelectorOpen}
+      onEditRuntimeProfiles={onEditRuntimeProfiles}
       disabled={disabled}
     />
   );
@@ -3192,6 +3265,69 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     textAlign: "right",
+  },
+  profileDetailsSection: {
+    gap: theme.spacing[3],
+    paddingHorizontal: theme.spacing[4],
+    paddingVertical: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.surface2,
+    backgroundColor: theme.colors.surface0,
+  },
+  profileDetailsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+  },
+  profileDetailsTitleGroup: {
+    minWidth: 0,
+    flex: 1,
+    gap: theme.spacing[1],
+  },
+  profileDetailsTitle: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.semibold,
+  },
+  profileDetailsName: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+  },
+  profileDetailsRow: {
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+  },
+  profileDetailsLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+  },
+  profileDetailsValue: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    textAlign: "right",
+  },
+  profileEditButton: {
+    minHeight: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius["2xl"],
+  },
+  profileEditButtonText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
   },
   restartConfirmContent: {
     gap: theme.spacing[4],

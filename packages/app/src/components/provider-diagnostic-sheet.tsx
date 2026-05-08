@@ -19,7 +19,6 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useAccountLogin } from "@/hooks/use-account-login";
 import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { useRuntimeProfiles, resolveRuntimeProfileSummary } from "@/hooks/use-runtime-profiles";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
@@ -29,7 +28,6 @@ import type {
   AgentModelDefinition,
   AgentProvider,
   ProviderAuthProfile,
-  RuntimeProfile,
 } from "@server/server/agent/agent-sdk-types";
 import type { ProviderProfileModel } from "@server/server/agent/provider-launch-config";
 
@@ -425,119 +423,6 @@ function ProviderAuthProfilesSection(props: { provider: string; serverId: string
   );
 }
 
-function RuntimeProfilesSection(props: {
-  provider: string;
-  serverId: string;
-  models: AgentModelDefinition[];
-}) {
-  const { provider, serverId, models } = props;
-  const runtimeProfiles = useRuntimeProfiles(serverId, provider as AgentProvider);
-  const accounts = useProviderAuthProfiles(serverId, provider as AgentProvider);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleCreate = useCallback(() => {
-    void (async () => {
-      setError(null);
-      try {
-        const defaultAccount = accounts.profiles?.find((profile) => profile.isDefault);
-        const defaultModel = models.find((model) => model.isDefault) ?? models[0];
-        await runtimeProfiles.create({
-          name: `${provider} default`,
-          provider: provider as AgentProvider,
-          accountKey: defaultAccount?.key ?? null,
-          model: defaultModel?.id ?? null,
-          concurrencyPolicy: "warn",
-        });
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Runtime profile action failed");
-      }
-    })();
-  }, [accounts.profiles, models, provider, runtimeProfiles]);
-
-  const handleDelete = useCallback(
-    (profileId: string) => {
-      void runtimeProfiles.deleteProfile(profileId).catch((err) => {
-        setError(err instanceof Error ? err.message : "Runtime profile action failed");
-      });
-    },
-    [runtimeProfiles],
-  );
-  const trailing = useMemo(
-    () => (
-      <Button
-        variant="ghost"
-        size="xs"
-        onPress={handleCreate}
-        disabled={runtimeProfiles.isRefreshing}
-      >
-        Create
-      </Button>
-    ),
-    [handleCreate, runtimeProfiles.isRefreshing],
-  );
-
-  if (!runtimeProfiles.isSupported) {
-    return null;
-  }
-
-  return (
-    <SettingsSection title="Runtime profiles" trailing={trailing}>
-      <View style={settingsStyles.card}>
-        {runtimeProfiles.isLoading && runtimeProfiles.profiles.length === 0 ? (
-          <View style={sheetStyles.emptyRow}>
-            <ActivityIndicator size="small" />
-            <Text style={sheetStyles.mutedText}>Loading profiles…</Text>
-          </View>
-        ) : null}
-        {!runtimeProfiles.isLoading && runtimeProfiles.profiles.length === 0 ? (
-          <View style={sheetStyles.emptyRow}>
-            <Text style={sheetStyles.mutedText}>No runtime profiles</Text>
-          </View>
-        ) : null}
-        {runtimeProfiles.profiles.map((profile) => (
-          <RuntimeProfileRow
-            key={profile.id}
-            profile={profile}
-            disabled={runtimeProfiles.isRefreshing}
-            onDelete={handleDelete}
-          />
-        ))}
-      </View>
-      {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
-    </SettingsSection>
-  );
-}
-
-function RuntimeProfileRow({
-  profile,
-  disabled,
-  onDelete,
-}: {
-  profile: RuntimeProfile;
-  disabled: boolean;
-  onDelete: (profileId: string) => void;
-}) {
-  const handlePressDelete = useCallback(() => {
-    onDelete(profile.id);
-  }, [onDelete, profile.id]);
-
-  return (
-    <View style={MODEL_ROW_STYLE}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-          {profile.name}
-        </Text>
-        <Text style={sheetStyles.monoHint} numberOfLines={1}>
-          {resolveRuntimeProfileSummary(profile)}
-        </Text>
-      </View>
-      <Button variant="ghost" size="xs" onPress={handlePressDelete} disabled={disabled}>
-        Delete
-      </Button>
-    </View>
-  );
-}
-
 function AccountLoginSheet(props: {
   session: ReturnType<typeof useAccountLogin>["sessions"][number] | null;
   visible: boolean;
@@ -838,8 +723,6 @@ export function ProviderDiagnosticSheet({
       <CustomModelsSection provider={provider} serverId={serverId} refresh={refresh} />
 
       <ProviderAuthProfilesSection provider={provider} serverId={serverId} />
-
-      <RuntimeProfilesSection provider={provider} serverId={serverId} models={models} />
 
       <View>
         <View style={sheetStyles.modelsHeader}>

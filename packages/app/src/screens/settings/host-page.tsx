@@ -23,6 +23,7 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { ProvidersSection } from "@/screens/settings/providers-section";
+import { RuntimeProfilesSection } from "@/screens/settings/runtime-profiles-section";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 
@@ -162,6 +163,8 @@ export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
       <ConnectionsSection host={host} />
 
       <DaemonSection host={host} isLocalDaemon={isLocalDaemon} />
+
+      <RuntimeProfilesSection serverId={serverId} />
 
       <ProvidersSection serverId={serverId} />
 

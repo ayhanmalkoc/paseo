@@ -2237,7 +2237,7 @@ export class DaemonClient {
 
   async restartAgentWithRuntimeProfile(
     agentId: string,
-    runtimeProfileId: string,
+    runtimeProfileId: string | null,
     profileOverrides?: AgentSessionConfig["profileOverrides"],
   ): Promise<void> {
     const requestId = this.createRequestId();

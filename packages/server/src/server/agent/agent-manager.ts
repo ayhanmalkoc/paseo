@@ -1184,13 +1184,25 @@ export class AgentManager {
 
   async restartAgentWithRuntimeProfile(
     agentId: string,
-    runtimeProfileId: string,
+    runtimeProfileId: string | null,
     profileOverrides?: AgentSessionConfig["profileOverrides"],
   ): Promise<ManagedAgent> {
     this.requireSessionAgent(agentId);
     const requestedProfileId = normalizeAuthProfileKey(runtimeProfileId);
     if (!requestedProfileId) {
-      throw new Error("Runtime profile id is required");
+      return this.reloadAgentSession(
+        agentId,
+        {
+          runtimeProfileId: null,
+          profileOverrides: undefined,
+        },
+        {
+          forceCreateSession: true,
+          resolveDefaultAuthProfile: true,
+          runtimeProfileId: null,
+          profileOverrides: undefined,
+        },
+      );
     }
     return this.reloadAgentSession(
       agentId,

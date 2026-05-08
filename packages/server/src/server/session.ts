@@ -4776,7 +4776,7 @@ export class Session {
 
   private async handleRestartAgentWithRuntimeProfileRequest(
     agentId: string,
-    runtimeProfileId: string,
+    runtimeProfileId: string | null,
     profileOverrides: AgentSessionConfig["profileOverrides"] | undefined,
     requestId: string,
   ): Promise<void> {
