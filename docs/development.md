@@ -13,6 +13,70 @@ npm run dev
 
 The dev script automatically picks an available port. Both the server and Expo app run in a Tmux session — see `CLAUDE.local.md` for system-specific session details.
 
+### Windows local dev start/stop
+
+Use PowerShell from the repo root:
+
+```powershell
+cd C:\dev\paseo
+```
+
+For repeatable local testing, set a stable isolated home before starting. This keeps
+dev-only agents, provider auth profiles, logs, and the SQLite DB separate from the
+main Paseo install while preserving them across restarts:
+
+```powershell
+$env:PASEO_HOME = Join-Path $env:TEMP 'paseo-dev-local'
+npm run dev:win
+```
+
+Open the web app at `http://localhost:8081`.
+
+Preferred shutdown is `Ctrl+C` in the terminal running `npm run dev:win`. Wait for
+the daemon and Metro logs to stop before starting again.
+
+If a previous dev run is stuck or the ports are still occupied, inspect the port
+owners first:
+
+```powershell
+$ports = 6767, 8081
+Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+  Where-Object { $ports -contains $_.LocalPort } |
+  Select-Object LocalAddress, LocalPort, OwningProcess,
+    @{Name = 'ProcessName'; Expression = { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } }
+```
+
+Then stop only those port owners:
+
+```powershell
+$ports = 6767, 8081
+$processIds = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+  Where-Object { $ports -contains $_.LocalPort } |
+  Select-Object -ExpandProperty OwningProcess -Unique
+$processIds | ForEach-Object { Stop-Process -Id $_ -Force }
+```
+
+Restart with the same stable home:
+
+```powershell
+cd C:\dev\paseo
+$env:PASEO_HOME = Join-Path $env:TEMP 'paseo-dev-local'
+npm run dev:win
+```
+
+Tail daemon logs from another PowerShell window:
+
+```powershell
+Get-Content (Join-Path $env:PASEO_HOME 'daemon.log') -Tail 80 -Wait
+```
+
+For a clean first-run test, use a new home instead of `paseo-dev-local`:
+
+```powershell
+$env:PASEO_HOME = Join-Path $env:TEMP "paseo-dev-$([System.Guid]::NewGuid().ToString('N').Substring(0,6))"
+npm run dev:win
+```
+
 ### Running alongside the main checkout
 
 Set `PASEO_HOME` to isolate state when running a second instance (e.g., in a worktree):
@@ -73,6 +137,16 @@ of commands. Both run sequentially.
   }
 }
 ```
+
+Setup progress is streamed live while the daemon has the setup run in memory. If the
+app reconnects after that in-memory status is gone, the setup panel shows that setup
+status is unavailable instead of waiting forever; the workspace may still be usable.
+
+On Windows, lifecycle commands run through PowerShell. Prefer portable commands for
+shared repo config, especially when reading `PASEO_*` environment variables. A Node
+one-liner that reads `process.env.PASEO_SOURCE_CHECKOUT_PATH` and
+`process.env.PASEO_WORKTREE_PATH` works across Windows, macOS, and Linux; bash-style
+`$PASEO_SOURCE_CHECKOUT_PATH` expansion does not work in PowerShell.
 
 Every `scripts` entry with `"type": "service"` receives these environment variables:
 
