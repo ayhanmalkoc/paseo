@@ -49,7 +49,11 @@ export class CodexAppServerJsonRpcClient {
     private readonly logger: Logger,
   ) {
     this.rl = readline.createInterface({ input: child.stdout });
-    this.rl.on("line", (line) => this.handleLine(line));
+    this.rl.on("line", (line) => {
+      void this.handleLine(line).catch((err: unknown) => {
+        this.logger.error({ err }, "Failed to handle Codex app-server JSON-RPC line");
+      });
+    });
 
     child.stderr.on("data", (chunk) => {
       this.stderrBuffer += chunk.toString();
@@ -155,8 +159,23 @@ export class CodexAppServerJsonRpcClient {
   }
 
   private async handleLine(line: string): Promise<void> {
-    if (!line.trim()) return;
-    const raw: unknown = JSON.parse(line);
+    const trimmedLine = line.trim();
+    if (!trimmedLine) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(trimmedLine);
+    } catch {
+      const logLine = truncateLogLine(trimmedLine);
+      if (isWindowsProcessCleanupLine(trimmedLine)) {
+        this.logger.debug(
+          { line: logLine },
+          "Ignoring process cleanup line from Codex app-server stdout",
+        );
+      } else {
+        this.logger.warn({ line: logLine }, "Ignoring non-JSON line from Codex app-server stdout");
+      }
+      return;
+    }
     if (!isRecord(raw)) {
       this.logger.warn({ line }, "Parsed JSON is not an object");
       return;
@@ -193,6 +212,17 @@ export class CodexAppServerJsonRpcClient {
       this.notificationHandler?.(raw.method, raw.params);
     }
   }
+}
+
+function truncateLogLine(line: string): string {
+  const maxLength = 500;
+  return line.length > maxLength ? `${line.slice(0, maxLength)}...` : line;
+}
+
+function isWindowsProcessCleanupLine(line: string): boolean {
+  return /^SUCCESS: The process with PID \d+(?: \(child process of PID \d+\))? has been terminated\.$/.test(
+    line,
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
