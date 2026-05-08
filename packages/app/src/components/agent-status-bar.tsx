@@ -661,6 +661,7 @@ function useAgentStatusBarRuntimeProfileState(serverId: string, agent: AgentStat
   return {
     runtimeProfiles: runtimeProfiles.profiles ?? EMPTY_RUNTIME_PROFILES,
     selectedRuntimeProfileId: agent?.profileSnapshot?.sourceProfileId ?? undefined,
+    selectedRuntimeProfileVersion: agent?.profileSnapshot?.sourceProfileVersion,
     isRuntimeProfilesLoading: runtimeProfiles.isLoading,
   };
 }
@@ -2521,10 +2522,18 @@ function useActiveRuntimeProfileRestartController(options: {
   agentId: string;
   runtimeProfiles: RuntimeProfile[];
   selectedRuntimeProfileId: string | undefined;
+  selectedRuntimeProfileVersion: number | undefined;
   client: RuntimeProfileRestartClient | null;
   toast: ReturnType<typeof useToast>;
 }) {
-  const { agentId, runtimeProfiles, selectedRuntimeProfileId, client, toast } = options;
+  const {
+    agentId,
+    runtimeProfiles,
+    selectedRuntimeProfileId,
+    selectedRuntimeProfileVersion,
+    client,
+    toast,
+  } = options;
   const [pending, setPending] = useState<PendingRuntimeProfileRestart | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
 
@@ -2536,14 +2545,23 @@ function useActiveRuntimeProfileRestartController(options: {
       const normalizedNextId = normalizeRuntimeProfileSelection(runtimeProfileId);
       const normalizedCurrentId = normalizeRuntimeProfileSelection(selectedRuntimeProfileId);
       if (normalizedNextId === normalizedCurrentId) {
-        return;
+        if (!normalizedNextId) {
+          return;
+        }
+        const latestProfile = runtimeProfiles.find((profile) => profile.id === normalizedNextId);
+        if (
+          latestProfile?.version === undefined ||
+          latestProfile.version === selectedRuntimeProfileVersion
+        ) {
+          return;
+        }
       }
       setPending({
         id: normalizedNextId,
         label: resolveRuntimeProfileRestartLabel(runtimeProfiles, normalizedNextId),
       });
     },
-    [client, runtimeProfiles, selectedRuntimeProfileId],
+    [client, runtimeProfiles, selectedRuntimeProfileId, selectedRuntimeProfileVersion],
   );
 
   const close = useCallback(() => {
@@ -2759,6 +2777,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
     agentId,
     runtimeProfiles: runtimeProfileState.runtimeProfiles,
     selectedRuntimeProfileId: runtimeProfileState.selectedRuntimeProfileId,
+    selectedRuntimeProfileVersion: runtimeProfileState.selectedRuntimeProfileVersion,
     client,
     toast,
   });

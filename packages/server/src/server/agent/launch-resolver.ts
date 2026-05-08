@@ -48,11 +48,13 @@ export class LaunchResolver {
   }): Promise<ResolvedAgentLaunch> {
     const profile = await this.resolveRuntimeProfile(input.normalizedConfig.runtimeProfileId);
     const mergedConfig = this.mergeRuntimeProfileIntoConfig(input.normalizedConfig, profile);
-    const reusableSnapshot =
-      !profile && !mergedConfig.profileOverrides ? mergedConfig.profileSnapshot : undefined;
+    const previousAdHocSnapshot =
+      !profile && !mergedConfig.profileOverrides && !mergedConfig.profileSnapshot?.sourceProfileId
+        ? mergedConfig.profileSnapshot
+        : undefined;
     const resolvedAccountKey = normalizeSelection(
       mergedConfig.authProfileKey ??
-        reusableSnapshot?.accountKey ??
+        previousAdHocSnapshot?.accountKey ??
         mergedConfig.profileOverrides?.accountKey ??
         profile?.accountKey,
     );
@@ -67,17 +69,12 @@ export class LaunchResolver {
       ...(profile ? { runtimeProfileId: profile.id } : {}),
       ...(authLaunch.profileKey ? { authProfileKey: authLaunch.profileKey } : {}),
     };
-    const snapshot = reusableSnapshot
-      ? {
-          ...reusableSnapshot,
-          accountKey: authLaunch.profileKey,
-        }
-      : this.buildSnapshot({
-          profile,
-          config,
-          overrides: mergedConfig.profileOverrides,
-          accountKey: authLaunch.profileKey,
-        });
+    const snapshot = this.buildSnapshot({
+      profile,
+      config,
+      overrides: mergedConfig.profileOverrides,
+      accountKey: authLaunch.profileKey,
+    });
     const warnings = this.leaseCoordinator.evaluate({
       candidate: snapshot,
       activeAgents: input.activeAgents ?? [],
@@ -135,11 +132,11 @@ export class LaunchResolver {
       cwd,
       ...buildRuntimeSelectionConfig(config, overrides, profile),
       featureValues: mergeRecordValues(
+        config.featureValues,
         profile.featureDefaults,
         profile.featureValues,
         overrides.featureDefaults,
         overrides.featureValues,
-        config.featureValues,
       ),
       systemPrompt: resolveRuntimeSystemPrompt(config, overrides, profile),
       mcpServers: mergeRecordValues(profile.mcpServers, overrides.mcpServers, config.mcpServers),
@@ -260,13 +257,13 @@ function buildRuntimeSelectionConfig(
   profile: RuntimeProfile,
 ): Partial<AgentSessionConfig> {
   return {
-    modeId: firstString(config.modeId, overrides.modeId, profile.modeId) ?? undefined,
-    model: firstString(config.model, overrides.model, profile.model) ?? undefined,
+    modeId: firstString(overrides.modeId, profile.modeId, config.modeId) ?? undefined,
+    model: firstString(overrides.model, profile.model, config.model) ?? undefined,
     thinkingOptionId:
-      firstString(config.thinkingOptionId, overrides.thinkingOptionId, profile.thinkingOptionId) ??
+      firstString(overrides.thinkingOptionId, profile.thinkingOptionId, config.thinkingOptionId) ??
       undefined,
     authProfileKey:
-      firstString(config.authProfileKey, overrides.accountKey, profile.accountKey) ?? undefined,
+      firstString(overrides.accountKey, profile.accountKey, config.authProfileKey) ?? undefined,
   };
 }
 
@@ -276,7 +273,7 @@ function resolveRuntimeSystemPrompt(
   profile: RuntimeProfile,
 ): string | undefined {
   return (
-    firstString(config.systemPrompt, overrides.systemPrompt, profile.systemPrompt) ??
+    firstString(overrides.systemPrompt, profile.systemPrompt, config.systemPrompt) ??
     firstString(overrides.instructionOverlay, profile.instructionOverlay) ??
     undefined
   );

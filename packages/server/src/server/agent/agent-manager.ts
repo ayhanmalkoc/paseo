@@ -1195,6 +1195,7 @@ export class AgentManager {
         {
           runtimeProfileId: null,
           profileOverrides: undefined,
+          profileSnapshot: undefined,
         },
         {
           forceCreateSession: true,

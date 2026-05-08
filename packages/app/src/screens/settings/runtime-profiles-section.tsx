@@ -1,5 +1,6 @@
 /* eslint-disable react-perf/jsx-no-jsx-as-prop, react-perf/jsx-no-new-array-as-prop, react-perf/jsx-no-new-function-as-prop */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ActivityIndicator, Text, View } from "react-native";
 import type { PressableStateCallbackType, StyleProp, ViewStyle } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -12,14 +13,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { applyFeatureValues } from "@/hooks/feature-preferences";
 import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useRuntimeProfiles } from "@/hooks/use-runtime-profiles";
+import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
 import type {
+  AgentFeature,
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
@@ -64,6 +68,7 @@ interface SelectOption {
 const EMPTY_PROVIDER_ENTRIES: ProviderSnapshotEntry[] = [];
 const EMPTY_MODELS: AgentModelDefinition[] = [];
 const EMPTY_MODES: AgentMode[] = [];
+const EMPTY_FEATURES: AgentFeature[] = [];
 const PROFILE_EDITOR_SNAP_POINTS = ["72%", "94%"];
 const CONCURRENCY_OPTIONS: SelectOption[] = [
   { id: "warn", label: "Warn", description: "Ask before reusing this profile in parallel" },
@@ -74,6 +79,10 @@ const WORKTREE_OPTIONS: SelectOption[] = [
   { id: "ask", label: "Ask" },
   { id: "current", label: "Current worktree" },
   { id: "new-worktree", label: "New worktree" },
+];
+const BOOLEAN_FEATURE_OPTIONS: SelectOption[] = [
+  { id: "false", label: "Off" },
+  { id: "true", label: "On" },
 ];
 
 export function RuntimeProfilesSection({ serverId }: { serverId: string }) {
@@ -326,6 +335,19 @@ function RuntimeProfileEditorSheet({
   const modes = providerEntry?.modes ?? EMPTY_MODES;
   const selectedModel = models.find((model) => model.id === draft.model);
   const thinkingOptions = selectedModel?.thinkingOptions;
+  const draftFeatureValues = useMemo(
+    () => parseObjectJsonSafe(draft.featureValuesJson),
+    [draft.featureValuesJson],
+  );
+  const draftFeatures = useRuntimeProfileDraftFeatures({
+    serverId,
+    provider: draft.provider,
+    cwd: draft.cwd,
+    modeId: draft.modeId,
+    modelId: draft.model,
+    thinkingOptionId: draft.thinkingOptionId,
+    featureValues: draftFeatureValues ?? {},
+  });
 
   const accountOptions = useMemo(
     () => buildAccountOptions(authProfiles.profiles ?? []),
@@ -380,6 +402,20 @@ function RuntimeProfileEditorSheet({
       }
     })();
   }, [draft, onSave, profile?.id, saving]);
+
+  const handleSetFeatureValue = useCallback((featureId: string, value: unknown) => {
+    setDraft((current) => {
+      const currentValues = parseObjectJsonSafe(current.featureValuesJson) ?? {};
+      const nextValues = {
+        ...currentValues,
+        [featureId]: value,
+      };
+      return {
+        ...current,
+        featureValuesJson: formatJson(nextValues),
+      };
+    });
+  }, []);
 
   const handleClose = useCallback(() => {
     if (saving) return;
@@ -461,6 +497,14 @@ function RuntimeProfileEditorSheet({
           />
         </View>
       </SettingsSection>
+
+      <RuntimeProfileFeaturesSection
+        features={draftFeatures.features}
+        isLoading={draftFeatures.isLoading}
+        error={draftFeatures.error}
+        disabled={saving || draftFeatureValues === null}
+        onSetFeatureValue={handleSetFeatureValue}
+      />
 
       <SettingsSection title="Workspace">
         <View style={styles.fieldStack}>
@@ -700,6 +744,158 @@ function SelectField({
   );
 }
 
+function FeatureValueField({
+  feature,
+  disabled,
+  onSetFeatureValue,
+}: {
+  feature: AgentFeature;
+  disabled: boolean;
+  onSetFeatureValue: (featureId: string, value: unknown) => void;
+}) {
+  const handleToggleSelect = useCallback(
+    (id: string) => {
+      onSetFeatureValue(feature.id, id === "true");
+    },
+    [feature.id, onSetFeatureValue],
+  );
+  const handleSelectValue = useCallback(
+    (id: string) => {
+      onSetFeatureValue(feature.id, id || null);
+    },
+    [feature.id, onSetFeatureValue],
+  );
+
+  if (feature.type === "toggle") {
+    return (
+      <SelectField
+        label={feature.label}
+        value={feature.value ? "On" : "Off"}
+        options={BOOLEAN_FEATURE_OPTIONS}
+        selectedId={feature.value ? "true" : "false"}
+        onSelect={handleToggleSelect}
+        disabled={disabled}
+      />
+    );
+  }
+
+  const selectedId = feature.value ?? "";
+  const selectedLabel =
+    feature.options.find((option) => option.id === selectedId)?.label ?? "Default";
+  return (
+    <SelectField
+      label={feature.label}
+      value={selectedLabel}
+      options={[{ id: "", label: "Default" }, ...feature.options]}
+      selectedId={selectedId}
+      onSelect={handleSelectValue}
+      disabled={disabled}
+    />
+  );
+}
+
+function RuntimeProfileFeaturesSection({
+  features,
+  isLoading,
+  error,
+  disabled,
+  onSetFeatureValue,
+}: {
+  features: AgentFeature[];
+  isLoading: boolean;
+  error: string | null;
+  disabled: boolean;
+  onSetFeatureValue: (featureId: string, value: unknown) => void;
+}) {
+  const { theme } = useUnistyles();
+  return (
+    <SettingsSection title="Features">
+      <View style={styles.fieldStack}>
+        {isLoading ? (
+          <View style={styles.inlineStatus}>
+            <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+            <Text style={styles.mutedText}>Loading features...</Text>
+          </View>
+        ) : null}
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {!isLoading && features.length === 0 ? (
+          <Text style={styles.mutedText}>No provider features are available.</Text>
+        ) : null}
+        {features.map((feature) => (
+          <FeatureValueField
+            key={feature.id}
+            feature={feature}
+            disabled={disabled}
+            onSetFeatureValue={onSetFeatureValue}
+          />
+        ))}
+      </View>
+    </SettingsSection>
+  );
+}
+
+function useRuntimeProfileDraftFeatures(input: {
+  serverId: string;
+  provider: AgentProvider;
+  cwd: string;
+  modeId: string;
+  modelId: string;
+  thinkingOptionId: string;
+  featureValues: Record<string, unknown>;
+}) {
+  const client = useHostRuntimeClient(input.serverId);
+  const isConnected = useHostRuntimeIsConnected(input.serverId);
+  const draftConfig = useMemo(() => {
+    const provider = input.provider.trim();
+    if (!provider) {
+      return null;
+    }
+    return {
+      provider,
+      cwd: input.cwd.trim() || ".",
+      ...(input.modeId ? { modeId: input.modeId } : {}),
+      ...(input.modelId ? { model: input.modelId } : {}),
+      ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
+    };
+  }, [input.cwd, input.modeId, input.modelId, input.provider, input.thinkingOptionId]);
+
+  const featuresQuery = useQuery({
+    queryKey: [
+      "runtimeProfileDraftFeatures",
+      input.serverId,
+      draftConfig?.provider ?? null,
+      draftConfig?.cwd ?? null,
+      draftConfig?.modeId ?? null,
+      draftConfig?.model ?? null,
+      draftConfig?.thinkingOptionId ?? null,
+    ],
+    enabled: Boolean(client && isConnected && draftConfig),
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      if (!client || !draftConfig) {
+        throw new Error("Host is not connected");
+      }
+      const payload = await client.listProviderFeatures(draftConfig);
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+      return payload.features ?? EMPTY_FEATURES;
+    },
+  });
+
+  const baseFeatures = featuresQuery.data ?? EMPTY_FEATURES;
+  const features = useMemo(
+    () => applyFeatureValues(baseFeatures, input.featureValues),
+    [baseFeatures, input.featureValues],
+  );
+
+  return {
+    features,
+    isLoading: featuresQuery.isLoading,
+    error: featuresQuery.error instanceof Error ? featuresQuery.error.message : null,
+  };
+}
+
 function buildProviderOptions(entries: ProviderSnapshotEntry[]): SelectOption[] {
   return entries
     .filter((entry) => entry.enabled)
@@ -863,6 +1059,14 @@ function parseObjectJson(label: string, value: string): Record<string, unknown> 
   return parsed as Record<string, unknown>;
 }
 
+function parseObjectJsonSafe(value: string): Record<string, unknown> | null {
+  try {
+    return parseObjectJson("Feature values JSON", value);
+  } catch {
+    return null;
+  }
+}
+
 function parseStringObjectJson(label: string, value: string): Record<string, string> {
   const parsed = parseObjectJson(label, value);
   for (const [key, entry] of Object.entries(parsed)) {
@@ -914,6 +1118,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   fieldStack: {
     gap: theme.spacing[3],
+  },
+  inlineStatus: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   field: {
     gap: theme.spacing[1],
