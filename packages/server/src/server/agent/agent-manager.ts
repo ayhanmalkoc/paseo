@@ -31,6 +31,7 @@ import type {
   AgentTimelineItem,
   AgentUsage,
   AgentRuntimeInfo,
+  RuntimeLaunchWarning,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
@@ -88,6 +89,13 @@ export type {
   AgentTimelineWindow,
 } from "./agent-timeline-store-types.js";
 
+export class RuntimeLaunchWarningsConfirmationError extends Error {
+  constructor(readonly warnings: RuntimeLaunchWarning[]) {
+    super(warnings[0]?.message ?? "Runtime launch requires confirmation");
+    this.name = "RuntimeLaunchWarningsConfirmationError";
+  }
+}
+
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
   | {
@@ -131,6 +139,7 @@ interface ReloadAgentSessionOptions {
   resolveDefaultAuthProfile?: boolean;
   runtimeProfileId?: string | null;
   profileOverrides?: AgentSessionConfig["profileOverrides"];
+  acceptRuntimeWarnings?: boolean;
 }
 
 interface ProviderEnabledFlag {
@@ -828,6 +837,7 @@ export class AgentManager {
       initialPrompt?: string;
       persistSession?: boolean;
       mcpServerHeaders?: Record<string, string>;
+      acceptRuntimeWarnings?: boolean;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
@@ -837,6 +847,7 @@ export class AgentManager {
     const resolvedLaunch = await this.resolveAgentLaunch(resolvedAgentId, normalizedConfig, {
       resolveDefaultAuthProfile: true,
     });
+    this.requireRuntimeWarningConfirmation(resolvedLaunch, options?.acceptRuntimeWarnings === true);
     const launchConfig = this.withInjectedMcpHeaders(
       resolvedLaunch.config,
       resolvedAgentId,
@@ -851,7 +862,7 @@ export class AgentManager {
       resolvedLaunch.launchContext,
       createOptions,
     );
-    return this.registerSession(session, launchConfig, resolvedAgentId, {
+    return this.registerSession(session, resolvedLaunch.config, resolvedAgentId, {
       labels: options?.labels,
       workspaceId: options?.workspaceId,
     });
@@ -955,6 +966,7 @@ export class AgentManager {
       resolveDefaultAuthProfile: options?.resolveDefaultAuthProfile === true,
       excludeAgentId: agentId,
     });
+    this.requireRuntimeWarningConfirmation(resolvedLaunch, options?.acceptRuntimeWarnings === true);
 
     const session =
       handle && options?.forceCreateSession !== true
@@ -1186,6 +1198,7 @@ export class AgentManager {
     agentId: string,
     runtimeProfileId: string | null,
     profileOverrides?: AgentSessionConfig["profileOverrides"],
+    options?: { acceptRuntimeWarnings?: boolean },
   ): Promise<ManagedAgent> {
     this.requireSessionAgent(agentId);
     const requestedProfileId = normalizeAuthProfileKey(runtimeProfileId);
@@ -1202,6 +1215,7 @@ export class AgentManager {
           resolveDefaultAuthProfile: true,
           runtimeProfileId: null,
           profileOverrides: undefined,
+          acceptRuntimeWarnings: options?.acceptRuntimeWarnings,
         },
       );
     }
@@ -1216,6 +1230,7 @@ export class AgentManager {
         resolveDefaultAuthProfile: true,
         runtimeProfileId: requestedProfileId,
         profileOverrides,
+        acceptRuntimeWarnings: options?.acceptRuntimeWarnings,
       },
     );
   }
@@ -3282,6 +3297,16 @@ export class AgentManager {
       activeAgents: this.buildAccountLeaseSnapshots(),
       excludeAgentId: options.excludeAgentId,
     });
+  }
+
+  private requireRuntimeWarningConfirmation(
+    resolvedLaunch: ResolvedAgentLaunch,
+    accepted: boolean,
+  ): void {
+    if (accepted || resolvedLaunch.warnings.length === 0) {
+      return;
+    }
+    throw new RuntimeLaunchWarningsConfirmationError(resolvedLaunch.warnings);
   }
 
   private buildAccountLeaseSnapshots(): Array<{

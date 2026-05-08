@@ -231,6 +231,80 @@ describe("LaunchResolver", () => {
       plan_mode: false,
     });
   });
+
+  test("warn concurrency returns launch warnings for active runtime profile conflicts", async () => {
+    const resolver = createResolver({
+      profile: createRuntimeProfile(),
+    });
+    const config: AgentSessionConfig = {
+      provider: "codex",
+      cwd: "C:\\dev\\paseo",
+      runtimeProfileId: "profile-1",
+    };
+
+    const resolved = await resolver.resolve({
+      agentId: "agent-2",
+      config,
+      normalizedConfig: config,
+      resolveDefaultAuthProfile: false,
+      activeAgents: [
+        {
+          agentId: "agent-1",
+          profileSnapshot: {
+            sourceProfileId: "profile-1",
+            sourceProfileName: "Codex profile",
+            sourceProfileVersion: 1,
+            provider: "codex",
+            resolvedAt: NOW,
+            concurrencyPolicy: "warn",
+          },
+        },
+      ],
+    });
+
+    expect(resolved.warnings).toEqual([
+      {
+        code: "runtime-profile-in-use",
+        message: "Another active agent is already using runtime profile 'profile-1'.",
+        accountKey: null,
+        runtimeProfileId: "profile-1",
+        agentIds: ["agent-1"],
+      },
+    ]);
+  });
+
+  test("single-active concurrency blocks active runtime profile conflicts", async () => {
+    const resolver = createResolver({
+      profile: createRuntimeProfile({ concurrencyPolicy: "single-active" }),
+    });
+    const config: AgentSessionConfig = {
+      provider: "codex",
+      cwd: "C:\\dev\\paseo",
+      runtimeProfileId: "profile-1",
+    };
+
+    await expect(
+      resolver.resolve({
+        agentId: "agent-2",
+        config,
+        normalizedConfig: config,
+        resolveDefaultAuthProfile: false,
+        activeAgents: [
+          {
+            agentId: "agent-1",
+            profileSnapshot: {
+              sourceProfileId: "profile-1",
+              sourceProfileName: "Codex profile",
+              sourceProfileVersion: 1,
+              provider: "codex",
+              resolvedAt: NOW,
+              concurrencyPolicy: "single-active",
+            },
+          },
+        ],
+      }),
+    ).rejects.toThrow("Cannot start another active agent with runtime profile 'profile-1'.");
+  });
 });
 
 function createResolver({ profile }: { profile: RuntimeProfile }) {

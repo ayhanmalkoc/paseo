@@ -70,6 +70,7 @@ import type {
   CreateRuntimeProfileResponseMessage,
   UpdateRuntimeProfileResponseMessage,
   DeleteRuntimeProfileResponseMessage,
+  RestartAgentWithRuntimeProfileResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -91,6 +92,7 @@ import type {
   AgentProvider,
   AgentSessionConfig,
   AccountLoginMethod,
+  RuntimeLaunchWarning,
   RuntimeProfilePatch,
 } from "../server/agent/agent-sdk-types.js";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
@@ -122,6 +124,22 @@ export interface Logger {
   info(obj: object, msg?: string): void;
   warn(obj: object, msg?: string): void;
   error(obj: object, msg?: string): void;
+}
+
+export class RuntimeLaunchWarningError extends Error {
+  readonly requiresConfirmation = true;
+
+  constructor(
+    message: string,
+    readonly warnings: RuntimeLaunchWarning[],
+  ) {
+    super(message);
+    this.name = "RuntimeLaunchWarningError";
+  }
+}
+
+export function isRuntimeLaunchWarningError(error: unknown): error is RuntimeLaunchWarningError {
+  return error instanceof RuntimeLaunchWarningError;
 }
 
 const consoleLogger: Logger = {
@@ -259,6 +277,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
+  acceptRuntimeWarnings?: boolean;
 }
 
 export interface CreatePaseoWorktreeInput extends Pick<
@@ -267,6 +286,8 @@ export interface CreatePaseoWorktreeInput extends Pick<
 > {}
 
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
+type RestartAgentWithRuntimeProfilePayload =
+  RestartAgentWithRuntimeProfileResponseMessage["payload"];
 type SubscribeCheckoutDiffPayload = Extract<
   SessionOutboundMessage,
   { type: "subscribe_checkout_diff_response" }
@@ -1778,6 +1799,7 @@ export class DaemonClient {
       ...(options.labels && Object.keys(options.labels).length > 0
         ? { labels: options.labels }
         : {}),
+      ...(options.acceptRuntimeWarnings ? { acceptRuntimeWarnings: true } : {}),
     });
 
     const status = await this.sendRequest({
@@ -1801,6 +1823,9 @@ export class DaemonClient {
       },
     });
     if (status.status === "agent_create_failed") {
+      if (status.requiresConfirmation && status.warnings && status.warnings.length > 0) {
+        throw new RuntimeLaunchWarningError(status.error, status.warnings);
+      }
       throw new Error(status.error);
     }
 
@@ -2239,13 +2264,15 @@ export class DaemonClient {
     agentId: string,
     runtimeProfileId: string | null,
     profileOverrides?: AgentSessionConfig["profileOverrides"],
-  ): Promise<void> {
+    options?: { acceptRuntimeWarnings?: boolean },
+  ): Promise<RestartAgentWithRuntimeProfilePayload> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "restart_agent_with_runtime_profile_request",
       agentId,
       runtimeProfileId,
       ...(profileOverrides ? { profileOverrides } : {}),
+      ...(options?.acceptRuntimeWarnings ? { acceptRuntimeWarnings: true } : {}),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -2264,8 +2291,15 @@ export class DaemonClient {
       },
     });
     if (!payload.accepted) {
+      if (payload.requiresConfirmation && payload.warnings && payload.warnings.length > 0) {
+        throw new RuntimeLaunchWarningError(
+          payload.error ?? "Runtime profile restart requires confirmation",
+          payload.warnings,
+        );
+      }
       throw new Error(payload.error ?? "restartAgentWithRuntimeProfile rejected");
     }
+    return payload;
   }
 
   async restartServer(reason?: string, requestId?: string): Promise<RestartRequestedStatusPayload> {
@@ -4771,6 +4805,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     worktreeName: _worktreeName,
     requestId: _requestId,
     labels: _labels,
+    acceptRuntimeWarnings: _acceptRuntimeWarnings,
     ...overrides
   } = options;
 

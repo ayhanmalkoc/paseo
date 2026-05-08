@@ -1155,6 +1155,7 @@ export const CreateAgentRequestMessageSchema = z.object({
   git: GitSetupOptionsSchema.optional(),
   runtimeProfileId: z.string().nullable().optional(),
   profileOverrides: RuntimeProfileLaunchOverridesSchema.optional(),
+  acceptRuntimeWarnings: z.boolean().optional(),
   labels: z.record(z.string()).default({}),
   requestId: z.string(),
 });
@@ -1406,6 +1407,7 @@ export const RestartAgentWithRuntimeProfileRequestMessageSchema = z.object({
   agentId: z.string(),
   runtimeProfileId: z.string().nullable(),
   profileOverrides: RuntimeProfileLaunchOverridesSchema.optional(),
+  acceptRuntimeWarnings: z.boolean().optional(),
   requestId: z.string(),
 });
 
@@ -1413,6 +1415,7 @@ export const RestartAgentWithRuntimeProfileResponseMessageSchema = z.object({
   type: z.literal("restart_agent_with_runtime_profile_response"),
   payload: AgentActionResponsePayloadSchema.extend({
     warnings: z.array(RuntimeLaunchWarningSchema).optional(),
+    requiresConfirmation: z.boolean().optional(),
   }),
 });
 
@@ -2287,6 +2290,8 @@ export const AgentCreateFailedStatusPayloadSchema = z.object({
   requestId: z.string(),
   error: z.string(),
   errorCode: z.string().optional(),
+  warnings: z.array(RuntimeLaunchWarningSchema).optional(),
+  requiresConfirmation: z.boolean().optional(),
 });
 
 export const AgentResumedStatusPayloadSchema = z

@@ -86,7 +86,7 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
-import { AgentManager } from "./agent/agent-manager.js";
+import { AgentManager, RuntimeLaunchWarningsConfirmationError } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
 import type { ProviderAuthService } from "./agent/provider-auth-service.js";
 import type { RuntimeProfileService } from "./agent/runtime-profile-service.js";
@@ -1937,6 +1937,7 @@ export class Session {
           msg.agentId,
           msg.runtimeProfileId,
           msg.profileOverrides,
+          msg.acceptRuntimeWarnings === true,
           msg.requestId,
         );
       case "get_daemon_config_request":
@@ -3141,6 +3142,7 @@ export class Session {
           workspaceId: resolvedWorkspace.workspaceId,
           initialPrompt: trimmedPrompt,
           mcpServerHeaders: this.buildDaemonAuthHeaders(),
+          acceptRuntimeWarnings: msg.acceptRuntimeWarnings === true,
         },
       );
       await this.forwardAgentUpdate(snapshot);
@@ -3180,6 +3182,20 @@ export class Session {
       const wireError = toWorktreeWireError(error);
       this.sessionLogger.error({ err: error }, "Failed to create agent");
       if (requestId) {
+        if (error instanceof RuntimeLaunchWarningsConfirmationError) {
+          this.emit({
+            type: "status",
+            payload: {
+              status: "agent_create_failed",
+              requestId,
+              error: wireError.message,
+              errorCode: wireError.code,
+              warnings: error.warnings,
+              requiresConfirmation: true,
+            },
+          });
+          return;
+        }
         this.emit({
           type: "status",
           payload: {
@@ -4778,6 +4794,7 @@ export class Session {
     agentId: string,
     runtimeProfileId: string | null,
     profileOverrides: AgentSessionConfig["profileOverrides"] | undefined,
+    acceptRuntimeWarnings: boolean,
     requestId: string,
   ): Promise<void> {
     this.sessionLogger.info(
@@ -4790,6 +4807,7 @@ export class Session {
         agentId,
         runtimeProfileId,
         profileOverrides,
+        { acceptRuntimeWarnings },
       );
       this.sessionLogger.info(
         { agentId, runtimeProfileId, requestId },
@@ -4804,6 +4822,20 @@ export class Session {
         { err: error, agentId, runtimeProfileId, requestId },
         "session: restart_agent_with_runtime_profile_request error",
       );
+      if (error instanceof RuntimeLaunchWarningsConfirmationError) {
+        this.emit({
+          type: "restart_agent_with_runtime_profile_response",
+          payload: {
+            requestId,
+            agentId,
+            accepted: false,
+            error: getErrorMessageOr(error, "Runtime profile restart requires confirmation"),
+            warnings: error.warnings,
+            requiresConfirmation: true,
+          },
+        });
+        return;
+      }
       this.emit({
         type: "activity_log",
         payload: {

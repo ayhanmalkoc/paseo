@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentManager } from "./agent-manager.js";
+import { AgentManager, RuntimeLaunchWarningsConfirmationError } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import type {
   ProviderAuthAdapter,
@@ -26,7 +26,9 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   PersistedAgentDescriptor,
+  RuntimeProfile,
 } from "./agent-sdk-types.js";
+import type { RuntimeProfileService } from "./runtime-profile-service.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 
 interface Deferred<T> {
@@ -335,6 +337,31 @@ class StreamingAssistantClient implements AgentClient {
 }
 
 const logger = createTestLogger();
+const TEST_RUNTIME_PROFILE_NOW = "2026-05-08T09:00:00.000Z";
+
+function createRuntimeProfileForTest(
+  workdir: string,
+  patch: Partial<RuntimeProfile> = {},
+): RuntimeProfile {
+  return {
+    id: "runtime-profile-1",
+    version: 1,
+    name: "Codex runtime profile",
+    provider: "codex",
+    model: "gpt-5.4",
+    workspaceDefaults: { cwd: workdir },
+    concurrencyPolicy: "warn",
+    createdAt: TEST_RUNTIME_PROFILE_NOW,
+    updatedAt: TEST_RUNTIME_PROFILE_NOW,
+    ...patch,
+  };
+}
+
+function createRuntimeProfileServiceForTest(profile: RuntimeProfile): RuntimeProfileService {
+  return {
+    getProfile: async (profileId: string) => (profileId === profile.id ? profile : null),
+  } as RuntimeProfileService;
+}
 
 test("normalizeConfig injects the provider default model when omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
@@ -699,11 +726,17 @@ test("createAgent passes daemon launch env through the provider launch context",
     cwd: workdir,
   });
 
-  expect(client.lastConfig).toEqual({
+  expect(client.lastConfig).toMatchObject({
     provider: "codex",
     cwd: workdir,
     model: "gpt-5.4",
     modeId: "auto",
+    profileSnapshot: {
+      provider: "codex",
+      model: "gpt-5.4",
+      modeId: "auto",
+      concurrencyPolicy: "allow",
+    },
   });
   expect(client.lastLaunchContext).toEqual({
     env: {
@@ -1023,6 +1056,126 @@ test("restartAgentWithAuthProfile creates a fresh provider session with the sele
   });
 
   rmSync(workdir, { recursive: true, force: true });
+});
+
+test("createAgent requires confirmation before sharing a warn runtime profile", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-runtime-profile-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const runtimeProfile = createRuntimeProfileForTest(workdir);
+  const ids = [
+    "00000000-0000-4000-8000-000000000201",
+    "00000000-0000-4000-8000-000000000202",
+    "00000000-0000-4000-8000-000000000203",
+  ];
+  let idIndex = 0;
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => ids[idIndex++],
+    runtimeProfileService: createRuntimeProfileServiceForTest(runtimeProfile),
+  });
+
+  try {
+    const first = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      runtimeProfileId: runtimeProfile.id,
+    });
+
+    await expect(
+      manager.createAgent({
+        provider: "codex",
+        cwd: workdir,
+        runtimeProfileId: runtimeProfile.id,
+      }),
+    ).rejects.toMatchObject({
+      warnings: [
+        {
+          code: "runtime-profile-in-use",
+          runtimeProfileId: runtimeProfile.id,
+          agentIds: [first.id],
+        },
+      ],
+    });
+
+    const accepted = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        runtimeProfileId: runtimeProfile.id,
+      },
+      undefined,
+      { acceptRuntimeWarnings: true },
+    );
+
+    expect(accepted.config.profileSnapshot).toMatchObject({
+      sourceProfileId: runtimeProfile.id,
+      sourceProfileVersion: runtimeProfile.version,
+      concurrencyPolicy: "warn",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("restartAgentWithRuntimeProfile requires confirmation before sharing a warn runtime profile", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-runtime-profile-restart-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const runtimeProfile = createRuntimeProfileForTest(workdir);
+  const ids = ["00000000-0000-4000-8000-000000000204", "00000000-0000-4000-8000-000000000205"];
+  let idIndex = 0;
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => ids[idIndex++],
+    runtimeProfileService: createRuntimeProfileServiceForTest(runtimeProfile),
+  });
+
+  try {
+    const first = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      runtimeProfileId: runtimeProfile.id,
+    });
+    const second = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    await expect(
+      manager.restartAgentWithRuntimeProfile(second.id, runtimeProfile.id),
+    ).rejects.toBeInstanceOf(RuntimeLaunchWarningsConfirmationError);
+    await expect(
+      manager.restartAgentWithRuntimeProfile(second.id, runtimeProfile.id),
+    ).rejects.toMatchObject({
+      warnings: [
+        {
+          code: "runtime-profile-in-use",
+          runtimeProfileId: runtimeProfile.id,
+          agentIds: [first.id],
+        },
+      ],
+    });
+
+    const restarted = await manager.restartAgentWithRuntimeProfile(
+      second.id,
+      runtimeProfile.id,
+      undefined,
+      { acceptRuntimeWarnings: true },
+    );
+
+    expect(restarted.config.profileSnapshot).toMatchObject({
+      sourceProfileId: runtimeProfile.id,
+      sourceProfileVersion: runtimeProfile.version,
+      concurrencyPolicy: "warn",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("createAgent passes persistSession to provider create options", async () => {

@@ -18,10 +18,11 @@ import type { Agent } from "@/stores/session-store";
 import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { encodeImages } from "@/utils/encode-images";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
-import type { DaemonClient } from "@server/client/daemon-client";
+import { isRuntimeLaunchWarningError, type DaemonClient } from "@server/client/daemon-client";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useWorkspaceAttachments,
@@ -213,6 +214,7 @@ async function submitDraftCreateRequest(input: {
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
   };
+  acceptRuntimeWarnings?: boolean;
 }): Promise<{ agentId: string | null; result: AgentSnapshotPayload }> {
   const {
     attempt,
@@ -224,6 +226,7 @@ async function submitDraftCreateRequest(input: {
     workspaceExecutionAuthority,
     autoSubmitConfig,
     composerState,
+    acceptRuntimeWarnings,
   } = input;
 
   invariant(workspaceDirectory, "Workspace directory is required");
@@ -245,14 +248,33 @@ async function submitDraftCreateRequest(input: {
 
   const imagesData = await encodeImages(images);
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
-  const result = await client.createAgent({
+  const createOptions = {
     config,
     workspaceId: workspaceExecutionAuthority.workspaceId,
     ...(text ? { initialPrompt: text } : {}),
     clientMessageId: attempt.clientMessageId,
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
-  });
+    ...(acceptRuntimeWarnings ? { acceptRuntimeWarnings: true } : {}),
+  };
+  let result: AgentSnapshotPayload;
+  try {
+    result = await client.createAgent(createOptions);
+  } catch (error) {
+    if (!isRuntimeLaunchWarningError(error) || acceptRuntimeWarnings) {
+      throw error;
+    }
+    const confirmed = await confirmDialog({
+      title: "Profile already in use",
+      message: error.warnings.map((warning) => warning.message).join("\n"),
+      confirmLabel: "Start anyway",
+      cancelLabel: "Cancel",
+    });
+    if (!confirmed) {
+      throw error;
+    }
+    result = await client.createAgent({ ...createOptions, acceptRuntimeWarnings: true });
+  }
 
   return {
     agentId: result.id,

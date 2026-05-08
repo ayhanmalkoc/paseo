@@ -412,7 +412,26 @@ function sanitizeMetadata(value: unknown): AgentMetadata | undefined {
   if (!sanitized || !isJsonObject(sanitized)) {
     return undefined;
   }
-  return sanitized;
+  return stripMcpServerHeaders(sanitized);
+}
+
+function stripMcpServerHeaders(metadata: { [key: string]: JsonValue }): AgentMetadata {
+  const mcpServers = metadata.mcpServers;
+  if (!mcpServers || !isJsonObject(mcpServers)) {
+    return metadata;
+  }
+  const sanitizedServers: { [key: string]: JsonValue } = {};
+  let didStrip = false;
+  for (const [serverId, serverConfig] of Object.entries(mcpServers)) {
+    if (isJsonObject(serverConfig) && "headers" in serverConfig) {
+      const { headers: _headers, ...withoutHeaders } = serverConfig;
+      sanitizedServers[serverId] = withoutHeaders;
+      didStrip = true;
+      continue;
+    }
+    sanitizedServers[serverId] = serverConfig;
+  }
+  return didStrip ? { ...metadata, mcpServers: sanitizedServers } : metadata;
 }
 
 function sanitizeMetadataArray(value: unknown): AgentMetadata[] | undefined {
