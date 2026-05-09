@@ -5,6 +5,7 @@ import {
   buildSelectedTriggerLabel,
   matchesSearch,
   resolveProviderLabel,
+  shouldAutoFocusProviderSearch,
 } from "./combined-model-selector.utils";
 
 describe("combined model selector helpers", () => {
@@ -86,5 +87,12 @@ describe("combined model selector helpers", () => {
   it("keeps the selected trigger label model-only", () => {
     expect(resolveProviderLabel(providerDefinitions, "codex")).toBe("Codex");
     expect(buildSelectedTriggerLabel("GPT-5.4")).toBe("GPT-5.4");
+  });
+
+  it("keeps provider search autofocus off compact web sheets", () => {
+    expect(shouldAutoFocusProviderSearch({ isWeb: true, isCompact: true })).toBe(false);
+    expect(shouldAutoFocusProviderSearch({ isWeb: true, isCompact: false })).toBe(true);
+    expect(shouldAutoFocusProviderSearch({ isWeb: false, isCompact: true })).toBe(false);
+    expect(shouldAutoFocusProviderSearch({ isWeb: false, isCompact: false })).toBe(false);
   });
 });

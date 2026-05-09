@@ -17,6 +17,13 @@ export function buildSelectedTriggerLabel(modelLabel: string): string {
   return modelLabel;
 }
 
+export function shouldAutoFocusProviderSearch(input: {
+  isWeb: boolean;
+  isCompact: boolean;
+}): boolean {
+  return input.isWeb && !input.isCompact;
+}
+
 export function buildModelRows(
   providerDefinitions: AgentProviderDefinition[],
   allProviderModels: Map<string, AgentModelDefinition[]>,
