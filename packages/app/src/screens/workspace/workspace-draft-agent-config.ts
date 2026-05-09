@@ -10,6 +10,14 @@ export function buildWorkspaceDraftAgentConfig(input: {
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
 }): AgentSessionConfig {
+  if (input.runtimeProfileId) {
+    return {
+      provider: input.provider,
+      cwd: input.cwd,
+      runtimeProfileId: input.runtimeProfileId,
+    };
+  }
+
   return {
     provider: input.provider,
     cwd: input.cwd,

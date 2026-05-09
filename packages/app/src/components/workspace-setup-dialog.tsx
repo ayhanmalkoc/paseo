@@ -14,10 +14,15 @@ import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { encodeImages } from "@/utils/encode-images";
 import { toErrorMessage } from "@/utils/error-messages";
 import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
-import type { CreateAgentRequestOptions, DaemonClient } from "@server/client/daemon-client";
+import {
+  isRuntimeLaunchWarningError,
+  type CreateAgentRequestOptions,
+  type DaemonClient,
+} from "@server/client/daemon-client";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import { requireWorkspaceExecutionAuthority } from "@/utils/workspace-execution";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import type { ImageAttachment, MessagePayload } from "./message-input";
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
@@ -105,7 +110,9 @@ function buildCreateAgentOptions({
     selectedMode: string;
     effectiveModelId: string | null;
     effectiveAuthProfileKey: string | null;
+    effectiveRuntimeProfileId: string | null;
     effectiveThinkingOptionId: string | null;
+    featureValues: Record<string, unknown> | undefined;
   };
   text: string;
   attachments: NonNullable<CreateAgentRequestOptions["attachments"]>;
@@ -114,24 +121,58 @@ function buildCreateAgentOptions({
   workspaceId: string;
   provider: CreateAgentRequestOptions["provider"];
 }): CreateAgentRequestOptions {
+  const usesRuntimeProfile = Boolean(composerState.effectiveRuntimeProfileId);
   return {
     provider,
     cwd: workspaceDirectory,
     workspaceId,
-    ...(composerState.modeOptions.length > 0 && composerState.selectedMode !== ""
+    ...(composerState.effectiveRuntimeProfileId
+      ? { runtimeProfileId: composerState.effectiveRuntimeProfileId }
+      : {}),
+    ...(!usesRuntimeProfile &&
+    composerState.modeOptions.length > 0 &&
+    composerState.selectedMode !== ""
       ? { modeId: composerState.selectedMode }
       : {}),
-    ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
-    ...(composerState.effectiveAuthProfileKey
+    ...(!usesRuntimeProfile && composerState.effectiveModelId
+      ? { model: composerState.effectiveModelId }
+      : {}),
+    ...(!usesRuntimeProfile && composerState.effectiveAuthProfileKey
       ? { authProfileKey: composerState.effectiveAuthProfileKey }
       : {}),
-    ...(composerState.effectiveThinkingOptionId
+    ...(!usesRuntimeProfile && composerState.effectiveThinkingOptionId
       ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
+      : {}),
+    ...(!usesRuntimeProfile && composerState.featureValues
+      ? { featureValues: composerState.featureValues }
       : {}),
     ...(text.trim() ? { initialPrompt: text.trim() } : {}),
     ...(encodedImages && encodedImages.length > 0 ? { images: encodedImages } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
   };
+}
+
+async function createAgentWithRuntimeWarningConfirmation(
+  connectedClient: DaemonClient,
+  createOptions: CreateAgentRequestOptions,
+) {
+  try {
+    return await connectedClient.createAgent(createOptions);
+  } catch (error) {
+    if (!isRuntimeLaunchWarningError(error)) {
+      throw error;
+    }
+    const confirmed = await confirmDialog({
+      title: "Profile already in use",
+      message: error.warnings.map((warning) => warning.message).join("\n"),
+      confirmLabel: "Start anyway",
+      cancelLabel: "Cancel",
+    });
+    if (!confirmed) {
+      throw error;
+    }
+    return connectedClient.createAgent({ ...createOptions, acceptRuntimeWarnings: true });
+  }
 }
 
 export function WorkspaceSetupDialog() {
@@ -283,7 +324,8 @@ export function WorkspaceSetupDialog() {
         const workspaceDirectory = requireWorkspaceExecutionAuthority({
           workspace: ensuredWorkspace,
         }).workspaceDirectory;
-        const agent = await connectedClient.createAgent(
+        const agent = await createAgentWithRuntimeWarningConfirmation(
+          connectedClient,
           buildCreateAgentOptions({
             composerState,
             text,

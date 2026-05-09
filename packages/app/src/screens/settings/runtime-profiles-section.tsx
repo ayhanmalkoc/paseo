@@ -34,10 +34,6 @@ import type {
   RuntimeProfilePatch,
 } from "@server/server/agent/agent-sdk-types";
 
-type WorktreePolicy = NonNullable<
-  NonNullable<RuntimeProfile["workspaceDefaults"]>["worktreePolicy"]
->;
-
 interface RuntimeProfileDraft {
   name: string;
   provider: AgentProvider;
@@ -45,15 +41,9 @@ interface RuntimeProfileDraft {
   model: string;
   modeId: string;
   thinkingOptionId: string;
-  permissionPresetId: string;
   concurrencyPolicy: RuntimeProfileConcurrencyPolicy;
-  cwd: string;
-  worktreePolicy: WorktreePolicy;
   systemPrompt: string;
   instructionOverlay: string;
-  mcpServerIds: string;
-  skillIds: string;
-  featureDefaultsJson: string;
   featureValuesJson: string;
   envOverlayJson: string;
   mcpServersJson: string;
@@ -74,11 +64,6 @@ const CONCURRENCY_OPTIONS: SelectOption[] = [
   { id: "warn", label: "Warn", description: "Ask before reusing this profile in parallel" },
   { id: "allow", label: "Allow", description: "Allow parallel agents with this profile" },
   { id: "single-active", label: "Single active", description: "Prefer one active agent" },
-];
-const WORKTREE_OPTIONS: SelectOption[] = [
-  { id: "ask", label: "Ask" },
-  { id: "current", label: "Current worktree" },
-  { id: "new-worktree", label: "New worktree" },
 ];
 const BOOLEAN_FEATURE_OPTIONS: SelectOption[] = [
   { id: "false", label: "Off" },
@@ -342,7 +327,6 @@ function RuntimeProfileEditorSheet({
   const draftFeatures = useRuntimeProfileDraftFeatures({
     serverId,
     provider: draft.provider,
-    cwd: draft.cwd,
     modeId: draft.modeId,
     modelId: draft.model,
     thinkingOptionId: draft.thinkingOptionId,
@@ -506,26 +490,6 @@ function RuntimeProfileEditorSheet({
         onSetFeatureValue={handleSetFeatureValue}
       />
 
-      <SettingsSection title="Workspace">
-        <View style={styles.fieldStack}>
-          <LabeledInput
-            label="Default cwd"
-            value={draft.cwd}
-            onChangeText={(value) => setField("cwd", value)}
-            placeholder="Leave empty to use the selected workspace"
-            editable={!saving}
-          />
-          <SelectField
-            label="Worktree"
-            value={resolveOptionLabel(WORKTREE_OPTIONS, draft.worktreePolicy)}
-            options={WORKTREE_OPTIONS}
-            selectedId={draft.worktreePolicy}
-            onSelect={(value) => setField("worktreePolicy", value as WorktreePolicy)}
-            disabled={saving}
-          />
-        </View>
-      </SettingsSection>
-
       <SettingsSection title="Instructions">
         <View style={styles.fieldStack}>
           <LabeledInput
@@ -547,38 +511,8 @@ function RuntimeProfileEditorSheet({
         </View>
       </SettingsSection>
 
-      <SettingsSection title="Tools and advanced">
+      <SettingsSection title="Advanced">
         <View style={styles.fieldStack}>
-          <LabeledInput
-            label="Permission preset"
-            value={draft.permissionPresetId}
-            onChangeText={(value) => setField("permissionPresetId", value)}
-            placeholder="Optional preset id"
-            editable={!saving}
-          />
-          <LabeledInput
-            label="MCP server ids"
-            value={draft.mcpServerIds}
-            onChangeText={(value) => setField("mcpServerIds", value)}
-            placeholder="Comma or newline separated ids"
-            editable={!saving}
-          />
-          <LabeledInput
-            label="Skill ids"
-            value={draft.skillIds}
-            onChangeText={(value) => setField("skillIds", value)}
-            placeholder="Comma or newline separated ids"
-            editable={!saving}
-          />
-          <LabeledInput
-            label="Feature defaults JSON"
-            value={draft.featureDefaultsJson}
-            onChangeText={(value) => setField("featureDefaultsJson", value)}
-            placeholder='{"plan": false}'
-            editable={!saving}
-            multiline
-            monospace
-          />
           <LabeledInput
             label="Feature values JSON"
             value={draft.featureValuesJson}
@@ -837,7 +771,6 @@ function RuntimeProfileFeaturesSection({
 function useRuntimeProfileDraftFeatures(input: {
   serverId: string;
   provider: AgentProvider;
-  cwd: string;
   modeId: string;
   modelId: string;
   thinkingOptionId: string;
@@ -852,12 +785,12 @@ function useRuntimeProfileDraftFeatures(input: {
     }
     return {
       provider,
-      cwd: input.cwd.trim() || ".",
+      cwd: ".",
       ...(input.modeId ? { modeId: input.modeId } : {}),
       ...(input.modelId ? { model: input.modelId } : {}),
       ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
     };
-  }, [input.cwd, input.modeId, input.modelId, input.provider, input.thinkingOptionId]);
+  }, [input.modeId, input.modelId, input.provider, input.thinkingOptionId]);
 
   const featuresQuery = useQuery({
     queryKey: [
@@ -976,15 +909,9 @@ function createDraft(
     model: profile?.model ?? defaultModel?.id ?? "",
     modeId: profile?.modeId ?? providerEntry?.defaultModeId ?? "",
     thinkingOptionId: profile?.thinkingOptionId ?? defaultModel?.defaultThinkingOptionId ?? "",
-    permissionPresetId: profile?.permissionPresetId ?? "",
     concurrencyPolicy: profile?.concurrencyPolicy ?? "warn",
-    cwd: profile?.workspaceDefaults?.cwd ?? "",
-    worktreePolicy: profile?.workspaceDefaults?.worktreePolicy ?? "ask",
     systemPrompt: profile?.systemPrompt ?? "",
     instructionOverlay: profile?.instructionOverlay ?? "",
-    mcpServerIds: (profile?.mcpServerIds ?? []).join("\n"),
-    skillIds: (profile?.skillIds ?? []).join("\n"),
-    featureDefaultsJson: formatJson(profile?.featureDefaults),
     featureValuesJson: formatJson(profile?.featureValues),
     envOverlayJson: formatJson(profile?.envOverlay),
     mcpServersJson: formatJson(profile?.mcpServers),
@@ -1013,17 +940,9 @@ function buildPatch(
     model: normalizeNullableText(draft.model),
     modeId: normalizeNullableText(draft.modeId),
     thinkingOptionId: normalizeNullableText(draft.thinkingOptionId),
-    permissionPresetId: normalizeNullableText(draft.permissionPresetId),
     concurrencyPolicy: draft.concurrencyPolicy,
-    workspaceDefaults: {
-      cwd: normalizeOptionalText(draft.cwd),
-      worktreePolicy: draft.worktreePolicy,
-    },
     systemPrompt: normalizeNullableText(draft.systemPrompt),
     instructionOverlay: normalizeNullableText(draft.instructionOverlay),
-    mcpServerIds: parseIdList(draft.mcpServerIds),
-    skillIds: parseIdList(draft.skillIds),
-    featureDefaults: parseObjectJson("Feature defaults JSON", draft.featureDefaultsJson),
     featureValues: parseObjectJson("Feature values JSON", draft.featureValuesJson),
     envOverlay: parseStringObjectJson("Environment JSON", draft.envOverlayJson),
     mcpServers: parseMcpServersJson(draft.mcpServersJson),
@@ -1033,18 +952,6 @@ function buildPatch(
 function normalizeNullableText(value: string): string | null {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function normalizeOptionalText(value: string): string | undefined {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function parseIdList(value: string): string[] {
-  return value
-    .split(/[\n,]/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
 }
 
 function parseObjectJson(label: string, value: string): Record<string, unknown> {

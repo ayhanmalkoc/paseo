@@ -133,6 +133,7 @@ import type {
   AgentUsage,
   ProviderAuthProfile,
   RuntimeProfile,
+  RuntimeProfilePatch,
   RuntimeProfileLaunchOverrides,
   AgentProfileSnapshot,
   AccountLoginSession,
@@ -243,34 +244,72 @@ export const ProviderAuthProfileSchema: z.ZodType<ProviderAuthProfile> = z.objec
 
 const RuntimeProfileConcurrencyPolicySchema = z.enum(["allow", "warn", "single-active"]);
 
-const RuntimeProfileWorkspaceDefaultsSchema = z
-  .object({
-    cwd: z.string().optional(),
-    worktreePolicy: z.enum(["current", "new-worktree", "ask"]).optional(),
-  })
-  .optional();
-
 const RuntimeProfileFieldsSchema = z.object({
   provider: AgentProviderSchema.optional(),
   accountKey: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   modeId: z.string().nullable().optional(),
   thinkingOptionId: z.string().nullable().optional(),
-  permissionPresetId: z.string().nullable().optional(),
-  mcpServerIds: z.array(z.string()).optional(),
-  skillIds: z.array(z.string()).optional(),
   instructionOverlay: z.string().nullable().optional(),
   systemPrompt: z.string().nullable().optional(),
-  featureDefaults: z.record(z.unknown()).optional(),
   featureValues: z.record(z.unknown()).optional(),
   envOverlay: z.record(z.string()).optional(),
   mcpServers: z.record(z.lazy(() => McpServerConfigSchema)).optional(),
-  workspaceDefaults: RuntimeProfileWorkspaceDefaultsSchema,
   concurrencyPolicy: RuntimeProfileConcurrencyPolicySchema.optional(),
 });
 
+const DeprecatedRuntimeProfileFieldsSchema = z.object({
+  featureDefaults: z.record(z.unknown()).optional(),
+  workspaceDefaults: z
+    .object({
+      cwd: z.string().optional(),
+      worktreePolicy: z.string().optional(),
+    })
+    .optional(),
+  permissionPresetId: z.string().nullable().optional(),
+  mcpServerIds: z.array(z.string()).optional(),
+  skillIds: z.array(z.string()).optional(),
+  worktreePolicy: z.string().optional(),
+});
+
+function stripDeprecatedRuntimeProfileFields<T extends Record<string, unknown>>(value: T) {
+  const {
+    featureDefaults,
+    workspaceDefaults: _workspaceDefaults,
+    permissionPresetId: _permissionPresetId,
+    mcpServerIds: _mcpServerIds,
+    skillIds: _skillIds,
+    worktreePolicy: _worktreePolicy,
+    ...rest
+  } = value;
+  const featureValues = mergeOptionalRecords(
+    isRecordValue(featureDefaults) ? featureDefaults : undefined,
+    isRecordValue(rest.featureValues) ? rest.featureValues : undefined,
+  );
+  return {
+    ...rest,
+    ...(featureValues ? { featureValues } : {}),
+  };
+}
+
+function mergeOptionalRecords(
+  ...values: Array<Record<string, unknown> | undefined>
+): Record<string, unknown> | undefined {
+  const merged = Object.assign({}, ...values.filter(Boolean));
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export const RuntimeProfileLaunchOverridesSchema: z.ZodType<RuntimeProfileLaunchOverrides> =
-  RuntimeProfileFieldsSchema.omit({ provider: true }).partial();
+  RuntimeProfileFieldsSchema.omit({ provider: true })
+    .partial()
+    .merge(DeprecatedRuntimeProfileFieldsSchema.partial())
+    .transform(
+      (value) => stripDeprecatedRuntimeProfileFields(value) as RuntimeProfileLaunchOverrides,
+    );
 
 export const RuntimeProfileSchema: z.ZodType<RuntimeProfile> = RuntimeProfileFieldsSchema.extend({
   id: z.string(),
@@ -282,6 +321,26 @@ export const RuntimeProfileSchema: z.ZodType<RuntimeProfile> = RuntimeProfileFie
   updatedAt: z.string(),
 });
 
+const RuntimeProfileCreateFieldsSchema = RuntimeProfileFieldsSchema.extend({
+  name: z.string().min(1),
+  provider: AgentProviderSchema,
+})
+  .merge(DeprecatedRuntimeProfileFieldsSchema.partial())
+  .transform(
+    (value) =>
+      stripDeprecatedRuntimeProfileFields(value) as RuntimeProfileLaunchOverrides & {
+        name: string;
+        provider: RuntimeProfile["provider"];
+      } & RuntimeProfilePatch,
+  );
+
+const RuntimeProfilePatchFieldsSchema = RuntimeProfileFieldsSchema.extend({
+  name: z.string().min(1).optional(),
+})
+  .partial()
+  .merge(DeprecatedRuntimeProfileFieldsSchema.partial())
+  .transform((value) => stripDeprecatedRuntimeProfileFields(value) as RuntimeProfilePatch);
+
 export const AgentProfileSnapshotSchema: z.ZodType<AgentProfileSnapshot> = z.object({
   sourceProfileId: z.string().optional(),
   sourceProfileVersion: z.number().int().positive().optional(),
@@ -291,15 +350,10 @@ export const AgentProfileSnapshotSchema: z.ZodType<AgentProfileSnapshot> = z.obj
   model: z.string().nullable().optional(),
   modeId: z.string().nullable().optional(),
   thinkingOptionId: z.string().nullable().optional(),
-  permissionPresetId: z.string().nullable().optional(),
-  mcpServerIds: z.array(z.string()).optional(),
-  skillIds: z.array(z.string()).optional(),
   instructionOverlay: z.string().nullable().optional(),
   systemPrompt: z.string().nullable().optional(),
-  featureDefaults: z.record(z.unknown()).optional(),
   featureValues: z.record(z.unknown()).optional(),
   envOverlay: z.record(z.string()).optional(),
-  workspaceDefaults: RuntimeProfileWorkspaceDefaultsSchema,
   concurrencyPolicy: RuntimeProfileConcurrencyPolicySchema.optional(),
   resolvedAt: z.string(),
 });
@@ -1269,19 +1323,14 @@ export const ListRuntimeProfilesRequestMessageSchema = z.object({
 
 export const CreateRuntimeProfileRequestMessageSchema = z.object({
   type: z.literal("create_runtime_profile_request"),
-  profile: RuntimeProfileFieldsSchema.extend({
-    name: z.string().min(1),
-    provider: AgentProviderSchema,
-  }),
+  profile: RuntimeProfileCreateFieldsSchema,
   requestId: z.string(),
 });
 
 export const UpdateRuntimeProfileRequestMessageSchema = z.object({
   type: z.literal("update_runtime_profile_request"),
   profileId: z.string(),
-  patch: RuntimeProfileFieldsSchema.extend({
-    name: z.string().min(1).optional(),
-  }).partial(),
+  patch: RuntimeProfilePatchFieldsSchema,
   requestId: z.string(),
 });
 

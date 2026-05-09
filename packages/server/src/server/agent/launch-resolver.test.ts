@@ -196,12 +196,9 @@ describe("LaunchResolver", () => {
   test("runtime profile feature values win over composer feature preferences", async () => {
     const resolver = createResolver({
       profile: createRuntimeProfile({
-        featureDefaults: {
-          fast_mode: false,
-          plan_mode: false,
-        },
         featureValues: {
           fast_mode: true,
+          plan_mode: false,
         },
       }),
     });
@@ -229,6 +226,65 @@ describe("LaunchResolver", () => {
     expect(resolved.snapshot.featureValues).toEqual({
       fast_mode: true,
       plan_mode: false,
+    });
+  });
+
+  test("runtime profile instruction overlay is appended to the resolved system prompt", async () => {
+    const resolver = createResolver({
+      profile: createRuntimeProfile({
+        instructionOverlay: "Prefer the repo workflow.",
+      }),
+    });
+    const config: AgentSessionConfig = {
+      provider: "codex",
+      cwd: "C:\\dev\\paseo",
+      runtimeProfileId: "profile-1",
+      systemPrompt: "Base system prompt.",
+    };
+
+    const resolved = await resolver.resolve({
+      agentId: "agent-1",
+      config,
+      normalizedConfig: config,
+      resolveDefaultAuthProfile: false,
+    });
+
+    expect(resolved.config.systemPrompt).toBe("Base system prompt.\n\nPrefer the repo workflow.");
+    expect(resolved.snapshot.systemPrompt).toBe("Base system prompt.\n\nPrefer the repo workflow.");
+    expect(resolved.snapshot.instructionOverlay).toBe("Prefer the repo workflow.");
+  });
+
+  test("runtime profile environment cannot override launch identity or auth env", async () => {
+    const resolver = createResolver({
+      profile: createRuntimeProfile({
+        accountKey: "profile-account",
+        envOverlay: {
+          CODEX_HOME: "C:\\profiles\\wrong",
+          PASEO_AGENT_ID: "wrong-agent",
+          CUSTOM_FLAG: "enabled",
+        },
+      }),
+    });
+    const config: AgentSessionConfig = {
+      provider: "codex",
+      cwd: "C:\\dev\\paseo",
+      runtimeProfileId: "profile-1",
+    };
+
+    const resolved = await resolver.resolve({
+      agentId: "agent-1",
+      config,
+      normalizedConfig: config,
+      resolveDefaultAuthProfile: false,
+    });
+
+    expect(resolved.launchContext.env).toMatchObject({
+      CODEX_HOME: "C:\\profiles\\profile-account",
+      PASEO_AGENT_ID: "agent-1",
+      CUSTOM_FLAG: "enabled",
+    });
+    expect(resolved.snapshot.envOverlay).toEqual({
+      CUSTOM_FLAG: "enabled",
     });
   });
 

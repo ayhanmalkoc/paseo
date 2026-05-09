@@ -2055,10 +2055,7 @@ function RuntimeProfileDetailsSection({
 }) {
   const { theme } = useUnistyles();
   const isStale = launchedVersion !== undefined && launchedVersion < profile.version;
-  const featureValues = {
-    ...profile.featureDefaults,
-    ...profile.featureValues,
-  };
+  const featureValues = profile.featureValues ?? {};
   const featureRows = Object.entries(featureValues).map(([featureId, value]) => {
     const featureLabel = features?.find((feature) => feature.id === featureId)?.label ?? featureId;
     return {

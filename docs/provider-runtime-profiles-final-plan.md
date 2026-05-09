@@ -273,18 +273,13 @@ type RuntimeProfile = {
   provider: AgentProvider;
   accountKey?: string | null;
   model?: string | null;
-  mode?: string | null;
-  reasoningEffort?: string | null;
-  permissionPresetId?: string | null;
-  mcpServerIds?: string[];
-  skillIds?: string[];
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
   instructionOverlay?: string | null;
-  featureDefaults?: Record<string, unknown>;
+  systemPrompt?: string | null;
+  featureValues?: Record<string, unknown>;
   envOverlay?: Record<string, string>;
-  workspaceDefaults?: {
-    cwd?: string;
-    worktreePolicy?: "current" | "new-worktree" | "ask";
-  };
+  mcpServers?: Record<string, McpServerConfig>;
   concurrencyPolicy: RuntimeProfileConcurrencyPolicy;
   createdAt: string;
   updatedAt: string;
@@ -303,20 +298,21 @@ type AgentProfileSnapshot = {
   provider: AgentProvider;
   accountKey?: string | null;
   model?: string | null;
-  mode?: string | null;
-  reasoningEffort?: string | null;
-  permissionPresetId?: string | null;
-  mcpServerIds?: string[];
-  skillIds?: string[];
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
   instructionOverlay?: string | null;
-  featureDefaults?: Record<string, unknown>;
+  systemPrompt?: string | null;
+  featureValues?: Record<string, unknown>;
   envOverlay?: Record<string, string>;
+  concurrencyPolicy?: RuntimeProfileConcurrencyPolicy;
   resolvedAt: string;
 };
 ```
 
 Snapshots are stored with the agent config and never read live profile values
-while the agent is running.
+while the agent is running. Workspaces own `cwd`; runtime profiles only own
+provider/runtime/account selections and provider feature values. Older stored or
+wire `featureDefaults` values are migrated into `featureValues`.
 
 ### Launch Resolution
 

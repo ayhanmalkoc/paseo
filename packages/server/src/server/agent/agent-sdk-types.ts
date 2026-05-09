@@ -142,11 +142,6 @@ export interface AccountLoginSession {
 
 export type RuntimeProfileConcurrencyPolicy = "allow" | "warn" | "single-active";
 
-export interface RuntimeProfileWorkspaceDefaults {
-  cwd?: string;
-  worktreePolicy?: "current" | "new-worktree" | "ask";
-}
-
 export interface RuntimeProfile {
   id: string;
   version: number;
@@ -156,16 +151,11 @@ export interface RuntimeProfile {
   model?: string | null;
   modeId?: string | null;
   thinkingOptionId?: string | null;
-  permissionPresetId?: string | null;
-  mcpServerIds?: string[];
-  skillIds?: string[];
   instructionOverlay?: string | null;
   systemPrompt?: string | null;
-  featureDefaults?: Record<string, unknown>;
   featureValues?: Record<string, unknown>;
   envOverlay?: Record<string, string>;
   mcpServers?: Record<string, McpServerConfig>;
-  workspaceDefaults?: RuntimeProfileWorkspaceDefaults;
   concurrencyPolicy: RuntimeProfileConcurrencyPolicy;
   createdAt: string;
   updatedAt: string;
@@ -180,16 +170,11 @@ export type RuntimeProfilePatch = Partial<
     | "model"
     | "modeId"
     | "thinkingOptionId"
-    | "permissionPresetId"
-    | "mcpServerIds"
-    | "skillIds"
     | "instructionOverlay"
     | "systemPrompt"
-    | "featureDefaults"
     | "featureValues"
     | "envOverlay"
     | "mcpServers"
-    | "workspaceDefaults"
     | "concurrencyPolicy"
   >
 >;
@@ -201,16 +186,11 @@ export type RuntimeProfileLaunchOverrides = Partial<
     | "model"
     | "modeId"
     | "thinkingOptionId"
-    | "permissionPresetId"
-    | "mcpServerIds"
-    | "skillIds"
     | "instructionOverlay"
     | "systemPrompt"
-    | "featureDefaults"
     | "featureValues"
     | "envOverlay"
     | "mcpServers"
-    | "workspaceDefaults"
   >
 >;
 
@@ -223,15 +203,10 @@ export interface AgentProfileSnapshot {
   model?: string | null;
   modeId?: string | null;
   thinkingOptionId?: string | null;
-  permissionPresetId?: string | null;
-  mcpServerIds?: string[];
-  skillIds?: string[];
   instructionOverlay?: string | null;
   systemPrompt?: string | null;
-  featureDefaults?: Record<string, unknown>;
   featureValues?: Record<string, unknown>;
   envOverlay?: Record<string, string>;
-  workspaceDefaults?: RuntimeProfileWorkspaceDefaults;
   concurrencyPolicy?: RuntimeProfileConcurrencyPolicy;
   resolvedAt: string;
 }

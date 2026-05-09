@@ -88,9 +88,9 @@ export class LaunchResolver {
       snapshot,
       launchContext: {
         env: {
-          PASEO_AGENT_ID: input.agentId,
-          ...authLaunch.env,
           ...snapshot.envOverlay,
+          ...authLaunch.env,
+          PASEO_AGENT_ID: input.agentId,
         },
       },
       warnings,
@@ -122,7 +122,7 @@ export class LaunchResolver {
       return config;
     }
     const overrides = config.profileOverrides ?? {};
-    const cwd = resolveRuntimeProfileCwd(config, overrides, profile);
+    const cwd = config.cwd;
     if (!cwd) {
       throw new Error(`Runtime profile '${profile.name}' does not define a working directory`);
     }
@@ -131,13 +131,7 @@ export class LaunchResolver {
       provider: profile.provider,
       cwd,
       ...buildRuntimeSelectionConfig(config, overrides, profile),
-      featureValues: mergeRecordValues(
-        config.featureValues,
-        profile.featureDefaults,
-        profile.featureValues,
-        overrides.featureDefaults,
-        overrides.featureValues,
-      ),
+      featureValues: mergeRecordValues(profile.featureValues, overrides.featureValues),
       systemPrompt: resolveRuntimeSystemPrompt(config, overrides, profile),
       mcpServers: mergeRecordValues(profile.mcpServers, overrides.mcpServers, config.mcpServers),
     };
@@ -243,14 +237,6 @@ function normalizeSelection(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function resolveRuntimeProfileCwd(
-  config: AgentSessionConfig,
-  overrides: RuntimeProfileLaunchOverrides,
-  profile: RuntimeProfile,
-): string | undefined {
-  return config.cwd || overrides.workspaceDefaults?.cwd || profile.workspaceDefaults?.cwd;
-}
-
 function buildRuntimeSelectionConfig(
   config: AgentSessionConfig,
   overrides: RuntimeProfileLaunchOverrides,
@@ -262,8 +248,7 @@ function buildRuntimeSelectionConfig(
     thinkingOptionId:
       firstString(overrides.thinkingOptionId, profile.thinkingOptionId, config.thinkingOptionId) ??
       undefined,
-    authProfileKey:
-      firstString(overrides.accountKey, profile.accountKey, config.authProfileKey) ?? undefined,
+    authProfileKey: firstString(overrides.accountKey, profile.accountKey) ?? undefined,
   };
 }
 
@@ -272,10 +257,9 @@ function resolveRuntimeSystemPrompt(
   overrides: RuntimeProfileLaunchOverrides,
   profile: RuntimeProfile,
 ): string | undefined {
-  return (
-    firstString(overrides.systemPrompt, profile.systemPrompt, config.systemPrompt) ??
-    firstString(overrides.instructionOverlay, profile.instructionOverlay) ??
-    undefined
+  return joinInstructionParts(
+    firstString(overrides.systemPrompt, profile.systemPrompt, config.systemPrompt),
+    firstString(overrides.instructionOverlay, profile.instructionOverlay),
   );
 }
 
@@ -304,48 +288,19 @@ function buildSnapshotProfileSettings(
   overrides: RuntimeProfileLaunchOverrides | undefined,
 ): SnapshotProfileSettings {
   return {
-    ...buildSnapshotPermissionSettings(profile, overrides),
-    ...buildSnapshotResourceSettings(profile, overrides),
-    featureDefaults: mergeRecordValues(profile?.featureDefaults, overrides?.featureDefaults),
-    envOverlay: mergeRecordValues(profile?.envOverlay, overrides?.envOverlay),
+    instructionOverlay:
+      firstString(overrides?.instructionOverlay, profile?.instructionOverlay) ?? null,
+    envOverlay: sanitizeProfileEnvOverlay(
+      mergeRecordValues(profile?.envOverlay, overrides?.envOverlay),
+    ),
     concurrencyPolicy: resolveSnapshotConcurrencyPolicy(profile),
   };
 }
 
 type SnapshotProfileSettings = Pick<
   AgentProfileSnapshot,
-  | "concurrencyPolicy"
-  | "envOverlay"
-  | "featureDefaults"
-  | "instructionOverlay"
-  | "mcpServerIds"
-  | "permissionPresetId"
-  | "skillIds"
-  | "workspaceDefaults"
+  "concurrencyPolicy" | "envOverlay" | "instructionOverlay"
 >;
-
-function buildSnapshotPermissionSettings(
-  profile: RuntimeProfile | null,
-  overrides: RuntimeProfileLaunchOverrides | undefined,
-): Pick<AgentProfileSnapshot, "instructionOverlay" | "permissionPresetId"> {
-  return {
-    permissionPresetId:
-      firstString(overrides?.permissionPresetId, profile?.permissionPresetId) ?? null,
-    instructionOverlay:
-      firstString(overrides?.instructionOverlay, profile?.instructionOverlay) ?? null,
-  };
-}
-
-function buildSnapshotResourceSettings(
-  profile: RuntimeProfile | null,
-  overrides: RuntimeProfileLaunchOverrides | undefined,
-): Pick<AgentProfileSnapshot, "mcpServerIds" | "skillIds" | "workspaceDefaults"> {
-  return {
-    mcpServerIds: overrides?.mcpServerIds ?? profile?.mcpServerIds,
-    skillIds: overrides?.skillIds ?? profile?.skillIds,
-    workspaceDefaults: overrides?.workspaceDefaults ?? profile?.workspaceDefaults,
-  };
-}
 
 function resolveSnapshotConcurrencyPolicy(profile: RuntimeProfile | null) {
   return profile?.concurrencyPolicy ?? ("allow" as const);
@@ -368,4 +323,25 @@ function stripUndefined<T extends object>(value: T): T {
     }
   }
   return value;
+}
+
+function joinInstructionParts(...parts: Array<string | null | undefined>): string | undefined {
+  const normalized = parts
+    .map((part) => normalizeSelection(part))
+    .filter((part): part is string => Boolean(part));
+  return normalized.length > 0 ? normalized.join("\n\n") : undefined;
+}
+
+const RESERVED_PROFILE_ENV_KEYS = new Set(["CODEX_HOME", "PASEO_AGENT_ID"]);
+
+function sanitizeProfileEnvOverlay(
+  value: Record<string, string> | null | undefined,
+): Record<string, string> | undefined {
+  if (!isRecordValue(value)) {
+    return undefined;
+  }
+  const entries = Object.entries(value).filter(
+    ([key]) => !RESERVED_PROFILE_ENV_KEYS.has(key.toUpperCase()),
+  );
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }

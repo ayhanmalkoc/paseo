@@ -220,17 +220,13 @@ type ProviderWorkingProfile = {
   provider: AgentProvider;
   authProfileKey?: string | null;
   model?: string | null;
-  reasoningEffort?: string | null;
-  mcpServerSetId?: string | null;
-  skillSetId?: string | null;
-  instructionOverlayId?: string | null;
-  permissionPresetId?: string | null;
-  featureDefaults?: Record<string, unknown>;
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
+  instructionOverlay?: string | null;
+  systemPrompt?: string | null;
+  featureValues?: Record<string, unknown>;
   envOverlay?: Record<string, string>;
-  workspaceDefaults?: {
-    cwd?: string;
-    worktreePolicy?: string;
-  };
+  mcpServers?: Record<string, McpServerConfig>;
   concurrencyPolicy?: "allow" | "warn" | "single-active";
   createdAt: string;
   updatedAt: string;
@@ -242,18 +238,20 @@ type AgentProfileSnapshot = {
   provider: AgentProvider;
   authProfileKey?: string | null;
   model?: string | null;
-  reasoningEffort?: string | null;
-  mcpServerSetId?: string | null;
-  skillSetId?: string | null;
-  instructionOverlayId?: string | null;
-  permissionPresetId?: string | null;
-  featureDefaults?: Record<string, unknown>;
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
+  instructionOverlay?: string | null;
+  systemPrompt?: string | null;
+  featureValues?: Record<string, unknown>;
   envOverlay?: Record<string, string>;
 };
 ```
 
 The onboarding MVP does not need to implement `ProviderWorkingProfile`, but the
 auth model should not block it.
+Runtime profiles are not workspace owners: `cwd` stays on the workspace/agent
+launch path, and deprecated `featureDefaults` inputs are folded into
+`featureValues`.
 
 ## Server Architecture
 

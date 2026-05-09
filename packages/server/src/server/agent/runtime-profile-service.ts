@@ -18,6 +18,14 @@ interface StoredRuntimeProfileRegistry {
 const CURRENT_SCHEMA_VERSION = 1;
 const DEFAULT_CONCURRENCY_POLICY: RuntimeProfileConcurrencyPolicy = "warn";
 type RuntimeProfileSubscriber = (profiles: RuntimeProfile[]) => void;
+type LegacyRuntimeProfileInput = Partial<RuntimeProfile> & {
+  featureDefaults?: Record<string, unknown>;
+  workspaceDefaults?: unknown;
+  permissionPresetId?: unknown;
+  mcpServerIds?: unknown;
+  skillIds?: unknown;
+  worktreePolicy?: unknown;
+};
 
 export class RuntimeProfileService {
   private readonly baseDir: string;
@@ -177,7 +185,7 @@ function normalizeRegistry(input: unknown): StoredRuntimeProfileRegistry {
       continue;
     }
     try {
-      const profile = normalizeProfile(value as RuntimeProfile);
+      const profile = normalizeProfile(value as LegacyRuntimeProfileInput);
       registry.profiles[id] = profile;
     } catch {
       // Skip malformed profiles rather than blocking daemon startup.
@@ -186,28 +194,32 @@ function normalizeRegistry(input: unknown): StoredRuntimeProfileRegistry {
   return registry;
 }
 
-function normalizeProfile(profile: RuntimeProfile): RuntimeProfile {
+function normalizeProfile(profile: LegacyRuntimeProfileInput): RuntimeProfile {
   const name = normalizeRequiredString(profile.name, "Runtime profile name");
   const provider = normalizeRequiredString(profile.provider, "Runtime profile provider");
+  const featureValues = mergeRecords(
+    normalizeRecord(profile.featureDefaults),
+    normalizeRecord(profile.featureValues),
+  );
   return {
     id: normalizeRequiredString(profile.id, "Runtime profile id"),
-    version: Number.isInteger(profile.version) && profile.version > 0 ? profile.version : 1,
+    version:
+      typeof profile.version === "number" &&
+      Number.isInteger(profile.version) &&
+      profile.version > 0
+        ? profile.version
+        : 1,
     name,
     provider,
     accountKey: normalizeNullableString(profile.accountKey),
     model: normalizeNullableString(profile.model),
     modeId: normalizeNullableString(profile.modeId),
     thinkingOptionId: normalizeNullableString(profile.thinkingOptionId),
-    permissionPresetId: normalizeNullableString(profile.permissionPresetId),
-    mcpServerIds: normalizeStringArray(profile.mcpServerIds),
-    skillIds: normalizeStringArray(profile.skillIds),
     instructionOverlay: normalizeNullableString(profile.instructionOverlay),
     systemPrompt: normalizeNullableString(profile.systemPrompt),
-    featureDefaults: normalizeRecord(profile.featureDefaults),
-    featureValues: normalizeRecord(profile.featureValues),
+    featureValues,
     envOverlay: normalizeStringRecord(profile.envOverlay),
     mcpServers: profile.mcpServers,
-    workspaceDefaults: profile.workspaceDefaults,
     concurrencyPolicy: normalizeConcurrencyPolicy(profile.concurrencyPolicy),
     createdAt: normalizeRequiredString(profile.createdAt, "Runtime profile createdAt"),
     updatedAt: normalizeRequiredString(profile.updatedAt, "Runtime profile updatedAt"),
@@ -232,21 +244,18 @@ function normalizeNullableString(value: unknown): string | null | undefined {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const result = value
-    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-    .filter((entry) => entry.length > 0);
-  return result.length > 0 ? result : undefined;
-}
-
 function normalizeRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
   return { ...(value as Record<string, unknown>) };
+}
+
+function mergeRecords(
+  ...values: Array<Record<string, unknown> | undefined>
+): Record<string, unknown> | undefined {
+  const merged = Object.assign({}, ...values.filter(Boolean));
+  return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
 function normalizeStringRecord(value: unknown): Record<string, string> | undefined {

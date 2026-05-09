@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { FileExplorerRequestSchema, SessionOutboundMessageSchema } from "./messages.js";
+import {
+  FileExplorerRequestSchema,
+  SessionInboundMessageSchema,
+  SessionOutboundMessageSchema,
+} from "./messages.js";
 
 function workspaceDescriptor(overrides: Record<string, unknown> = {}) {
   return {
@@ -158,6 +162,41 @@ describe("file explorer request compatibility", () => {
       type: "file_explorer_request",
       requestId: "req-new",
       acceptBinary: true,
+    });
+  });
+});
+
+describe("runtime profile request compatibility", () => {
+  test("deprecated featureDefaults inputs are accepted and migrated into featureValues", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "create_runtime_profile_request",
+      requestId: "req-runtime-profile",
+      profile: {
+        name: "Codex work",
+        provider: "codex",
+        featureDefaults: {
+          plan_mode: false,
+        },
+        featureValues: {
+          fast_mode: true,
+        },
+        workspaceDefaults: {
+          cwd: "/repo/app",
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("create_runtime_profile_request");
+    if (parsed.type !== "create_runtime_profile_request") {
+      throw new Error("Expected create_runtime_profile_request");
+    }
+    expect(parsed.profile).toEqual({
+      name: "Codex work",
+      provider: "codex",
+      featureValues: {
+        plan_mode: false,
+        fast_mode: true,
+      },
     });
   });
 });

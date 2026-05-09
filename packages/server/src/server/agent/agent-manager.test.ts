@@ -340,7 +340,7 @@ const logger = createTestLogger();
 const TEST_RUNTIME_PROFILE_NOW = "2026-05-08T09:00:00.000Z";
 
 function createRuntimeProfileForTest(
-  workdir: string,
+  _workdir: string,
   patch: Partial<RuntimeProfile> = {},
 ): RuntimeProfile {
   return {
@@ -349,7 +349,6 @@ function createRuntimeProfileForTest(
     name: "Codex runtime profile",
     provider: "codex",
     model: "gpt-5.4",
-    workspaceDefaults: { cwd: workdir },
     concurrencyPolicy: "warn",
     createdAt: TEST_RUNTIME_PROFILE_NOW,
     updatedAt: TEST_RUNTIME_PROFILE_NOW,
