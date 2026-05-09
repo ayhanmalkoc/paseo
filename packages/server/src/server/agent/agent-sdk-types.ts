@@ -84,6 +84,146 @@ export interface ProviderSnapshotEntry {
   defaultModeId?: string | null;
 }
 
+export type ProviderAuthStatus = "ready" | "needs-login" | "invalid" | "refreshing";
+export type ProviderAuthMode = "chatgpt" | "api-key" | "oauth" | "external" | "unknown";
+
+export interface ProviderAuthUsageSnapshot {
+  source: "local-rollout" | "provider-api";
+  primaryUsedPercent?: number;
+  secondaryUsedPercent?: number;
+  creditsRemaining?: number;
+  refreshedAt: string;
+}
+
+export interface ProviderAuthProfile {
+  provider: AgentProvider;
+  key: string;
+  alias: string;
+  email?: string;
+  accountName?: string;
+  accountId?: string;
+  userId?: string;
+  authMode: ProviderAuthMode;
+  plan?: string;
+  status: ProviderAuthStatus;
+  isDefault?: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string;
+  usage?: ProviderAuthUsageSnapshot;
+}
+
+export type ProviderAccount = ProviderAuthProfile;
+
+export type AccountLoginMethod = "chatgpt-device-code" | "chatgpt-browser" | "api-key";
+
+export type AccountLoginStatus =
+  | "starting"
+  | "pending-user"
+  | "importing"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "expired";
+
+export interface AccountLoginSession {
+  id: string;
+  provider: AgentProvider;
+  method: AccountLoginMethod;
+  status: AccountLoginStatus;
+  verificationUrl?: string;
+  userCode?: string;
+  account?: ProviderAccount;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt?: string;
+}
+
+export type RuntimeProfileConcurrencyPolicy = "allow" | "warn" | "single-active";
+
+export interface RuntimeProfile {
+  id: string;
+  version: number;
+  name: string;
+  provider: AgentProvider;
+  accountKey?: string | null;
+  model?: string | null;
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
+  instructionOverlay?: string | null;
+  systemPrompt?: string | null;
+  featureValues?: Record<string, unknown>;
+  envOverlay?: Record<string, string>;
+  mcpServers?: Record<string, McpServerConfig>;
+  concurrencyPolicy: RuntimeProfileConcurrencyPolicy;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type RuntimeProfilePatch = Partial<
+  Pick<
+    RuntimeProfile,
+    | "name"
+    | "provider"
+    | "accountKey"
+    | "model"
+    | "modeId"
+    | "thinkingOptionId"
+    | "instructionOverlay"
+    | "systemPrompt"
+    | "featureValues"
+    | "envOverlay"
+    | "mcpServers"
+    | "concurrencyPolicy"
+  >
+>;
+
+export type RuntimeProfileLaunchOverrides = Partial<
+  Pick<
+    RuntimeProfile,
+    | "accountKey"
+    | "model"
+    | "modeId"
+    | "thinkingOptionId"
+    | "instructionOverlay"
+    | "systemPrompt"
+    | "featureValues"
+    | "envOverlay"
+    | "mcpServers"
+  >
+>;
+
+export interface AgentProfileSnapshot {
+  sourceProfileId?: string;
+  sourceProfileVersion?: number;
+  sourceProfileName?: string;
+  provider: AgentProvider;
+  accountKey?: string | null;
+  model?: string | null;
+  modeId?: string | null;
+  thinkingOptionId?: string | null;
+  instructionOverlay?: string | null;
+  systemPrompt?: string | null;
+  featureValues?: Record<string, unknown>;
+  envOverlay?: Record<string, string>;
+  concurrencyPolicy?: RuntimeProfileConcurrencyPolicy;
+  resolvedAt: string;
+}
+
+export interface RuntimeLaunchWarning {
+  code:
+    | "account-in-use"
+    | "runtime-profile-in-use"
+    | "missing-account"
+    | "invalid-account"
+    | "provider-unavailable";
+  message: string;
+  accountKey?: string | null;
+  runtimeProfileId?: string | null;
+  agentIds?: string[];
+}
+
 export interface AgentFeatureToggle {
   type: "toggle";
   id: string;
@@ -457,6 +597,10 @@ export interface AgentSessionConfig {
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
+  authProfileKey?: string | null;
+  runtimeProfileId?: string | null;
+  profileOverrides?: RuntimeProfileLaunchOverrides;
+  profileSnapshot?: AgentProfileSnapshot;
   featureValues?: Record<string, unknown>;
   title?: string | null;
   approvalPolicy?: string;

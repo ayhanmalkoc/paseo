@@ -15,7 +15,6 @@ import type {
   AgentClient,
   AgentCreateSessionOptions,
   AgentFeature,
-  AgentLaunchContext,
   AgentSlashCommand,
   AgentMode,
   AgentPermissionRequest,
@@ -33,6 +32,7 @@ import type {
   AgentTimelineItem,
   AgentUsage,
   AgentRuntimeInfo,
+  RuntimeLaunchWarning,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
@@ -54,6 +54,9 @@ import {
 import { ForegroundRunState, type ForegroundTurnWaiter } from "./foreground-run-state.js";
 import { getAgentProviderDefinition } from "./provider-manifest.js";
 import { IMPORTABLE_PROVIDERS } from "./provider-registry.js";
+import type { ProviderAuthService } from "./provider-auth-service.js";
+import type { RuntimeProfileService } from "./runtime-profile-service.js";
+import { LaunchResolver, type ResolvedAgentLaunch } from "./launch-resolver.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -104,6 +107,14 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   return config;
 }
 
+function normalizeAuthProfileKey(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
 export type {
   AgentTimelineCursor,
@@ -113,6 +124,13 @@ export type {
   AgentTimelineRow,
   AgentTimelineWindow,
 } from "./agent-timeline-store-types.js";
+
+export class RuntimeLaunchWarningsConfirmationError extends Error {
+  constructor(readonly warnings: RuntimeLaunchWarning[]) {
+    super(warnings[0]?.message ?? "Runtime launch requires confirmation");
+    this.name = "RuntimeLaunchWarningsConfirmationError";
+  }
+}
 
 export type AgentManagerEvent =
   | { type: "agent_state"; agent: ManagedAgent }
@@ -156,6 +174,15 @@ interface AgentManagerRescueTimeouts {
   interruptSessionMs?: number;
 }
 
+interface ReloadAgentSessionOptions {
+  forceCreateSession?: boolean;
+  rehydrateFromDisk?: boolean;
+  resolveDefaultAuthProfile?: boolean;
+  runtimeProfileId?: string | null;
+  profileOverrides?: AgentSessionConfig["profileOverrides"];
+  acceptRuntimeWarnings?: boolean;
+}
+
 interface ProviderEnabledFlag {
   enabled: boolean;
   derivedFromProviderId?: string | null;
@@ -172,6 +199,8 @@ export interface AgentManagerOptions {
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
+  providerAuthService?: ProviderAuthService;
+  runtimeProfileService?: RuntimeProfileService;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
@@ -462,6 +491,8 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
+  private readonly providerAuthService: ProviderAuthService | null;
+  private readonly launchResolver: LaunchResolver;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
@@ -472,6 +503,11 @@ export class AgentManager {
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
+    this.providerAuthService = options?.providerAuthService ?? null;
+    this.launchResolver = new LaunchResolver({
+      providerAuthService: this.providerAuthService,
+      runtimeProfileService: options.runtimeProfileService,
+    });
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -861,24 +897,32 @@ export class AgentManager {
       initialPrompt?: string;
       persistSession?: boolean;
       mcpServerHeaders?: Record<string, string>;
+      acceptRuntimeWarnings?: boolean;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     const injectedConfig = this.buildInjectedMcpConfig(config, resolvedAgentId);
     this.requireEnabledProvider(injectedConfig.provider);
     const normalizedConfig = await this.normalizeConfig(injectedConfig);
+    const resolvedLaunch = await this.resolveAgentLaunch(resolvedAgentId, normalizedConfig, {
+      resolveDefaultAuthProfile: true,
+    });
+    this.requireRuntimeWarningConfirmation(resolvedLaunch, options?.acceptRuntimeWarnings === true);
     const launchConfig = this.withInjectedMcpHeaders(
-      normalizedConfig,
+      resolvedLaunch.config,
       resolvedAgentId,
       options?.mcpServerHeaders,
     );
-    const launchContext = this.buildLaunchContext(resolvedAgentId);
     const client = await this.requireAvailableClient({
-      provider: normalizedConfig.provider,
+      provider: launchConfig.provider,
     });
     const createOptions = this.buildCreateSessionOptions(options);
-    const session = await client.createSession(launchConfig, launchContext, createOptions);
-    return this.registerSession(session, normalizedConfig, resolvedAgentId, {
+    const session = await client.createSession(
+      launchConfig,
+      resolvedLaunch.launchContext,
+      createOptions,
+    );
+    return this.registerSession(session, resolvedLaunch.config, resolvedAgentId, {
       labels: options?.labels,
       workspaceId: options?.workspaceId,
     });
@@ -929,7 +973,9 @@ export class AgentManager {
       hasResumeOverrides = true;
     }
 
-    const launchContext = this.buildLaunchContext(resolvedAgentId);
+    const resolvedLaunch = await this.resolveAgentLaunch(resolvedAgentId, normalizedConfig, {
+      resolveDefaultAuthProfile: false,
+    });
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
     if (!available) {
@@ -940,9 +986,9 @@ export class AgentManager {
     const session = await client.resumeSession(
       handle,
       hasResumeOverrides ? resumeOverrides : undefined,
-      launchContext,
+      resolvedLaunch.launchContext,
     );
-    return this.registerSession(session, normalizedConfig, resolvedAgentId, options);
+    return this.registerSession(session, resolvedLaunch.config, resolvedAgentId, options);
   }
 
   // Hot-reload an active agent session with config overrides. By default the
@@ -954,7 +1000,7 @@ export class AgentManager {
   async reloadAgentSession(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options?: ReloadAgentSessionOptions,
   ): Promise<ManagedAgent> {
     let existing = this.requireSessionAgent(agentId);
     if (this.hasInFlightRun(agentId)) {
@@ -973,13 +1019,24 @@ export class AgentManager {
       ...existing.config,
       ...overrides,
       provider,
+      ...(options?.runtimeProfileId !== undefined
+        ? { runtimeProfileId: options.runtimeProfileId }
+        : {}),
+      ...(options?.profileOverrides !== undefined
+        ? { profileOverrides: options.profileOverrides }
+        : {}),
     } as AgentSessionConfig;
     const normalizedConfig = await this.normalizeConfig(refreshConfig);
-    const launchContext = this.buildLaunchContext(agentId);
+    const resolvedLaunch = await this.resolveAgentLaunch(agentId, normalizedConfig, {
+      resolveDefaultAuthProfile: options?.resolveDefaultAuthProfile === true,
+      excludeAgentId: agentId,
+    });
+    this.requireRuntimeWarningConfirmation(resolvedLaunch, options?.acceptRuntimeWarnings === true);
 
-    const session = handle
-      ? await client.resumeSession(handle, normalizedConfig, launchContext)
-      : await client.createSession(normalizedConfig, launchContext);
+    const session =
+      handle && options?.forceCreateSession !== true
+        ? await client.resumeSession(handle, resolvedLaunch.config, resolvedLaunch.launchContext)
+        : await client.createSession(resolvedLaunch.config, resolvedLaunch.launchContext);
 
     this.agentStreamCoalescer.flushAndDiscard(agentId);
     // Remove the existing agent entry before swapping sessions
@@ -1000,7 +1057,7 @@ export class AgentManager {
     }
 
     // Preserve existing labels and timeline during reload.
-    return this.registerSession(session, normalizedConfig, agentId, {
+    return this.registerSession(session, resolvedLaunch.config, agentId, {
       labels: existing.labels,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
@@ -1252,6 +1309,85 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+  }
+
+  async restartAgentWithAuthProfile(
+    agentId: string,
+    authProfileKey: string | null,
+  ): Promise<ManagedAgent> {
+    const agent = this.requireSessionAgent(agentId);
+    const providerAuthService = this.providerAuthService;
+    if (!providerAuthService) {
+      throw new Error("Provider auth profiles are not available");
+    }
+    if (!providerAuthService.supportsProvider(agent.provider)) {
+      throw new Error(`Provider '${agent.provider}' does not support auth profiles`);
+    }
+
+    const requestedProfileKey = normalizeAuthProfileKey(authProfileKey);
+    const requestedConfig = {
+      ...agent.config,
+      authProfileKey: requestedProfileKey ?? undefined,
+    } as AgentSessionConfig;
+    const normalizedConfig = await this.normalizeConfig(requestedConfig);
+    const authLaunch = await this.resolveProviderAuthLaunchContext(normalizedConfig, {
+      resolveDefault: true,
+    });
+    if (!authLaunch.profileKey) {
+      throw new Error(`No ready auth profile is available for provider '${agent.provider}'`);
+    }
+
+    const currentProfileKey = normalizeAuthProfileKey(agent.config.authProfileKey);
+    if (authLaunch.profileKey === currentProfileKey) {
+      return agent;
+    }
+
+    return this.reloadAgentSession(
+      agentId,
+      { authProfileKey: authLaunch.profileKey },
+      { forceCreateSession: true },
+    );
+  }
+
+  async restartAgentWithRuntimeProfile(
+    agentId: string,
+    runtimeProfileId: string | null,
+    profileOverrides?: AgentSessionConfig["profileOverrides"],
+    options?: { acceptRuntimeWarnings?: boolean },
+  ): Promise<ManagedAgent> {
+    this.requireSessionAgent(agentId);
+    const requestedProfileId = normalizeAuthProfileKey(runtimeProfileId);
+    if (!requestedProfileId) {
+      return this.reloadAgentSession(
+        agentId,
+        {
+          runtimeProfileId: null,
+          profileOverrides: undefined,
+          profileSnapshot: undefined,
+        },
+        {
+          forceCreateSession: true,
+          resolveDefaultAuthProfile: true,
+          runtimeProfileId: null,
+          profileOverrides: undefined,
+          acceptRuntimeWarnings: options?.acceptRuntimeWarnings,
+        },
+      );
+    }
+    return this.reloadAgentSession(
+      agentId,
+      {
+        runtimeProfileId: requestedProfileId,
+        profileOverrides,
+      },
+      {
+        forceCreateSession: true,
+        resolveDefaultAuthProfile: true,
+        runtimeProfileId: requestedProfileId,
+        profileOverrides,
+        acceptRuntimeWarnings: options?.acceptRuntimeWarnings,
+      },
+    );
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
@@ -3303,12 +3439,62 @@ export class AgentManager {
     return normalized;
   }
 
-  private buildLaunchContext(agentId: string): AgentLaunchContext {
-    return {
-      env: {
-        PASEO_AGENT_ID: agentId,
-      },
-    };
+  private async resolveAgentLaunch(
+    agentId: string,
+    normalizedConfig: AgentSessionConfig,
+    options: {
+      resolveDefaultAuthProfile: boolean;
+      excludeAgentId?: string;
+    },
+  ): Promise<ResolvedAgentLaunch> {
+    return this.launchResolver.resolve({
+      agentId,
+      config: normalizedConfig,
+      normalizedConfig,
+      resolveDefaultAuthProfile: options.resolveDefaultAuthProfile,
+      activeAgents: this.buildAccountLeaseSnapshots(),
+      excludeAgentId: options.excludeAgentId,
+    });
+  }
+
+  private requireRuntimeWarningConfirmation(
+    resolvedLaunch: ResolvedAgentLaunch,
+    accepted: boolean,
+  ): void {
+    if (accepted || resolvedLaunch.warnings.length === 0) {
+      return;
+    }
+    throw new RuntimeLaunchWarningsConfirmationError(resolvedLaunch.warnings);
+  }
+
+  private buildAccountLeaseSnapshots(): Array<{
+    agentId: string;
+    profileSnapshot?: AgentSessionConfig["profileSnapshot"];
+  }> {
+    return Array.from(this.agents.values()).map((agent) => ({
+      agentId: agent.id,
+      profileSnapshot: agent.config.profileSnapshot,
+    }));
+  }
+
+  private async resolveProviderAuthLaunchContext(
+    config: AgentSessionConfig,
+    options: { resolveDefault: boolean },
+  ): Promise<{ profileKey: string | null; env?: Record<string, string> }> {
+    if (!this.providerAuthService) {
+      return { profileKey: null };
+    }
+    const requestedProfileKey = normalizeAuthProfileKey(config.authProfileKey);
+    if (!requestedProfileKey && !options.resolveDefault) {
+      return { profileKey: null };
+    }
+    if (options.resolveDefault) {
+      await this.providerAuthService.syncCurrentProfile(config.provider);
+    }
+    return this.providerAuthService.resolveLaunchContext({
+      provider: config.provider,
+      authProfileKey: requestedProfileKey,
+    });
   }
 
   private async requireAvailableClient(options: { provider: AgentProvider }): Promise<AgentClient> {

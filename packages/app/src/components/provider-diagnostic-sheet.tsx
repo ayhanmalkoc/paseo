@@ -2,6 +2,7 @@ import { AlertCircle, RotateCw, Search, Trash2 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   type PressableStateCallbackType,
   ScrollView,
@@ -15,13 +16,19 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { isWeb } from "@/constants/platform";
 import { Fonts } from "@/constants/theme";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useAccountLogin } from "@/hooks/use-account-login";
+import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
 import { formatTimeAgo } from "@/utils/time";
-import type { AgentModelDefinition, AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type {
+  AgentModelDefinition,
+  AgentProvider,
+  ProviderAuthProfile,
+} from "@server/server/agent/agent-sdk-types";
 import type { ProviderProfileModel } from "@server/server/agent/provider-launch-config";
 
 interface ProviderDiagnosticSheetProps {
@@ -198,6 +205,296 @@ function CustomModelsSection(props: {
   );
 }
 
+function formatAuthProfileSubtitle(profile: ProviderAuthProfile): string {
+  const parts = [
+    profile.email,
+    profile.plan,
+    profile.authMode === "api-key" ? "API key" : profile.authMode,
+    profile.status !== "ready" ? profile.status : null,
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function AuthProfileRow(props: {
+  profile: ProviderAuthProfile;
+  busy: boolean;
+  onRefresh: (profileKey: string) => void;
+  onSetDefault: (profileKey: string) => void;
+  onRemove: (profileKey: string) => void;
+}) {
+  const { profile, busy, onRefresh, onSetDefault, onRemove } = props;
+  const handleRefresh = useCallback(() => onRefresh(profile.key), [onRefresh, profile.key]);
+  const handleSetDefault = useCallback(
+    () => onSetDefault(profile.key),
+    [onSetDefault, profile.key],
+  );
+  const handleRemove = useCallback(() => onRemove(profile.key), [onRemove, profile.key]);
+  const title = profile.alias || profile.email || "Account";
+  const subtitle = formatAuthProfileSubtitle(profile);
+
+  return (
+    <View style={MODEL_ROW_STYLE}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        {subtitle ? (
+          <Text style={sheetStyles.monoHint} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+      <View style={sheetStyles.profileActions}>
+        {!profile.isDefault ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            onPress={handleSetDefault}
+            disabled={busy}
+            accessibilityLabel={`Use ${title} by default`}
+          >
+            Default
+          </Button>
+        ) : (
+          <Text style={sheetStyles.defaultBadge}>Default</Text>
+        )}
+        <Button
+          variant="ghost"
+          size="xs"
+          onPress={handleRefresh}
+          disabled={busy}
+          accessibilityLabel={`Refresh ${title}`}
+        >
+          Refresh
+        </Button>
+        <Button
+          variant="ghost"
+          size="xs"
+          onPress={handleRemove}
+          disabled={busy}
+          accessibilityLabel={`Remove ${title}`}
+        >
+          Remove
+        </Button>
+      </View>
+    </View>
+  );
+}
+
+function ProviderAuthProfilesSection(props: { provider: string; serverId: string }) {
+  const { provider, serverId } = props;
+  const {
+    profiles = [],
+    isLoading,
+    isRefreshing,
+    isSupported,
+    importCurrent,
+    refreshProfile,
+    setDefault,
+    remove,
+  } = useProviderAuthProfiles(serverId, provider as AgentProvider);
+  const [error, setError] = useState<string | null>(null);
+  const [loginSessionId, setLoginSessionId] = useState<string | null>(null);
+  const accountLogin = useAccountLogin(serverId, provider as AgentProvider);
+  const loginSession = useMemo(
+    () => accountLogin.sessions.find((session) => session.id === loginSessionId) ?? null,
+    [accountLogin.sessions, loginSessionId],
+  );
+
+  const runAuthAction = useCallback(async (action: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await action();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Account action failed");
+    }
+  }, []);
+
+  const handleImportCurrent = useCallback(() => {
+    void runAuthAction(() => importCurrent({ setDefault: true }));
+  }, [importCurrent, runAuthAction]);
+  const handleAddAccount = useCallback(() => {
+    void runAuthAction(async () => {
+      const session = await accountLogin.start({
+        method: "chatgpt-device-code",
+        setDefault: profiles.length === 0,
+      });
+      setLoginSessionId(session.id);
+    });
+  }, [accountLogin, profiles.length, runAuthAction]);
+  const handleCloseLogin = useCallback(() => {
+    if (loginSession && ["starting", "pending-user", "importing"].includes(loginSession.status)) {
+      void accountLogin.cancel(loginSession.id).catch(() => undefined);
+    }
+    setLoginSessionId(null);
+  }, [accountLogin, loginSession]);
+  const handleRefresh = useCallback(
+    (profileKey: string) => {
+      void runAuthAction(() => refreshProfile(profileKey));
+    },
+    [refreshProfile, runAuthAction],
+  );
+  const handleSetDefault = useCallback(
+    (profileKey: string) => {
+      void runAuthAction(() => setDefault(profileKey));
+    },
+    [runAuthAction, setDefault],
+  );
+  const handleRemove = useCallback(
+    (profileKey: string) => {
+      void runAuthAction(() => remove(profileKey));
+    },
+    [remove, runAuthAction],
+  );
+  const importCurrentAction = useMemo(
+    () => (
+      <View style={sheetStyles.trailingActions}>
+        {accountLogin.methods.includes("chatgpt-device-code") ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            onPress={handleAddAccount}
+            disabled={isRefreshing || accountLogin.isRefreshing}
+            accessibilityLabel="Add provider account"
+          >
+            Add account
+          </Button>
+        ) : null}
+        <Button
+          variant="ghost"
+          size="xs"
+          onPress={handleImportCurrent}
+          disabled={isRefreshing}
+          loading={isRefreshing && profiles.length === 0}
+          accessibilityLabel="Import current provider account"
+        >
+          Import current
+        </Button>
+      </View>
+    ),
+    [
+      accountLogin.isRefreshing,
+      accountLogin.methods,
+      handleAddAccount,
+      handleImportCurrent,
+      isRefreshing,
+      profiles.length,
+    ],
+  );
+
+  if (!isSupported) {
+    return null;
+  }
+
+  return (
+    <>
+      <SettingsSection title="Accounts" trailing={importCurrentAction}>
+        <View style={settingsStyles.card}>
+          {isLoading && profiles.length === 0 ? (
+            <View style={sheetStyles.emptyRow}>
+              <ActivityIndicator size="small" />
+              <Text style={sheetStyles.mutedText}>Loading accounts…</Text>
+            </View>
+          ) : null}
+          {!isLoading && profiles.length === 0 ? (
+            <View style={sheetStyles.emptyRow}>
+              <Text style={sheetStyles.mutedText}>No accounts imported</Text>
+            </View>
+          ) : null}
+          {profiles.map((profile) => (
+            <AuthProfileRow
+              key={profile.key}
+              profile={profile}
+              busy={isRefreshing}
+              onRefresh={handleRefresh}
+              onSetDefault={handleSetDefault}
+              onRemove={handleRemove}
+            />
+          ))}
+        </View>
+        {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
+      </SettingsSection>
+      <AccountLoginSheet
+        session={loginSession}
+        visible={!!loginSession}
+        onClose={handleCloseLogin}
+      />
+    </>
+  );
+}
+
+function AccountLoginSheet(props: {
+  session: ReturnType<typeof useAccountLogin>["sessions"][number] | null;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { session, visible, onClose } = props;
+  const openVerificationUrl = useCallback(() => {
+    if (session?.verificationUrl) {
+      void Linking.openURL(session.verificationUrl);
+    }
+  }, [session?.verificationUrl]);
+
+  return (
+    <AdaptiveModalSheet
+      title="Add Codex account"
+      visible={visible}
+      onClose={onClose}
+      snapPoints={ACCOUNT_LOGIN_SNAP_POINTS}
+    >
+      <View style={sheetStyles.loginSheetContent}>
+        {!session || session.status === "starting" ? (
+          <View style={sheetStyles.emptyRow}>
+            <ActivityIndicator size="small" />
+            <Text style={sheetStyles.mutedText}>Starting login…</Text>
+          </View>
+        ) : null}
+        {session?.status === "pending-user" ? (
+          <>
+            <Text style={settingsStyles.rowTitle}>Device code</Text>
+            <Text style={sheetStyles.deviceCode} selectable>
+              {session.userCode}
+            </Text>
+            {session.verificationUrl ? (
+              <Button variant="default" onPress={openVerificationUrl}>
+                Open login page
+              </Button>
+            ) : null}
+            <Text style={sheetStyles.monoHint} selectable>
+              {session.verificationUrl}
+            </Text>
+          </>
+        ) : null}
+        {session?.status === "importing" ? (
+          <View style={sheetStyles.emptyRow}>
+            <ActivityIndicator size="small" />
+            <Text style={sheetStyles.mutedText}>Importing account…</Text>
+          </View>
+        ) : null}
+        {session?.status === "completed" ? (
+          <>
+            <Text style={settingsStyles.rowTitle}>Account added</Text>
+            <Text style={sheetStyles.mutedText}>
+              {session.account?.alias || session.account?.email || "Codex account"}
+            </Text>
+            <Button variant="default" onPress={onClose}>
+              Done
+            </Button>
+          </>
+        ) : null}
+        {session?.status === "failed" ? (
+          <>
+            <Text style={sheetStyles.errorText}>{session.error ?? "Account login failed"}</Text>
+            <Button variant="default" onPress={onClose}>
+              Close
+            </Button>
+          </>
+        ) : null}
+      </View>
+    </AdaptiveModalSheet>
+  );
+}
+
 function DiagnosticCodeBlock(props: {
   loading: boolean;
   diagnostic: string | null;
@@ -251,7 +548,7 @@ export function ProviderDiagnosticSheet({
     () => snapshotEntries?.find((entry) => entry.provider === provider),
     [snapshotEntries, provider],
   );
-  const models = providerEntry?.models ?? [];
+  const models = providerEntry?.models ?? EMPTY_PROVIDER_MODELS;
   const providerSnapshotRefreshing = providerEntry?.status === "loading";
   const providerErrorMessage =
     providerEntry?.status === "error" ? (providerEntry.error ?? "Unknown error") : null;
@@ -425,6 +722,8 @@ export function ProviderDiagnosticSheet({
 
       <CustomModelsSection provider={provider} serverId={serverId} refresh={refresh} />
 
+      <ProviderAuthProfilesSection provider={provider} serverId={serverId} />
+
       <View>
         <View style={sheetStyles.modelsHeader}>
           <Text style={settingsStyles.sectionHeaderTitle}>Models</Text>
@@ -533,6 +832,33 @@ const sheetStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
   },
+  trailingActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  profileActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: theme.spacing[1],
+    flexShrink: 0,
+  },
+  defaultBadge: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    paddingHorizontal: theme.spacing[2],
+  },
+  loginSheetContent: {
+    gap: theme.spacing[4],
+  },
+  deviceCode: {
+    fontFamily: Fonts.mono,
+    fontSize: theme.fontSize.xl,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.colors.foreground,
+    letterSpacing: 0,
+  },
   modelsScroll: {
     maxHeight: 360,
   },
@@ -552,6 +878,8 @@ const sheetStyles = StyleSheet.create((theme) => ({
 }));
 
 const DIAGNOSTIC_SHEET_SNAP_POINTS = ["50%", "85%"];
+const ACCOUNT_LOGIN_SNAP_POINTS = ["45%", "70%"];
+const EMPTY_PROVIDER_MODELS: AgentModelDefinition[] = [];
 const DIAGNOSTIC_SEARCH_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
 const DIAGNOSTIC_INLINE_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
 const MODEL_ROW_STYLE = [settingsStyles.row, settingsStyles.rowBorder];

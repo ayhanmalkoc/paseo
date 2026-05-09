@@ -57,6 +57,7 @@ import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
+import { CodexAppServerJsonRpcClient } from "./codex-app-server-json-rpc.js";
 import {
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
@@ -84,10 +85,54 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
-const TURN_START_TIMEOUT_MS = 90 * 1000;
-const INTERRUPT_TIMEOUT_MS = 2_000;
 const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
+
+interface JsonRpcRequest {
+  id: number;
+  method: string;
+  params?: unknown;
+}
+
+interface JsonRpcResponse {
+  id: number;
+  result?: unknown;
+  error?: { code?: number; message: string };
+}
+
+interface JsonRpcNotification {
+  method: string;
+  params?: unknown;
+}
+
+interface PendingRequest {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+type RequestHandler = (params: unknown) => unknown;
+
+type NotificationHandler = (method: string, params: unknown) => void;
+
+function isJsonRpcResponse(value: unknown): value is JsonRpcResponse {
+  if (!isRecord(value)) return false;
+  if (typeof value.id !== "number") return false;
+  return Object.prototype.hasOwnProperty.call(value, "result") || isRecord(value.error);
+}
+
+function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "number" && typeof value.method === "string";
+}
+
+function isJsonRpcNotification(value: unknown): value is JsonRpcNotification {
+  if (!isRecord(value)) return false;
+  return typeof value.method === "string" && !Object.prototype.hasOwnProperty.call(value, "id");
+}
+
+const TURN_START_TIMEOUT_MS = 90 * 1000;
+const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_IMAGE_ATTACHMENT_DIR = "paseo-attachments";
 const ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN = "\n\n---\n\n";
@@ -627,52 +672,9 @@ function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
     }
   }
 }
-interface JsonRpcRequest {
-  id: number;
-  method: string;
-  params?: unknown;
-}
-
-interface JsonRpcResponse {
-  id: number;
-  result?: unknown;
-  error?: { code?: number; message: string };
-}
-
-interface JsonRpcNotification {
-  method: string;
-  params?: unknown;
-}
-
-function isJsonRpcResponse(msg: unknown): msg is JsonRpcResponse {
-  if (!isRecord(msg)) return false;
-  if (typeof msg.id !== "number") return false;
-  return msg.result !== undefined || !!msg.error;
-}
-
-function isJsonRpcRequest(msg: unknown): msg is JsonRpcRequest {
-  if (!isRecord(msg)) return false;
-  return typeof msg.id === "number" && typeof msg.method === "string";
-}
-
-function isJsonRpcNotification(msg: unknown): msg is JsonRpcNotification {
-  if (!isRecord(msg)) return false;
-  return typeof msg.method === "string" && typeof msg.id !== "number";
-}
-
 function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
-
-interface PendingRequest {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
-type RequestHandler = (params: unknown) => unknown;
-
-type NotificationHandler = (method: string, params: unknown) => void;
 
 // Codex app-server API response types
 interface CodexReasoningEffortEntry {
@@ -2592,7 +2594,7 @@ async function writeImageAttachment(mimeType: string, data: string): Promise<str
 }
 
 async function readCodexConfiguredDefaults(
-  client: CodexAppServerClient,
+  client: CodexAppServerJsonRpcClient,
   logger: Logger,
 ): Promise<CodexConfiguredDefaults> {
   let savedConfigDefaults: CodexConfiguredDefaults = {};
@@ -2752,7 +2754,7 @@ class CodexAppServerAgentSession implements AgentSession {
   private currentMode: string;
   private currentThreadId: string | null = null;
   private currentTurnId: string | null = null;
-  private client: CodexAppServerClient | null = null;
+  private client: CodexAppServerJsonRpcClient | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
@@ -2852,7 +2854,7 @@ class CodexAppServerAgentSession implements AgentSession {
   async connect(): Promise<void> {
     if (this.connected) return;
     const child = await this.spawnAppServer();
-    this.client = new CodexAppServerClient(child, this.logger);
+    this.client = new CodexAppServerJsonRpcClient(child, this.logger);
     this.client.setNotificationHandler((method, params) => this.handleNotification(method, params));
     this.registerRequestHandlers();
 
@@ -3557,6 +3559,10 @@ class CodexAppServerAgentSession implements AgentSession {
         modeId: this.currentMode,
         model: this.config.model ?? null,
         thinkingOptionId,
+        authProfileKey: this.config.authProfileKey ?? null,
+        runtimeProfileId: this.config.runtimeProfileId ?? null,
+        profileOverrides: this.config.profileOverrides,
+        profileSnapshot: this.config.profileSnapshot,
         extra: this.config.extra,
         systemPrompt: this.config.systemPrompt,
         mcpServers: this.config.mcpServers,
@@ -4916,7 +4922,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   async listModels(_options: ListModelsOptions): Promise<AgentModelDefinition[]> {
     // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
     const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger);
+    const client = new CodexAppServerJsonRpcClient(child, this.logger);
 
     try {
       await client.request("initialize", buildCodexAppServerInitializeParams());
@@ -5112,6 +5118,7 @@ function resolveSkillDescription(skill: Record<string, unknown>): string {
 export const __codexAppServerInternals = {
   buildCodexAppServerEnv,
   CodexAppServerClient,
+  CodexAppServerJsonRpcClient,
   codexModelSupportsFastMode,
   CodexAppServerAgentSession,
   formatCodexQuestionPrompts,

@@ -5,7 +5,7 @@ import type { Logger } from "pino";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 
-import type { AgentProvider } from "./agent-sdk-types.js";
+import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 import type { AgentManager, WaitForAgentResult } from "./agent-manager.js";
 import {
   AgentPermissionRequestPayloadSchema,
@@ -375,10 +375,37 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return expandUserPath(trimmedCwd);
   };
 
+  const buildCallerAgentProfileInheritance = (
+    callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
+    targetProvider: AgentProvider,
+  ): Partial<AgentSessionConfig> => {
+    if (callerAgent.provider !== targetProvider) {
+      return {};
+    }
+    if (callerAgent.config.runtimeProfileId) {
+      return {
+        runtimeProfileId: callerAgent.config.runtimeProfileId,
+        ...(callerAgent.config.profileOverrides
+          ? { profileOverrides: callerAgent.config.profileOverrides }
+          : {}),
+      };
+    }
+    return {
+      ...(callerAgent.config.authProfileKey
+        ? { authProfileKey: callerAgent.config.authProfileKey }
+        : {}),
+      ...(callerAgent.config.featureValues
+        ? { featureValues: callerAgent.config.featureValues }
+        : {}),
+    };
+  };
+
   const buildCallerAgentScheduleConfigExtras = (
     callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
+    targetProvider: AgentProvider,
   ): Record<string, unknown> => {
     return {
+      ...buildCallerAgentProfileInheritance(callerAgent, targetProvider),
       ...(callerAgent.config.thinkingOptionId
         ? { thinkingOptionId: callerAgent.config.thinkingOptionId }
         : {}),
@@ -430,7 +457,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           }
         : {}),
       ...(resolvedModel ? { model: resolvedModel } : {}),
-      ...buildCallerAgentScheduleConfigExtras(callerAgent),
+      ...buildCallerAgentScheduleConfigExtras(callerAgent, resolvedProvider),
     };
   };
 
@@ -631,6 +658,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     normalizedTitle: string | null;
     model: string | undefined;
     thinking: string | undefined;
+    authProfileKey: string | null | undefined;
+    runtimeProfileId: string | null | undefined;
+    profileOverrides: AgentSessionConfig["profileOverrides"];
+    featureValues: AgentSessionConfig["featureValues"];
     labels: Record<string, string> | undefined;
     notifyOnFinish: boolean;
     resolvedCwd: string;
@@ -693,6 +724,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       availableModes: getAvailableModeIds(provider),
       targetUnattendedMode: getUnattendedModeId(provider),
     });
+    const inheritedProfileConfig = buildCallerAgentProfileInheritance(parentAgent, provider);
     return {
       provider,
       initialPrompt: callerArgs.initialPrompt,
@@ -700,6 +732,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       normalizedTitle: callerArgs.title.trim(),
       model: resolvedProviderModel.model,
       thinking: callerArgs.thinking,
+      authProfileKey: inheritedProfileConfig.authProfileKey,
+      runtimeProfileId: inheritedProfileConfig.runtimeProfileId,
+      profileOverrides: inheritedProfileConfig.profileOverrides,
+      featureValues: inheritedProfileConfig.featureValues,
       labels: callerArgs.labels,
       notifyOnFinish: callerArgs.notifyOnFinish ?? false,
       resolvedCwd,
@@ -773,6 +809,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       normalizedTitle: topLevelArgs.title.trim(),
       model: resolvedProviderModel.model,
       thinking: topLevelArgs.thinking,
+      authProfileKey: undefined,
+      runtimeProfileId: undefined,
+      profileOverrides: undefined,
+      featureValues: undefined,
       labels: topLevelArgs.labels,
       notifyOnFinish: topLevelArgs.notifyOnFinish ?? false,
       resolvedCwd,
@@ -816,6 +856,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         normalizedTitle,
         model,
         thinking,
+        authProfileKey,
+        runtimeProfileId,
+        profileOverrides,
+        featureValues,
         labels,
         notifyOnFinish,
         resolvedCwd,
@@ -837,6 +881,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           title: normalizedTitle ?? undefined,
           model,
           thinkingOptionId: thinking,
+          authProfileKey,
+          runtimeProfileId,
+          profileOverrides,
+          featureValues,
         },
         undefined,
         {

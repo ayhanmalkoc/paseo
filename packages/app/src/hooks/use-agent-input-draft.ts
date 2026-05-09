@@ -40,6 +40,8 @@ interface UseAgentInputDraftInput {
 type DraftComposerState = UseAgentFormStateResult & {
   workingDir: string;
   effectiveModelId: string;
+  effectiveAuthProfileKey: string;
+  effectiveRuntimeProfileId: string;
   effectiveThinkingOptionId: string;
   featureValues: Record<string, unknown> | undefined;
   statusControls: DraftAgentStatusBarProps;
@@ -216,6 +218,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       }),
     [effectiveModelId, formState.availableModels, formState.selectedThinkingOptionId],
   );
+  const effectiveAuthProfileKey = formState.selectedAuthProfileKey.trim();
+  const effectiveRuntimeProfileId = formState.selectedRuntimeProfileId.trim();
 
   const workingDir = lockedWorkingDir || formState.workingDir;
   const {
@@ -240,6 +244,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
             modeOptions: formState.modeOptions,
             selectedMode: formState.selectedMode,
             effectiveModelId,
+            authProfileKey: effectiveAuthProfileKey,
+            runtimeProfileId: effectiveRuntimeProfileId,
             effectiveThinkingOptionId,
             featureValues: draftFeatureValues,
           })
@@ -247,6 +253,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [
       composerOptions,
       effectiveModelId,
+      effectiveAuthProfileKey,
+      effectiveRuntimeProfileId,
       effectiveThinkingOptionId,
       draftFeatureValues,
       workingDir,
@@ -265,6 +273,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       ...formState,
       workingDir,
       effectiveModelId,
+      effectiveAuthProfileKey,
+      effectiveRuntimeProfileId,
       effectiveThinkingOptionId,
       featureValues: draftFeatureValues,
       statusControls: buildDraftStatusControls({
@@ -278,6 +288,8 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     commandDraftConfig,
     composerOptions,
     effectiveModelId,
+    effectiveAuthProfileKey,
+    effectiveRuntimeProfileId,
     effectiveThinkingOptionId,
     draftFeatures,
     draftFeatureValues,

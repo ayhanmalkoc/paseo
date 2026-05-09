@@ -20,6 +20,10 @@ import {
   type WorkspaceSetupSnapshot,
 } from "@/stores/workspace-setup-store";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import {
+  resolveWorkspaceSetupDisplayState,
+  type WorkspaceSetupStatusLookupState,
+} from "@/utils/workspace-setup-display";
 
 function useSetupPanelDescriptor(
   target: { kind: "setup"; workspaceId: string },
@@ -108,13 +112,6 @@ function resolveAutoExpandIndex(commands: { index: number; status: string }[]): 
   return null;
 }
 
-function resolveSetupStatusLabel(status: string | undefined): string {
-  if (status === "running") return "Running";
-  if (status === "completed") return "Completed";
-  if (status === "failed") return "Failed";
-  return "Waiting for setup output";
-}
-
 function resolveCommandLog(
   command: SetupCommand,
   autoExpandIndex: number | null,
@@ -160,33 +157,50 @@ function SetupPanel() {
   });
   const snapshot = useWorkspaceSetupStore((state) => (key ? (state.snapshots[key] ?? null) : null));
   const upsertProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
+  const [statusLookupState, setStatusLookupState] =
+    useState<WorkspaceSetupStatusLookupState>("idle");
 
   // On mount, if no snapshot in the store, request cached status from server
-  const requestedRef = useRef(false);
+  const requestedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (snapshot || requestedRef.current || !client) return;
-    requestedRef.current = true;
+    if (snapshot) {
+      setStatusLookupState("available");
+      return;
+    }
+    if (!key || !client || requestedRef.current === key) return;
+    requestedRef.current = key;
+    setStatusLookupState("loading");
+    let isCancelled = false;
     client
       .fetchWorkspaceSetupStatus(target.workspaceId)
       .then((response) => {
+        if (isCancelled || requestedRef.current !== key) {
+          return;
+        }
         if (response.snapshot) {
+          setStatusLookupState("available");
           upsertProgress({
             serverId,
             payload: { workspaceId: response.workspaceId, ...response.snapshot },
           });
+        } else {
+          setStatusLookupState("unavailable");
         }
         return;
       })
       .catch(() => {
-        // Server may not support this yet — ignore
+        if (!isCancelled && requestedRef.current === key) {
+          setStatusLookupState("unavailable");
+        }
       });
-  }, [client, snapshot, serverId, target.workspaceId, upsertProgress]);
+    return () => {
+      isCancelled = true;
+    };
+  }, [client, key, snapshot, serverId, target.workspaceId, upsertProgress]);
 
   const commands = snapshot?.detail.commands ?? EMPTY_COMMANDS;
   const log = snapshot?.detail.log ?? "";
-  const hasNoSetupCommands =
-    snapshot?.status === "completed" && commands.length === 0 && log.trim().length === 0;
-  const isWaiting = !snapshot || (snapshot.status === "running" && commands.length === 0);
+  const displayState = resolveWorkspaceSetupDisplayState(snapshot, statusLookupState);
 
   const [expandedIndices, setExpandedIndices] = useState<Set<number>>(new Set());
   const [manuallyCollapsed, setManuallyCollapsed] = useState<Set<number>>(new Set());
@@ -214,7 +228,6 @@ function SetupPanel() {
   }, []);
 
   const autoExpandIndex = resolveAutoExpandIndex(commands);
-  const statusLabel = resolveSetupStatusLabel(snapshot?.status);
 
   return (
     <ScrollView
@@ -224,16 +237,33 @@ function SetupPanel() {
     >
       {/* Hidden element for status — preserves testID for E2E */}
       <Text style={styles.hiddenStatus} testID="workspace-setup-status">
-        {statusLabel}
+        {displayState.statusLabel}
       </Text>
 
-      {isWaiting ? (
+      {displayState.isWaiting ? (
         <View style={styles.waitingContainer}>
           <ThemedActivityIndicator size="large" uniProps={foregroundMutedColorMapping} />
           <Text style={styles.waitingText}>Setting up workspace...</Text>
         </View>
       ) : null}
-      {!isWaiting && hasNoSetupCommands ? (
+      {displayState.isStatusUnavailable ? (
+        <View style={styles.emptyContainer} testID="workspace-setup-status-unavailable">
+          <ThemedCircleAlert size={28} uniProps={foregroundMutedColorMapping} />
+          <Text
+            style={styles.emptyText}
+            accessible
+            accessibilityLabel="Workspace setup status unavailable"
+          >
+            Setup status unavailable.
+          </Text>
+          <Text style={styles.unavailableText}>
+            The workspace exists, but setup output is no longer available.
+          </Text>
+        </View>
+      ) : null}
+      {!displayState.isWaiting &&
+      !displayState.isStatusUnavailable &&
+      displayState.hasNoSetupCommands ? (
         <View style={styles.emptyContainer}>
           <Text
             style={styles.emptyText}
@@ -244,7 +274,9 @@ function SetupPanel() {
           </Text>
         </View>
       ) : null}
-      {!isWaiting && !hasNoSetupCommands ? (
+      {!displayState.isWaiting &&
+      !displayState.isStatusUnavailable &&
+      !displayState.hasNoSetupCommands ? (
         <View style={styles.commandList}>
           {commands.map((command) => {
             const rowState = buildCommandRowState({
@@ -478,10 +510,20 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    gap: theme.spacing[2],
   },
   emptyText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
+    textAlign: "center",
+  },
+  unavailableText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 18,
+    marginTop: theme.spacing[2],
+    maxWidth: 420,
+    textAlign: "center",
   },
   commandList: {
     gap: theme.spacing[2],

@@ -19,10 +19,11 @@ import type { Agent } from "@/stores/session-store";
 import { useWorkspaceExecutionAuthority } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { encodeImages } from "@/utils/encode-images";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
-import type { DaemonClient } from "@server/client/daemon-client";
+import { isRuntimeLaunchWarningError, type DaemonClient } from "@server/client/daemon-client";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useWorkspaceAttachments,
@@ -46,6 +47,8 @@ interface AutoSubmitConfig {
   provider: string;
   modeId: string | null;
   model: string | null;
+  authProfileKey: string | null;
+  runtimeProfileId: string | null;
   thinkingOptionId: string | null;
   featureValues: Record<string, unknown>;
 }
@@ -55,6 +58,8 @@ function resolveAutoSubmitConfig(
     provider: string;
     modeId?: string | null;
     model?: string | null;
+    authProfileKey?: string | null;
+    runtimeProfileId?: string | null;
     thinkingOptionId?: string | null;
     featureValues?: Record<string, unknown>;
   } | null,
@@ -64,6 +69,8 @@ function resolveAutoSubmitConfig(
     provider: pending.provider,
     modeId: pending.modeId ?? null,
     model: pending.model ?? null,
+    authProfileKey: pending.authProfileKey ?? null,
+    runtimeProfileId: pending.runtimeProfileId ?? null,
     thinkingOptionId: pending.thinkingOptionId ?? null,
     featureValues: pending.featureValues ?? {},
   };
@@ -144,6 +151,51 @@ function resolveDraftModeId(input: {
   return null;
 }
 
+function requireDraftProvider(input: {
+  autoSubmitConfig: AutoSubmitConfig | null;
+  selectedProvider: string | null;
+}): string {
+  const provider = input.autoSubmitConfig?.provider ?? input.selectedProvider;
+  if (!provider) {
+    throw new Error("Select a model");
+  }
+  return provider;
+}
+
+function buildSubmitDraftAgentConfig(input: {
+  provider: string;
+  workspaceDirectory: string;
+  autoSubmitConfig: AutoSubmitConfig | null;
+  composerState: {
+    selectedMode: string;
+    modeOptions: unknown[];
+    effectiveModelId: string | null;
+    effectiveAuthProfileKey: string | null;
+    effectiveRuntimeProfileId: string | null;
+    effectiveThinkingOptionId: string | null;
+    featureValues: Record<string, unknown> | undefined;
+  };
+}) {
+  const { autoSubmitConfig, composerState } = input;
+  return buildWorkspaceDraftAgentConfig({
+    provider: input.provider,
+    cwd: input.workspaceDirectory,
+    ...resolveDraftModeIdOverride({
+      autoSubmitConfig,
+      modeOptionsCount: composerState.modeOptions.length,
+      selectedMode: composerState.selectedMode,
+    }),
+    model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
+    authProfileKey:
+      autoSubmitConfig?.authProfileKey ?? (composerState.effectiveAuthProfileKey || undefined),
+    runtimeProfileId:
+      autoSubmitConfig?.runtimeProfileId ?? (composerState.effectiveRuntimeProfileId || undefined),
+    thinkingOptionId:
+      autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
+    featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
+  });
+}
+
 async function submitDraftCreateRequest(input: {
   attempt: { clientMessageId: string };
   text: string;
@@ -158,9 +210,12 @@ async function submitDraftCreateRequest(input: {
     selectedMode: string;
     modeOptions: unknown[];
     effectiveModelId: string | null;
+    effectiveAuthProfileKey: string | null;
+    effectiveRuntimeProfileId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
   };
+  acceptRuntimeWarnings?: boolean;
 }): Promise<{ agentId: string | null; result: AgentSnapshotPayload }> {
   const {
     attempt,
@@ -172,6 +227,7 @@ async function submitDraftCreateRequest(input: {
     workspaceExecutionAuthority,
     autoSubmitConfig,
     composerState,
+    acceptRuntimeWarnings,
   } = input;
 
   invariant(workspaceDirectory, "Workspace directory is required");
@@ -180,35 +236,46 @@ async function submitDraftCreateRequest(input: {
     throw new Error("Host is not connected");
   }
 
-  const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
-  if (!provider) {
-    throw new Error("Select a model");
-  }
-  const modeIdOverride = resolveDraftModeIdOverride({
+  const provider = requireDraftProvider({
     autoSubmitConfig,
-    modeOptionsCount: composerState.modeOptions.length,
-    selectedMode: composerState.selectedMode,
+    selectedProvider: composerState.selectedProvider,
   });
-  const config = buildWorkspaceDraftAgentConfig({
+  const config = buildSubmitDraftAgentConfig({
     provider,
-    cwd: workspaceDirectory,
-    ...modeIdOverride,
-    model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
-    thinkingOptionId:
-      autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
-    featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
+    workspaceDirectory,
+    autoSubmitConfig,
+    composerState,
   });
 
   const imagesData = await encodeImages(images);
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
-  const result = await client.createAgent({
+  const createOptions = {
     config,
     workspaceId: workspaceExecutionAuthority.workspaceId,
     ...(text ? { initialPrompt: text } : {}),
     clientMessageId: attempt.clientMessageId,
     ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
     ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
-  });
+    ...(acceptRuntimeWarnings ? { acceptRuntimeWarnings: true } : {}),
+  };
+  let result: AgentSnapshotPayload;
+  try {
+    result = await client.createAgent(createOptions);
+  } catch (error) {
+    if (!isRuntimeLaunchWarningError(error) || acceptRuntimeWarnings) {
+      throw error;
+    }
+    const confirmed = await confirmDialog({
+      title: "Profile already in use",
+      message: error.warnings.map((warning) => warning.message).join("\n"),
+      confirmLabel: "Start anyway",
+      cancelLabel: "Cancel",
+    });
+    if (!confirmed) {
+      throw error;
+    }
+    result = await client.createAgent({ ...createOptions, acceptRuntimeWarnings: true });
+  }
 
   return {
     agentId: result.id,
@@ -224,6 +291,8 @@ function buildDraftAgentSnapshot(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
     effectiveModelId: string | null;
+    effectiveAuthProfileKey: string | null;
+    effectiveRuntimeProfileId: string | null;
     effectiveThinkingOptionId: string | null;
     modeOptions: unknown[];
     selectedMode: string;
@@ -235,6 +304,10 @@ function buildDraftAgentSnapshot(input: {
   invariant(workspaceDirectory, "Workspace directory is required");
   const now = attempt.timestamp;
   const model = autoSubmitConfig?.model ?? (composerState.effectiveModelId || null);
+  const authProfileKey =
+    autoSubmitConfig?.authProfileKey ?? (composerState.effectiveAuthProfileKey || null);
+  const runtimeProfileId =
+    autoSubmitConfig?.runtimeProfileId ?? (composerState.effectiveRuntimeProfileId || null);
   const thinkingOptionId =
     autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || null);
   const modeId = resolveDraftModeId({
@@ -264,6 +337,18 @@ function buildDraftAgentSnapshot(input: {
     title: "Agent",
     cwd: workspaceDirectory,
     model,
+    authProfileKey,
+    profileSnapshot: runtimeProfileId
+      ? {
+          sourceProfileId: runtimeProfileId,
+          provider,
+          accountKey: authProfileKey,
+          model,
+          modeId,
+          thinkingOptionId,
+          resolvedAt: now.toISOString(),
+        }
+      : undefined,
     features: composerState.statusControls.features,
     thinkingOptionId,
     parentAgentId: null,

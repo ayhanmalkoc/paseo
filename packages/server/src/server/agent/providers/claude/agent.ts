@@ -304,6 +304,10 @@ function isClaudeThinkingEffort(value: string | null | undefined): value is Clau
   );
 }
 
+function toClaudeSdkThinkingEffort(value: ClaudeThinkingEffort): ClaudeOptions["effort"] {
+  return value === "xhigh" ? "max" : value;
+}
+
 function sanitizeClaudeProjectPath(cwd: string): string {
   return cwd.replace(/[\\/._:]/g, "-");
 }
@@ -2213,7 +2217,10 @@ class ClaudeAgentSession implements AgentSession {
         ? this.config.thinkingOptionId
         : undefined;
     if (thinkingOptionId && isClaudeThinkingEffort(thinkingOptionId)) {
-      return { thinking: { type: "adaptive" }, effort: thinkingOptionId };
+      return {
+        thinking: { type: "adaptive" },
+        effort: toClaudeSdkThinkingEffort(thinkingOptionId),
+      };
     }
     return { thinking: undefined, effort: undefined };
   }

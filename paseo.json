@@ -3,7 +3,7 @@
     "setup": [
       "npm ci",
       "npm run build:daemon",
-      "cp \"$PASEO_SOURCE_CHECKOUT_PATH/packages/server/.env\" \"$PASEO_WORKTREE_PATH/packages/server/.env\""
+      "node -e \"const fs=require('fs');const path=require('path');const src=path.join(process.env.PASEO_SOURCE_CHECKOUT_PATH,'packages/server/.env');const dest=path.join(process.env.PASEO_WORKTREE_PATH,'packages/server/.env');if(fs.existsSync(src)){fs.copyFileSync(src,dest);}else{console.log('No packages/server/.env found in source checkout; skipping copy.');}\""
     ]
   },
   "scripts": {

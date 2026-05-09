@@ -5,10 +5,16 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import { AgentManager } from "./agent-manager.js";
+import { AgentManager, RuntimeLaunchWarningsConfirmationError } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
+import type {
+  ProviderAuthAdapter,
+  ProviderAuthAdapterContext,
+  StoredProviderAuthProfile,
+} from "./provider-auth-service.js";
+import { ProviderAuthService } from "./provider-auth-service.js";
 import type {
   AgentClient,
   AgentCreateSessionOptions,
@@ -22,7 +28,9 @@ import type {
   AgentStreamEvent,
   AgentTimelineItem,
   PersistedAgentDescriptor,
+  RuntimeProfile,
 } from "./agent-sdk-types.js";
+import type { RuntimeProfileService } from "./runtime-profile-service.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 
 interface Deferred<T> {
@@ -345,6 +353,30 @@ class StreamingAssistantClient implements AgentClient {
 }
 
 const logger = createTestLogger();
+const TEST_RUNTIME_PROFILE_NOW = "2026-05-08T09:00:00.000Z";
+
+function createRuntimeProfileForTest(
+  _workdir: string,
+  patch: Partial<RuntimeProfile> = {},
+): RuntimeProfile {
+  return {
+    id: "runtime-profile-1",
+    version: 1,
+    name: "Codex runtime profile",
+    provider: "codex",
+    model: "gpt-5.4",
+    concurrencyPolicy: "warn",
+    createdAt: TEST_RUNTIME_PROFILE_NOW,
+    updatedAt: TEST_RUNTIME_PROFILE_NOW,
+    ...patch,
+  };
+}
+
+function createRuntimeProfileServiceForTest(profile: RuntimeProfile): RuntimeProfileService {
+  return {
+    getProfile: async (profileId: string) => (profileId === profile.id ? profile : null),
+  } as RuntimeProfileService;
+}
 
 test("normalizeConfig injects the provider default model when omitted", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
@@ -709,17 +741,456 @@ test("createAgent passes daemon launch env through the provider launch context",
     cwd: workdir,
   });
 
-  expect(client.lastConfig).toEqual({
+  expect(client.lastConfig).toMatchObject({
     provider: "codex",
     cwd: workdir,
     model: "gpt-5.4",
     modeId: "auto",
+    profileSnapshot: {
+      provider: "codex",
+      model: "gpt-5.4",
+      modeId: "auto",
+      concurrencyPolicy: "allow",
+    },
   });
   expect(client.lastLaunchContext).toEqual({
     env: {
       PASEO_AGENT_ID: snapshot.id,
     },
   });
+});
+
+test("createAgent applies selected provider auth profile to config and launch env", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class CaptureClient extends TestAgentClient {
+    lastConfig: AgentSessionConfig | null = null;
+    lastLaunchContext: AgentLaunchContext | undefined;
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.lastConfig = config;
+      this.lastLaunchContext = launchContext;
+      return new TestAgentSession(config);
+    }
+  }
+
+  class AuthAdapter implements ProviderAuthAdapter {
+    readonly provider = "codex" as const;
+
+    async importCurrent(context: ProviderAuthAdapterContext): Promise<StoredProviderAuthProfile> {
+      const now = context.now().toISOString();
+      return {
+        provider: "codex",
+        key: "profile-a",
+        alias: "work",
+        authMode: "chatgpt",
+        status: "ready",
+        createdAt: now,
+        updatedAt: now,
+        providerHomePath: join(context.providerBaseDir, "profiles", "profile-a", "codex-home"),
+      };
+    }
+
+    async importAuthFile(
+      _authFilePath: string,
+      context: ProviderAuthAdapterContext,
+    ): Promise<StoredProviderAuthProfile> {
+      return this.importCurrent(context);
+    }
+
+    async refreshProfile(profile: StoredProviderAuthProfile): Promise<StoredProviderAuthProfile> {
+      return profile;
+    }
+
+    resolveLaunchContext(profile: StoredProviderAuthProfile): AgentLaunchContext & {
+      profileKey: string;
+    } {
+      return {
+        profileKey: profile.key,
+        env: { CODEX_HOME: profile.providerHomePath },
+      };
+    }
+  }
+
+  const providerAuthService = new ProviderAuthService({
+    paseoHome: workdir,
+    logger,
+    adapters: [new AuthAdapter()],
+    now: () => new Date("2026-05-06T12:00:00.000Z"),
+  });
+  await providerAuthService.importProfile({ provider: "codex", source: "current" });
+
+  const client = new CaptureClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000104",
+    providerAuthService,
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    authProfileKey: "profile-a",
+  });
+
+  expect(client.lastConfig?.authProfileKey).toBe("profile-a");
+  expect(snapshot.config.authProfileKey).toBe("profile-a");
+  expect(client.lastLaunchContext).toEqual({
+    env: {
+      PASEO_AGENT_ID: snapshot.id,
+      CODEX_HOME: join(workdir, "provider-auth", "codex", "profiles", "profile-a", "codex-home"),
+    },
+  });
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("createAgent syncs current provider auth before resolving default profile", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class CaptureClient extends TestAgentClient {
+    lastConfig: AgentSessionConfig | null = null;
+    lastLaunchContext: AgentLaunchContext | undefined;
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.lastConfig = config;
+      this.lastLaunchContext = launchContext;
+      return new TestAgentSession(config);
+    }
+  }
+
+  class AuthAdapter implements ProviderAuthAdapter {
+    readonly provider = "codex" as const;
+    readonly supportsCurrentAuthSync = true;
+
+    async importCurrent(context: ProviderAuthAdapterContext): Promise<StoredProviderAuthProfile> {
+      const now = context.now().toISOString();
+      return {
+        provider: "codex",
+        key: "profile-a",
+        alias: "work",
+        authMode: "chatgpt",
+        status: "ready",
+        createdAt: now,
+        updatedAt: now,
+        providerHomePath: join(context.providerBaseDir, "profiles", "profile-a", "codex-home"),
+      };
+    }
+
+    async importAuthFile(
+      _authFilePath: string,
+      context: ProviderAuthAdapterContext,
+    ): Promise<StoredProviderAuthProfile> {
+      return this.importCurrent(context);
+    }
+
+    async refreshProfile(profile: StoredProviderAuthProfile): Promise<StoredProviderAuthProfile> {
+      return profile;
+    }
+
+    resolveLaunchContext(profile: StoredProviderAuthProfile): AgentLaunchContext & {
+      profileKey: string;
+    } {
+      return {
+        profileKey: profile.key,
+        env: { CODEX_HOME: profile.providerHomePath },
+      };
+    }
+  }
+
+  const providerAuthService = new ProviderAuthService({
+    paseoHome: workdir,
+    logger,
+    adapters: [new AuthAdapter()],
+    now: () => new Date("2026-05-06T12:00:00.000Z"),
+  });
+
+  const client = new CaptureClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000109",
+    providerAuthService,
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+  });
+
+  expect(client.lastConfig?.authProfileKey).toBe("profile-a");
+  expect(snapshot.config.authProfileKey).toBe("profile-a");
+  expect(client.lastLaunchContext).toEqual({
+    env: {
+      PASEO_AGENT_ID: snapshot.id,
+      CODEX_HOME: join(workdir, "provider-auth", "codex", "profiles", "profile-a", "codex-home"),
+    },
+  });
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("restartAgentWithAuthProfile creates a fresh provider session with the selected profile", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class CaptureClient extends TestAgentClient {
+    createSessionCalls = 0;
+    resumeSessionCalls = 0;
+    lastConfig: AgentSessionConfig | null = null;
+    lastLaunchContext: AgentLaunchContext | undefined;
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      this.lastConfig = config;
+      this.lastLaunchContext = launchContext;
+      return new TestAgentSession(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.resumeSessionCalls += 1;
+      return super.resumeSession(handle, config, launchContext);
+    }
+  }
+
+  class AuthAdapter implements ProviderAuthAdapter {
+    readonly provider = "codex" as const;
+    readonly supportsCurrentAuthSync = true;
+
+    async importCurrent(context: ProviderAuthAdapterContext): Promise<StoredProviderAuthProfile> {
+      return this.buildProfile("profile-a", "work", context);
+    }
+
+    async importAuthFile(
+      authFilePath: string,
+      context: ProviderAuthAdapterContext,
+    ): Promise<StoredProviderAuthProfile> {
+      const key = authFilePath.includes("profile-b") ? "profile-b" : "profile-a";
+      return this.buildProfile(key, key === "profile-b" ? "personal" : "work", context);
+    }
+
+    async refreshProfile(profile: StoredProviderAuthProfile): Promise<StoredProviderAuthProfile> {
+      return profile;
+    }
+
+    resolveLaunchContext(profile: StoredProviderAuthProfile): AgentLaunchContext & {
+      profileKey: string;
+    } {
+      return {
+        profileKey: profile.key,
+        env: { CODEX_HOME: profile.providerHomePath },
+      };
+    }
+
+    private buildProfile(
+      key: string,
+      alias: string,
+      context: ProviderAuthAdapterContext,
+    ): StoredProviderAuthProfile {
+      const now = context.now().toISOString();
+      return {
+        provider: "codex",
+        key,
+        alias,
+        authMode: "chatgpt",
+        status: "ready",
+        createdAt: now,
+        updatedAt: now,
+        providerHomePath: join(context.providerBaseDir, "profiles", key, "codex-home"),
+      };
+    }
+  }
+
+  const providerAuthService = new ProviderAuthService({
+    paseoHome: workdir,
+    logger,
+    adapters: [new AuthAdapter()],
+    now: () => new Date("2026-05-06T12:00:00.000Z"),
+  });
+  await providerAuthService.importProfile({ provider: "codex", source: "current" });
+  await providerAuthService.importProfile({
+    provider: "codex",
+    source: "file",
+    path: "profile-b-auth.json",
+    setDefault: false,
+  });
+
+  const client = new CaptureClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000110",
+    providerAuthService,
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    authProfileKey: "profile-a",
+  });
+  const restarted = await manager.restartAgentWithAuthProfile(snapshot.id, "profile-b");
+
+  expect(restarted.id).toBe(snapshot.id);
+  expect(client.createSessionCalls).toBe(2);
+  expect(client.resumeSessionCalls).toBe(0);
+  expect(client.lastConfig?.authProfileKey).toBe("profile-b");
+  expect(restarted.config.authProfileKey).toBe("profile-b");
+  expect(client.lastLaunchContext).toEqual({
+    env: {
+      PASEO_AGENT_ID: snapshot.id,
+      CODEX_HOME: join(workdir, "provider-auth", "codex", "profiles", "profile-b", "codex-home"),
+    },
+  });
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("createAgent requires confirmation before sharing a warn runtime profile", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-runtime-profile-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const runtimeProfile = createRuntimeProfileForTest(workdir);
+  const ids = [
+    "00000000-0000-4000-8000-000000000201",
+    "00000000-0000-4000-8000-000000000202",
+    "00000000-0000-4000-8000-000000000203",
+  ];
+  let idIndex = 0;
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => ids[idIndex++],
+    runtimeProfileService: createRuntimeProfileServiceForTest(runtimeProfile),
+  });
+
+  try {
+    const first = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      runtimeProfileId: runtimeProfile.id,
+    });
+
+    await expect(
+      manager.createAgent({
+        provider: "codex",
+        cwd: workdir,
+        runtimeProfileId: runtimeProfile.id,
+      }),
+    ).rejects.toMatchObject({
+      warnings: [
+        {
+          code: "runtime-profile-in-use",
+          runtimeProfileId: runtimeProfile.id,
+          agentIds: [first.id],
+        },
+      ],
+    });
+
+    const accepted = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        runtimeProfileId: runtimeProfile.id,
+      },
+      undefined,
+      { acceptRuntimeWarnings: true },
+    );
+
+    expect(accepted.config.profileSnapshot).toMatchObject({
+      sourceProfileId: runtimeProfile.id,
+      sourceProfileVersion: runtimeProfile.version,
+      concurrencyPolicy: "warn",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("restartAgentWithRuntimeProfile requires confirmation before sharing a warn runtime profile", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-runtime-profile-restart-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const runtimeProfile = createRuntimeProfileForTest(workdir);
+  const ids = ["00000000-0000-4000-8000-000000000204", "00000000-0000-4000-8000-000000000205"];
+  let idIndex = 0;
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => ids[idIndex++],
+    runtimeProfileService: createRuntimeProfileServiceForTest(runtimeProfile),
+  });
+
+  try {
+    const first = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+      runtimeProfileId: runtimeProfile.id,
+    });
+    const second = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    await expect(
+      manager.restartAgentWithRuntimeProfile(second.id, runtimeProfile.id),
+    ).rejects.toBeInstanceOf(RuntimeLaunchWarningsConfirmationError);
+    await expect(
+      manager.restartAgentWithRuntimeProfile(second.id, runtimeProfile.id),
+    ).rejects.toMatchObject({
+      warnings: [
+        {
+          code: "runtime-profile-in-use",
+          runtimeProfileId: runtimeProfile.id,
+          agentIds: [first.id],
+        },
+      ],
+    });
+
+    const restarted = await manager.restartAgentWithRuntimeProfile(
+      second.id,
+      runtimeProfile.id,
+      undefined,
+      { acceptRuntimeWarnings: true },
+    );
+
+    expect(restarted.config.profileSnapshot).toMatchObject({
+      sourceProfileId: runtimeProfile.id,
+      sourceProfileVersion: runtimeProfile.version,
+      concurrencyPolicy: "warn",
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("createAgent passes persistSession to provider create options", async () => {

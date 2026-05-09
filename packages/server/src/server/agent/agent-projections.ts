@@ -114,6 +114,8 @@ export function toAgentPayload(
     provider: agent.provider,
     cwd: agent.cwd,
     model: agent.config.model ?? null,
+    authProfileKey: agent.config.authProfileKey ?? null,
+    profileSnapshot: agent.config.profileSnapshot,
     thinkingOptionId,
     effectiveThinkingOptionId,
     ...(runtimeInfo ? { runtimeInfo } : {}),
@@ -185,6 +187,26 @@ function buildStoredPersistenceHandle(
   return toAgentPersistenceHandle(validProviders, record.persistence);
 }
 
+function buildStoredAgentConfigPayload(
+  record: StoredAgentRecord,
+  runtimeInfo: AgentRuntimeInfo | undefined,
+): Pick<
+  AgentSnapshotPayload,
+  "authProfileKey" | "effectiveThinkingOptionId" | "model" | "profileSnapshot" | "thinkingOptionId"
+> {
+  const configuredThinkingOptionId = record.config?.thinkingOptionId ?? null;
+  return {
+    model: record.config?.model ?? null,
+    authProfileKey: record.config?.authProfileKey ?? null,
+    profileSnapshot: record.config?.profileSnapshot,
+    thinkingOptionId: configuredThinkingOptionId,
+    effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
+      runtimeInfo,
+      configuredThinkingOptionId,
+    }),
+  };
+}
+
 export function buildStoredAgentPayload(
   record: StoredAgentRecord,
   validProviders: Iterable<AgentProvider>,
@@ -210,12 +232,7 @@ export function buildStoredAgentPayload(
     id: record.id,
     provider: record.provider,
     cwd: record.cwd,
-    model: record.config?.model ?? null,
-    thinkingOptionId: record.config?.thinkingOptionId ?? null,
-    effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
-      runtimeInfo,
-      configuredThinkingOptionId: record.config?.thinkingOptionId ?? null,
-    }),
+    ...buildStoredAgentConfigPayload(record, runtimeInfo),
     ...(runtimeInfo ? { runtimeInfo } : {}),
     createdAt: createdAt.toISOString(),
     updatedAt: updatedAt.toISOString(),
@@ -328,6 +345,18 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   if (config.thinkingOptionId) {
     serializable.thinkingOptionId = config.thinkingOptionId;
   }
+  if (Object.prototype.hasOwnProperty.call(config, "authProfileKey")) {
+    serializable.authProfileKey = config.authProfileKey ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(config, "runtimeProfileId")) {
+    serializable.runtimeProfileId = config.runtimeProfileId ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(config, "profileOverrides")) {
+    serializable.profileOverrides = sanitizeMetadata(config.profileOverrides);
+  }
+  if (config.profileSnapshot) {
+    serializable.profileSnapshot = config.profileSnapshot;
+  }
   if (Object.prototype.hasOwnProperty.call(config, "featureValues")) {
     const featureValues = sanitizeMetadata(config.featureValues);
     if (featureValues !== undefined) {
@@ -433,7 +462,26 @@ function sanitizeMetadata(value: unknown): AgentMetadata | undefined {
   if (!sanitized || !isJsonObject(sanitized)) {
     return undefined;
   }
-  return sanitized;
+  return stripMcpServerHeaders(sanitized);
+}
+
+function stripMcpServerHeaders(metadata: { [key: string]: JsonValue }): AgentMetadata {
+  const mcpServers = metadata.mcpServers;
+  if (!mcpServers || !isJsonObject(mcpServers)) {
+    return metadata;
+  }
+  const sanitizedServers: { [key: string]: JsonValue } = {};
+  let didStrip = false;
+  for (const [serverId, serverConfig] of Object.entries(mcpServers)) {
+    if (isJsonObject(serverConfig) && "headers" in serverConfig) {
+      const { headers: _headers, ...withoutHeaders } = serverConfig;
+      sanitizedServers[serverId] = withoutHeaders;
+      didStrip = true;
+      continue;
+    }
+    sanitizedServers[serverId] = serverConfig;
+  }
+  return didStrip ? { ...metadata, mcpServers: sanitizedServers } : metadata;
 }
 
 function sanitizeMetadataArray(value: unknown): AgentMetadata[] | undefined {

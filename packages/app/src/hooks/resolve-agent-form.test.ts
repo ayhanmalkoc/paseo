@@ -17,6 +17,7 @@ import type { AgentProviderDefinition } from "@server/server/agent/provider-mani
 import type {
   AgentModelDefinition,
   AgentProvider,
+  ProviderAuthProfile,
   ProviderSnapshotEntry,
 } from "@server/server/agent/agent-sdk-types";
 
@@ -58,6 +59,28 @@ const CODEX_MODELS: AgentModelDefinition[] = [
   },
 ];
 
+const CODEX_AUTH_PROFILES: ProviderAuthProfile[] = [
+  {
+    provider: "codex",
+    key: "profile-default",
+    alias: "Default",
+    authMode: "chatgpt",
+    status: "ready",
+    isDefault: true,
+    createdAt: "2026-05-06T12:00:00.000Z",
+    updatedAt: "2026-05-06T12:00:00.000Z",
+  },
+  {
+    provider: "codex",
+    key: "profile-work",
+    alias: "Work",
+    authMode: "chatgpt",
+    status: "ready",
+    createdAt: "2026-05-06T12:00:00.000Z",
+    updatedAt: "2026-05-06T12:00:00.000Z",
+  },
+];
+
 function makeProviderMap(
   ...definitions: AgentProviderDefinition[]
 ): Map<AgentProvider, AgentProviderDefinition> {
@@ -78,6 +101,8 @@ function makeState(
       provider: null,
       modeId: "",
       model: "",
+      authProfileKey: "",
+      runtimeProfileId: "",
       thinkingOptionId: "",
       workingDir: "",
       ...overrides,
@@ -412,6 +437,41 @@ describe("resolveFormState", () => {
     expect(resolved.thinkingOptionId).toBe("low");
   });
 
+  it("resolves a saved provider auth profile when it is available", () => {
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "codex",
+        providerPreferences: { codex: { authProfileKey: "profile-work" } },
+      },
+      CODEX_MODELS,
+      INITIAL_USER_MODIFIED,
+      makeState().form,
+      codexProviderMap,
+      CODEX_AUTH_PROFILES,
+    );
+
+    expect(resolved.provider).toBe("codex");
+    expect(resolved.authProfileKey).toBe("profile-work");
+  });
+
+  it("falls back to the default provider auth profile when the saved key is missing", () => {
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "codex",
+        providerPreferences: { codex: { authProfileKey: "missing-profile" } },
+      },
+      CODEX_MODELS,
+      INITIAL_USER_MODIFIED,
+      makeState().form,
+      codexProviderMap,
+      CODEX_AUTH_PROFILES,
+    );
+
+    expect(resolved.authProfileKey).toBe("profile-default");
+  });
+
   it("falls back to the first thinking option when model exposes options without a provider default", () => {
     const claudeWithThinking: AgentModelDefinition[] = [
       {
@@ -492,6 +552,8 @@ describe("resolveFormState", () => {
         provider: true,
         modeId: true,
         model: true,
+        authProfileKey: false,
+        runtimeProfileId: false,
         thinkingOptionId: true,
         workingDir: false,
       },
@@ -842,6 +904,19 @@ describe("resolveAgentForm", () => {
       });
 
       expect(next.form.model).toBe("gpt-5.3-codex");
+    });
+  });
+
+  describe("SET_AUTH_PROFILE_FROM_USER", () => {
+    it("updates auth profile key and marks it modified", () => {
+      const state = makeState({ authProfileKey: "profile-default" });
+      const next = resolveAgentForm(state, {
+        type: "SET_AUTH_PROFILE_FROM_USER",
+        authProfileKey: " profile-work ",
+      });
+
+      expect(next.form.authProfileKey).toBe("profile-work");
+      expect(next.userModified.authProfileKey).toBe(true);
     });
   });
 

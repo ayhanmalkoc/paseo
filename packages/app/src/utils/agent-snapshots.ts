@@ -52,6 +52,8 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     title: snapshot.title ?? null,
     cwd: snapshot.cwd,
     model: snapshot.model ?? null,
+    authProfileKey: snapshot.authProfileKey ?? null,
+    profileSnapshot: snapshot.profileSnapshot,
     features: snapshot.features,
     thinkingOptionId: snapshot.thinkingOptionId ?? null,
     requiresAttention: snapshot.requiresAttention ?? false,

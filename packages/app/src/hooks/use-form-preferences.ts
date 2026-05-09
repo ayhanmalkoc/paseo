@@ -24,6 +24,7 @@ export interface FavoriteModelRow {
 const providerPreferencesSchema = z.object({
   model: z.string().optional(),
   mode: z.string().optional(),
+  authProfileKey: z.string().optional(),
   thinkingByModel: z.record(z.string()).optional(),
   featureValues: z.record(z.unknown()).optional(),
 });

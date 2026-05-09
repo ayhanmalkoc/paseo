@@ -1,6 +1,11 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
-import { DaemonClient, type DaemonTransport } from "./daemon-client";
+import {
+  DaemonClient,
+  RuntimeLaunchWarningError,
+  isRuntimeLaunchWarningError,
+  type DaemonTransport,
+} from "./daemon-client";
 import { encodeFileTransferFrame, FileTransferOpcode } from "../shared/binary-frames/index.js";
 import {
   asUint8Array,
@@ -606,6 +611,184 @@ test("sends create_agent_request with string workspace ids", async () => {
   );
 
   await expect(createPromise).rejects.toThrow("compat test sentinel");
+});
+
+test("sends accepted runtime warning confirmations in create_agent_request", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    acceptRuntimeWarnings: true,
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual(
+    expect.objectContaining({
+      type: "create_agent_request",
+      acceptRuntimeWarnings: true,
+    }),
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "confirmation flag test sentinel",
+      },
+    }),
+  );
+
+  await expect(createPromise).rejects.toThrow("confirmation flag test sentinel");
+});
+
+test("throws RuntimeLaunchWarningError for create_agent warnings that need confirmation", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+  });
+
+  const request = parseSentFrame(mock.sent[0]);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "Another active agent is already using runtime profile 'profile-1'.",
+        requiresConfirmation: true,
+        warnings: [
+          {
+            code: "runtime-profile-in-use",
+            message: "Another active agent is already using runtime profile 'profile-1'.",
+            runtimeProfileId: "profile-1",
+            agentIds: ["agent-1"],
+          },
+        ],
+      },
+    }),
+  );
+
+  try {
+    await createPromise;
+    throw new Error("Expected createAgent to require confirmation");
+  } catch (error) {
+    expect(error).toBeInstanceOf(RuntimeLaunchWarningError);
+    expect(isRuntimeLaunchWarningError(error)).toBe(true);
+    expect(error).toMatchObject({
+      warnings: [
+        {
+          code: "runtime-profile-in-use",
+          runtimeProfileId: "profile-1",
+          agentIds: ["agent-1"],
+        },
+      ],
+    });
+  }
+});
+
+test("restartAgentWithRuntimeProfile sends confirmation flag and surfaces launch warnings", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const restartPromise = client.restartAgentWithRuntimeProfile("agent-2", "profile-1", undefined, {
+    acceptRuntimeWarnings: true,
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual(
+    expect.objectContaining({
+      type: "restart_agent_with_runtime_profile_request",
+      agentId: "agent-2",
+      runtimeProfileId: "profile-1",
+      acceptRuntimeWarnings: true,
+    }),
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "restart_agent_with_runtime_profile_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-2",
+        accepted: false,
+        error: "Another active agent is already using runtime profile 'profile-1'.",
+        requiresConfirmation: true,
+        warnings: [
+          {
+            code: "runtime-profile-in-use",
+            message: "Another active agent is already using runtime profile 'profile-1'.",
+            runtimeProfileId: "profile-1",
+            agentIds: ["agent-1"],
+          },
+        ],
+      },
+    }),
+  );
+
+  try {
+    await restartPromise;
+    throw new Error("Expected runtime profile restart to require confirmation");
+  } catch (error) {
+    expect(error).toBeInstanceOf(RuntimeLaunchWarningError);
+    expect(isRuntimeLaunchWarningError(error)).toBe(true);
+    expect(error).toMatchObject({
+      warnings: [
+        {
+          code: "runtime-profile-in-use",
+          runtimeProfileId: "profile-1",
+          agentIds: ["agent-1"],
+        },
+      ],
+    });
+  }
 });
 
 test("sends structured attachments with create_agent_request", async () => {
