@@ -589,6 +589,7 @@ export interface SessionOptions {
   workspaceGitService: WorkspaceGitService;
   daemonConfigStore: DaemonConfigStore;
   mcpBaseUrl?: string | null;
+  daemonAuthToken?: string | null;
   stt: Resolvable<SpeechToTextProvider | null>;
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
@@ -874,6 +875,7 @@ export class Session {
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private readonly isDev: boolean;
+  private readonly daemonAuthToken: string | null;
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
@@ -901,6 +903,7 @@ export class Session {
       workspaceGitService,
       daemonConfigStore,
       mcpBaseUrl,
+      daemonAuthToken,
       stt,
       tts,
       terminalManager,
@@ -946,6 +949,7 @@ export class Session {
     this.workspaceGitService = workspaceGitService;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl ?? null;
+    this.daemonAuthToken = daemonAuthToken?.trim() || null;
     this.terminalManager = terminalManager;
     this.terminalController = new TerminalSessionController({
       terminalManager,
@@ -1216,7 +1220,11 @@ export class Session {
         );
         return;
       }
-      const transport = new StreamableHTTPClientTransport(new URL(this.mcpBaseUrl));
+      const headers = this.buildDaemonAuthHeaders();
+      const transport = new StreamableHTTPClientTransport(
+        new URL(this.mcpBaseUrl),
+        headers ? { requestInit: { headers } } : undefined,
+      );
 
       this.agentMcpClient = await experimental_createMCPClient({
         transport,
@@ -1231,6 +1239,13 @@ export class Session {
     } catch (error) {
       this.sessionLogger.error({ err: error }, "Failed to initialize Agent MCP");
     }
+  }
+
+  private buildDaemonAuthHeaders(): Record<string, string> | undefined {
+    if (!this.daemonAuthToken) {
+      return undefined;
+    }
+    return { Authorization: `Bearer ${this.daemonAuthToken}` };
   }
 
   /**
@@ -3031,6 +3046,7 @@ export class Session {
         labels,
         workspaceId: resolvedWorkspace.workspaceId,
         initialPrompt: trimmedPrompt,
+        mcpServerHeaders: this.buildDaemonAuthHeaders(),
       });
       await this.forwardAgentUpdate(snapshot);
 
