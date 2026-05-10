@@ -141,6 +141,7 @@ export interface AccountLoginSession {
 }
 
 export type RuntimeProfileConcurrencyPolicy = "allow" | "warn" | "single-active";
+export type RuntimeProfileSessionBehavior = "continue" | "fresh";
 
 export interface RuntimeProfile {
   id: string;
@@ -157,6 +158,7 @@ export interface RuntimeProfile {
   envOverlay?: Record<string, string>;
   mcpServers?: Record<string, McpServerConfig>;
   concurrencyPolicy: RuntimeProfileConcurrencyPolicy;
+  sessionBehavior?: RuntimeProfileSessionBehavior;
   createdAt: string;
   updatedAt: string;
 }
@@ -176,6 +178,7 @@ export type RuntimeProfilePatch = Partial<
     | "envOverlay"
     | "mcpServers"
     | "concurrencyPolicy"
+    | "sessionBehavior"
   >
 >;
 
@@ -191,6 +194,7 @@ export type RuntimeProfileLaunchOverrides = Partial<
     | "featureValues"
     | "envOverlay"
     | "mcpServers"
+    | "sessionBehavior"
   >
 >;
 
@@ -208,6 +212,7 @@ export interface AgentProfileSnapshot {
   featureValues?: Record<string, unknown>;
   envOverlay?: Record<string, string>;
   concurrencyPolicy?: RuntimeProfileConcurrencyPolicy;
+  sessionBehavior?: RuntimeProfileSessionBehavior;
   resolvedAt: string;
 }
 
@@ -601,6 +606,7 @@ export interface AgentSessionConfig {
   runtimeProfileId?: string | null;
   profileOverrides?: RuntimeProfileLaunchOverrides;
   profileSnapshot?: AgentProfileSnapshot;
+  sessionBehavior?: RuntimeProfileSessionBehavior;
   featureValues?: Record<string, unknown>;
   title?: string | null;
   approvalPolicy?: string;
@@ -629,6 +635,14 @@ export interface AgentCreateSessionOptions {
    * Defaults to true. Providers that cannot honor false should no-op.
    */
   persistSession?: boolean;
+}
+
+export interface AgentResumeSessionOptions {
+  /**
+   * When true, providers must fail the resume attempt instead of silently
+   * creating a fresh native session/thread.
+   */
+  strict?: boolean;
 }
 
 /**
@@ -699,6 +713,7 @@ export interface AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession>;
   listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
   listModes?(options: ListModesOptions): Promise<AgentMode[]>;

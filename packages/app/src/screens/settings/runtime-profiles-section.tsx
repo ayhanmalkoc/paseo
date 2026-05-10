@@ -32,6 +32,7 @@ import type {
   RuntimeProfile,
   RuntimeProfileConcurrencyPolicy,
   RuntimeProfilePatch,
+  RuntimeProfileSessionBehavior,
 } from "@server/server/agent/agent-sdk-types";
 
 interface RuntimeProfileDraft {
@@ -42,6 +43,7 @@ interface RuntimeProfileDraft {
   modeId: string;
   thinkingOptionId: string;
   concurrencyPolicy: RuntimeProfileConcurrencyPolicy;
+  sessionBehavior: RuntimeProfileSessionBehavior;
   systemPrompt: string;
   instructionOverlay: string;
   featureValuesJson: string;
@@ -64,6 +66,18 @@ const CONCURRENCY_OPTIONS: SelectOption[] = [
   { id: "warn", label: "Warn", description: "Ask before reusing this profile in parallel" },
   { id: "allow", label: "Allow", description: "Allow parallel agents with this profile" },
   { id: "single-active", label: "Single active", description: "Prefer one active agent" },
+];
+const SESSION_BEHAVIOR_OPTIONS: SelectOption[] = [
+  {
+    id: "continue",
+    label: "Continue conversation",
+    description: "Resume the same provider session when switching to this profile",
+  },
+  {
+    id: "fresh",
+    label: "Start fresh",
+    description: "Create a new provider session when switching to this profile",
+  },
 ];
 const BOOLEAN_FEATURE_OPTIONS: SelectOption[] = [
   { id: "false", label: "Off" },
@@ -248,7 +262,13 @@ function RuntimeProfileRow({
           {profile.name}
         </Text>
         <Text style={settingsStyles.rowHint} numberOfLines={2}>
-          {[providerLabel, profile.accountKey, profile.model, profile.modeId]
+          {[
+            providerLabel,
+            profile.accountKey,
+            profile.model,
+            profile.modeId,
+            profile.sessionBehavior === "fresh" ? "Start fresh" : "Continue conversation",
+          ]
             .filter(Boolean)
             .join(" / ")}
         </Text>
@@ -479,6 +499,17 @@ function RuntimeProfileEditorSheet({
             }
             disabled={saving}
           />
+          <SelectField
+            label="Session behavior"
+            value={resolveOptionLabel(SESSION_BEHAVIOR_OPTIONS, draft.sessionBehavior)}
+            options={SESSION_BEHAVIOR_OPTIONS}
+            selectedId={draft.sessionBehavior}
+            onSelect={(value) =>
+              setField("sessionBehavior", value as RuntimeProfileSessionBehavior)
+            }
+            disabled={saving}
+            hint="Applies when switching an existing agent to this profile."
+          />
         </View>
       </SettingsSection>
 
@@ -625,6 +656,7 @@ function SelectField({
   selectedId,
   onSelect,
   disabled,
+  hint,
 }: {
   label: string;
   value: string;
@@ -632,6 +664,7 @@ function SelectField({
   selectedId: string;
   onSelect: (id: string) => void;
   disabled: boolean;
+  hint?: string;
 }) {
   const { theme } = useUnistyles();
   const triggerStyle = useCallback(
@@ -674,6 +707,7 @@ function SelectField({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+      {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
     </View>
   );
 }
@@ -910,6 +944,7 @@ function createDraft(
     modeId: profile?.modeId ?? providerEntry?.defaultModeId ?? "",
     thinkingOptionId: profile?.thinkingOptionId ?? defaultModel?.defaultThinkingOptionId ?? "",
     concurrencyPolicy: profile?.concurrencyPolicy ?? "warn",
+    sessionBehavior: profile?.sessionBehavior ?? "continue",
     systemPrompt: profile?.systemPrompt ?? "",
     instructionOverlay: profile?.instructionOverlay ?? "",
     featureValuesJson: formatJson(profile?.featureValues),
@@ -941,6 +976,7 @@ function buildPatch(
     modeId: normalizeNullableText(draft.modeId),
     thinkingOptionId: normalizeNullableText(draft.thinkingOptionId),
     concurrencyPolicy: draft.concurrencyPolicy,
+    sessionBehavior: draft.sessionBehavior,
     systemPrompt: normalizeNullableText(draft.systemPrompt),
     instructionOverlay: normalizeNullableText(draft.instructionOverlay),
     featureValues: parseObjectJson("Feature values JSON", draft.featureValuesJson),
@@ -1037,6 +1073,11 @@ const styles = StyleSheet.create((theme) => ({
   fieldLabel: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+  },
+  fieldHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
   },
   input: {
     backgroundColor: theme.colors.surface0,

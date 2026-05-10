@@ -508,6 +508,7 @@ export function WorkspaceImportSheet({
         providerHandleId: entry.providerHandleId,
         cwd: workspaceDirectory,
         ...(authProfileKey ? { authProfileKey } : {}),
+        sessionBehavior: "continue",
       });
       return agent;
     },
@@ -596,6 +597,9 @@ export function WorkspaceImportSheet({
       {showAccountSelector ? (
         <View style={styles.accountSection}>
           <Text style={styles.accountLabel}>Continue with account</Text>
+          <Text style={styles.accountHint}>
+            Paseo will try to resume the imported provider session with this account.
+          </Text>
           <ScrollView
             horizontal
             style={styles.horizontalScroller}
@@ -666,6 +670,11 @@ const styles = StyleSheet.create((theme) => ({
   accountLabel: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+  },
+  accountHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
   },
   accountOptionsRow: {
     flexDirection: "row",

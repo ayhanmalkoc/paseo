@@ -739,6 +739,7 @@ test("restartAgentWithRuntimeProfile sends confirmation flag and surfaces launch
 
   const restartPromise = client.restartAgentWithRuntimeProfile("agent-2", "profile-1", undefined, {
     acceptRuntimeWarnings: true,
+    sessionBehavior: "continue",
   });
 
   expect(mock.sent).toHaveLength(1);
@@ -748,6 +749,7 @@ test("restartAgentWithRuntimeProfile sends confirmation flag and surfaces launch
       type: "restart_agent_with_runtime_profile_request",
       agentId: "agent-2",
       runtimeProfileId: "profile-1",
+      sessionBehavior: "continue",
       acceptRuntimeWarnings: true,
     }),
   );
@@ -2139,6 +2141,7 @@ test("imports an agent by provider handle id", async () => {
     providerHandleId: "thread-1",
     cwd: "/tmp/repo",
     authProfileKey: "codex-work",
+    sessionBehavior: "continue",
   });
 
   expect(mock.sent).toHaveLength(1);
@@ -2152,6 +2155,7 @@ test("imports an agent by provider handle id", async () => {
       sessionId?: string;
       cwd?: string;
       authProfileKey?: string | null;
+      sessionBehavior?: string;
     };
   };
   expect(request.message).toMatchObject({
@@ -2160,6 +2164,7 @@ test("imports an agent by provider handle id", async () => {
     providerHandleId: "thread-1",
     cwd: "/tmp/repo",
     authProfileKey: "codex-work",
+    sessionBehavior: "continue",
   });
   expect(request.message).not.toHaveProperty("sessionId");
 

@@ -19,6 +19,7 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     runtimeProfileId: z.string().nullable().optional(),
     profileOverrides: z.record(z.any()).nullable().optional(),
     profileSnapshot: AgentProfileSnapshotSchema.optional(),
+    sessionBehavior: z.enum(["continue", "fresh"]).optional(),
     featureValues: z.record(z.unknown()).nullable().optional(),
     extra: z.record(z.any()).nullable().optional(),
     systemPrompt: z.string().nullable().optional(),
@@ -80,6 +81,7 @@ export type SerializableAgentConfig = Pick<
   | "runtimeProfileId"
   | "profileOverrides"
   | "profileSnapshot"
+  | "sessionBehavior"
   | "featureValues"
   | "extra"
   | "systemPrompt"

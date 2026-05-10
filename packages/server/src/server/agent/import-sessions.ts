@@ -6,6 +6,7 @@ import type {
   AgentPersistenceHandle,
   AgentProvider,
   PersistedAgentDescriptor,
+  RuntimeProfileSessionBehavior,
 } from "./agent-sdk-types.js";
 import { toRecentProviderSessionDescriptorPayload } from "./agent-projections.js";
 import type {
@@ -24,6 +25,7 @@ export interface NormalizedImportAgentRequest {
   providerHandleId: string;
   cwd?: string;
   authProfileKey?: string | null;
+  sessionBehavior?: RuntimeProfileSessionBehavior;
   labels?: Record<string, string>;
   requestId: string;
 }
@@ -71,9 +73,16 @@ export function normalizeImportAgentRequest(
       typeof msg.authProfileKey === "string"
         ? msg.authProfileKey.trim() || null
         : msg.authProfileKey,
+    sessionBehavior: normalizeSessionBehavior(msg.sessionBehavior),
     labels: msg.labels,
     requestId: msg.requestId,
   };
+}
+
+function normalizeSessionBehavior(
+  value: RuntimeProfileSessionBehavior | undefined,
+): RuntimeProfileSessionBehavior | undefined {
+  return value === "fresh" || value === "continue" ? value : undefined;
 }
 
 export async function listImportableProviderSessions(

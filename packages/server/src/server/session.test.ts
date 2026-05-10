@@ -1088,6 +1088,7 @@ describe("session agent import", () => {
       providerHandleId: "provider-thread-imported",
       cwd,
       authProfileKey: "codex-work",
+      sessionBehavior: "continue",
       requestId: "import-thread",
     });
 
@@ -1102,7 +1103,7 @@ describe("session agent import", () => {
       }),
       expect.objectContaining({ cwd, authProfileKey: "codex-work" }),
       undefined,
-      expect.objectContaining({ labels: undefined }),
+      expect.objectContaining({ labels: undefined, sessionBehavior: "continue" }),
     );
     expect(agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(snapshot.id);
     expect(agentManager.setTitle).toHaveBeenCalledWith(

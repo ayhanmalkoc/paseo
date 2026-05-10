@@ -23,6 +23,7 @@ import type {
   AgentProvider,
   AgentPersistenceHandle,
   AgentRunResult,
+  AgentResumeSessionOptions,
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
@@ -957,6 +958,7 @@ test("restartAgentWithAuthProfile creates a fresh provider session with the sele
     resumeSessionCalls = 0;
     lastConfig: AgentSessionConfig | null = null;
     lastLaunchContext: AgentLaunchContext | undefined;
+    lastResumeOptions: AgentResumeSessionOptions | undefined;
 
     override async createSession(
       config: AgentSessionConfig,
@@ -972,8 +974,12 @@ test("restartAgentWithAuthProfile creates a fresh provider session with the sele
       handle: AgentPersistenceHandle,
       config?: Partial<AgentSessionConfig>,
       launchContext?: AgentLaunchContext,
+      options?: AgentResumeSessionOptions,
     ): Promise<AgentSession> {
       this.resumeSessionCalls += 1;
+      this.lastConfig = { provider: "codex", cwd: workdir, ...config };
+      this.lastLaunchContext = launchContext;
+      this.lastResumeOptions = options;
       return super.resumeSession(handle, config, launchContext);
     }
   }
@@ -1059,9 +1065,10 @@ test("restartAgentWithAuthProfile creates a fresh provider session with the sele
   const restarted = await manager.restartAgentWithAuthProfile(snapshot.id, "profile-b");
 
   expect(restarted.id).toBe(snapshot.id);
-  expect(client.createSessionCalls).toBe(2);
-  expect(client.resumeSessionCalls).toBe(0);
+  expect(client.createSessionCalls).toBe(1);
+  expect(client.resumeSessionCalls).toBe(1);
   expect(client.lastConfig?.authProfileKey).toBe("profile-b");
+  expect(client.lastResumeOptions).toEqual({ strict: true });
   expect(restarted.config.authProfileKey).toBe("profile-b");
   expect(client.lastLaunchContext).toEqual({
     env: {

@@ -206,6 +206,7 @@ describe("workspace message schemas", () => {
       providerHandleId: "thread-1",
       cwd: "/tmp/repo",
       authProfileKey: "codex-work",
+      sessionBehavior: "continue",
     });
     const legacyRequest = SessionInboundMessageSchema.parse({
       type: "import_agent_request",
@@ -222,6 +223,7 @@ describe("workspace message schemas", () => {
       providerHandleId: "thread-1",
       cwd: "/tmp/repo",
       authProfileKey: "codex-work",
+      sessionBehavior: "continue",
     });
     expect(legacyRequest).toEqual({
       type: "import_agent_request",

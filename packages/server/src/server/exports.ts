@@ -78,6 +78,7 @@ export type {
   AgentPermissionRequest,
   AgentTimelineItem,
   ProviderSnapshotEntry,
+  RuntimeProfileSessionBehavior,
 } from "./agent/agent-sdk-types.js";
 
 // Agent activity curator for CLI logs

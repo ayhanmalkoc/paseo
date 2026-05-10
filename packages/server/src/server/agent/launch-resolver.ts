@@ -6,6 +6,7 @@ import type {
   RuntimeLaunchWarning,
   RuntimeProfile,
   RuntimeProfileLaunchOverrides,
+  RuntimeProfileSessionBehavior,
 } from "./agent-sdk-types.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
 import type { RuntimeProfileService } from "./runtime-profile-service.js";
@@ -24,6 +25,8 @@ export interface LaunchResolverOptions {
   leaseCoordinator?: AccountLeaseCoordinator;
   now?: () => Date;
 }
+
+const DEFAULT_SESSION_BEHAVIOR: RuntimeProfileSessionBehavior = "continue";
 
 export class LaunchResolver {
   private readonly runtimeProfileService: RuntimeProfileService | null;
@@ -84,6 +87,7 @@ export class LaunchResolver {
       config: {
         ...config,
         profileSnapshot: snapshot,
+        sessionBehavior: snapshot.sessionBehavior,
       },
       snapshot,
       launchContext: {
@@ -132,6 +136,7 @@ export class LaunchResolver {
       cwd,
       ...buildRuntimeSelectionConfig(config, overrides, profile),
       featureValues: mergeRecordValues(profile.featureValues, overrides.featureValues),
+      sessionBehavior: resolveRuntimeProfileSessionBehavior(overrides, profile),
       systemPrompt: resolveRuntimeSystemPrompt(config, overrides, profile),
       mcpServers: mergeRecordValues(profile.mcpServers, overrides.mcpServers, config.mcpServers),
     };
@@ -198,6 +203,7 @@ export class LaunchResolver {
       accountKey: input.accountKey,
       ...buildSnapshotRuntimeSelection(config),
       ...buildSnapshotProfileSettings(profile, overrides),
+      sessionBehavior: resolveSnapshotSessionBehavior(profile, overrides, config),
       systemPrompt: config.systemPrompt ?? null,
       featureValues: config.featureValues,
       resolvedAt: this.now().toISOString(),
@@ -215,6 +221,7 @@ export function synthesizeAgentProfileSnapshot(config: AgentSessionConfig): Agen
     systemPrompt: config.systemPrompt ?? null,
     featureValues: config.featureValues,
     concurrencyPolicy: "allow" as const,
+    sessionBehavior: normalizeSessionBehavior(config.sessionBehavior),
     resolvedAt: new Date().toISOString(),
   });
 }
@@ -250,6 +257,13 @@ function buildRuntimeSelectionConfig(
       undefined,
     authProfileKey: firstString(overrides.accountKey, profile.accountKey) ?? undefined,
   };
+}
+
+function resolveRuntimeProfileSessionBehavior(
+  overrides: RuntimeProfileLaunchOverrides,
+  profile: RuntimeProfile,
+): RuntimeProfileSessionBehavior {
+  return normalizeSessionBehavior(overrides.sessionBehavior ?? profile.sessionBehavior);
 }
 
 function resolveRuntimeSystemPrompt(
@@ -302,8 +316,25 @@ type SnapshotProfileSettings = Pick<
   "concurrencyPolicy" | "envOverlay" | "instructionOverlay"
 >;
 
+function resolveSnapshotSessionBehavior(
+  profile: RuntimeProfile | null,
+  overrides: RuntimeProfileLaunchOverrides | undefined,
+  config: AgentSessionConfig,
+): RuntimeProfileSessionBehavior {
+  if (profile) {
+    return normalizeSessionBehavior(overrides?.sessionBehavior ?? profile.sessionBehavior);
+  }
+  return normalizeSessionBehavior(config.sessionBehavior);
+}
+
 function resolveSnapshotConcurrencyPolicy(profile: RuntimeProfile | null) {
   return profile?.concurrencyPolicy ?? ("allow" as const);
+}
+
+function normalizeSessionBehavior(
+  value: RuntimeProfileSessionBehavior | null | undefined,
+): RuntimeProfileSessionBehavior {
+  return value === "fresh" || value === "continue" ? value : DEFAULT_SESSION_BEHAVIOR;
 }
 
 function mergeRecordValues<T extends Record<string, unknown>>(
