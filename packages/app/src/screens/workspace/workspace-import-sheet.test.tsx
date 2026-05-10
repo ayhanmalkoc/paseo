@@ -571,6 +571,85 @@ describe("WorkspaceImportSheet", () => {
     });
   });
 
+  it("uses the native source account instead of the saved provider default", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerLabel: "Claude Code",
+          source: { kind: "native-default", label: "Claude CLI default" },
+        }),
+      ],
+    }));
+    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+        authProfiles: [createAuthProfile()],
+      },
+    );
+
+    expect(await screen.findByText("Source: Claude CLI default")).toBeTruthy();
+    expect(screen.getByTestId("workspace-import-account-claude-source")).toBeTruthy();
+    fireEvent.click(await screen.findByTestId("workspace-import-session-claude-provider-thread-1"));
+
+    await waitFor(() => {
+      expect(importAgent).toHaveBeenCalledWith({
+        providerId: "claude",
+        providerHandleId: "provider-thread-1",
+        cwd: "/repo/paseo",
+        sessionBehavior: "continue",
+      });
+    });
+  });
+
+  it("uses the source auth profile when the native session came from a saved account", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerLabel: "Claude Code",
+          source: {
+            kind: "auth-profile",
+            authProfileKey: "claude-default",
+            label: "default@example.com",
+          },
+        }),
+      ],
+    }));
+    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+        authProfiles: [createAuthProfile()],
+      },
+    );
+
+    fireEvent.click(await screen.findByTestId("workspace-import-session-claude-provider-thread-1"));
+
+    await waitFor(() => {
+      expect(importAgent).toHaveBeenCalledWith({
+        providerId: "claude",
+        providerHandleId: "provider-thread-1",
+        cwd: "/repo/paseo",
+        authProfileKey: "claude-default",
+        sessionBehavior: "continue",
+      });
+    });
+  });
+
   it("shows an import error state without closing when selected session import fails", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",

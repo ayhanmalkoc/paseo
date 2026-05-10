@@ -1697,9 +1697,11 @@ describe("Codex persisted sessions", () => {
     const provider = new CodexAppServerAgentClient(createTestLogger(), undefined, {
       _createCodexClient: () => fakeClient,
     });
-    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
-      provider,
-    ).spawnAppServer = async () => {
+    let launchEnv: Record<string, string> | undefined;
+    castInternals<{
+      spawnAppServer: (env?: Record<string, string>) => Promise<ChildProcessWithoutNullStreams>;
+    }>(provider).spawnAppServer = async (env) => {
+      launchEnv = env;
       const child = new EventEmitter() as ChildProcessWithoutNullStreams;
       child.exitCode = 0;
       child.signalCode = null;
@@ -1710,9 +1712,21 @@ describe("Codex persisted sessions", () => {
       return child;
     };
 
-    const descriptors = await provider.listPersistedAgents({ cwd: "/workspace/project-a" });
+    const source = {
+      kind: "auth-profile" as const,
+      authProfileKey: "profile-a",
+      label: "profile-a@example.com",
+    };
+    const descriptors = await provider.listPersistedAgents({
+      cwd: "/workspace/project-a",
+      launchContext: { env: { CODEX_HOME: "/profiles/profile-a" } },
+      source,
+    });
 
+    expect(launchEnv).toEqual({ CODEX_HOME: "/profiles/profile-a" });
     expect(descriptors.map((d) => d.sessionId).sort()).toEqual(["thread-a1", "thread-a2"]);
     expect(descriptors.every((d) => d.cwd === "/workspace/project-a")).toBe(true);
+    expect(descriptors.every((d) => d.source === source)).toBe(true);
+    expect(descriptors.every((d) => d.persistence.metadata?.source === source)).toBe(true);
   });
 });

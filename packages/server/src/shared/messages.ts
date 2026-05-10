@@ -871,6 +871,12 @@ export type AgentListItemPayload = z.infer<typeof AgentListItemPayloadSchema>;
 
 export type AgentStreamEventPayload = z.infer<typeof AgentStreamEventPayloadSchema>;
 
+const RecentProviderSessionSourcePayloadSchema = z.object({
+  kind: z.enum(["native-default", "auth-profile"]),
+  authProfileKey: z.string().nullable().optional(),
+  label: z.string().nullable().optional(),
+});
+
 export const RecentProviderSessionDescriptorPayloadSchema = z.object({
   providerId: z.string(),
   providerLabel: z.string(),
@@ -880,6 +886,7 @@ export const RecentProviderSessionDescriptorPayloadSchema = z.object({
   firstPromptPreview: z.string().nullable(),
   lastPromptPreview: z.string().nullable(),
   lastActivityAt: z.string(),
+  source: RecentProviderSessionSourcePayloadSchema.optional(),
 });
 
 export type RecentProviderSessionDescriptorPayload = z.infer<

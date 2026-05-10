@@ -3348,7 +3348,9 @@ export class Session {
     );
 
     try {
-      const descriptor = await this.agentManager.findPersistedAgent(provider, providerHandleId);
+      const descriptor = await this.agentManager.findPersistedAgent(provider, providerHandleId, {
+        sourceAuthProfileKey: authProfileKey,
+      });
       if (!descriptor && provider === "opencode" && !cwd) {
         throw new Error(
           "OpenCode sessions require --cwd when the session cannot be found in persisted agents",
