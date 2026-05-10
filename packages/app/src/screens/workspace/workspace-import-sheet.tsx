@@ -583,6 +583,7 @@ export function WorkspaceImportSheet({
           <SegmentedControl
             testID="workspace-import-filters"
             size="sm"
+            constrainWidth={false}
             options={filterOptions}
             value={selectedProvider}
             onValueChange={setSelectedProvider}
@@ -600,6 +601,7 @@ export function WorkspaceImportSheet({
             <SegmentedControl
               testID="workspace-import-account-selector"
               size="sm"
+              constrainWidth={false}
               options={accountOptions}
               value={selectedAccountValue}
               onValueChange={handleAccountSelect}
