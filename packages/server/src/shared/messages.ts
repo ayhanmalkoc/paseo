@@ -2360,8 +2360,10 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         providersSnapshot: z.boolean().optional(),
         providerAuthProfiles: z.boolean().optional(),
+        providerAuthProfileProviders: z.array(AgentProviderSchema).optional(),
         providerAuthAccounts: z.boolean().optional(),
         providerAccountOnboarding: z.boolean().optional(),
+        providerAccountOnboardingProviders: z.array(AgentProviderSchema).optional(),
         runtimeProfiles: z.boolean().optional(),
         agentProfileSnapshots: z.boolean().optional(),
       })

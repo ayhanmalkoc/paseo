@@ -145,6 +145,10 @@ export class ProviderAuthService {
     return this.adapters.has(provider);
   }
 
+  getSupportedProviders(): AgentProvider[] {
+    return Array.from(this.adapters.keys()).sort();
+  }
+
   getNativeDefaultProviderHomeRef(provider: AgentProvider): ProviderHomeRef {
     return createNativeDefaultProviderHomeRef({
       provider,

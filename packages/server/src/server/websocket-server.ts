@@ -1109,8 +1109,11 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         providerAuthProfiles: true,
+        providerAuthProfileProviders: this.providerAuthService?.getSupportedProviders() ?? [],
         providerAuthAccounts: true,
         providerAccountOnboarding: this.accountOnboardingService !== null,
+        providerAccountOnboardingProviders:
+          this.accountOnboardingService?.getSupportedProviders() ?? [],
         runtimeProfiles: this.runtimeProfileService !== null,
         agentProfileSnapshots: true,
       },
