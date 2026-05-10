@@ -299,7 +299,7 @@ export function ExplorerSidebar({
 
   if (isMobile) {
     return (
-      <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
+      <View style={explorerStaticStyles.mobileOverlay} pointerEvents={overlayPointerEvents}>
         {/* Backdrop */}
         <Animated.View style={backdropCombinedStyle} />
 
@@ -504,6 +504,11 @@ function SidebarContent({
 // avoid the "Unable to find node on an unmounted component" crash when Unistyles
 // tries to patch the native node that Reanimated also manages.
 const explorerStaticStyles = RNStyleSheet.create({
+  mobileOverlay: {
+    ...RNStyleSheet.absoluteFillObject,
+    // Chrome mobile includes transformed off-screen children in page scroll width unless clipped.
+    overflow: "hidden" as const,
+  },
   backdrop: {
     ...RNStyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0, 0, 0, 0.5)",
