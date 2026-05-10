@@ -5,7 +5,10 @@ import React, { type ReactNode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DaemonClient, FetchRecentProviderSessionEntry } from "@server/client/daemon-client";
-import type { ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types";
+import type {
+  ProviderAuthProfile,
+  ProviderSnapshotEntry,
+} from "@server/server/agent/agent-sdk-types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceImportSheet } from "@/screens/workspace/workspace-import-sheet";
 
@@ -129,6 +132,21 @@ const mockSnapshot = vi.hoisted(() => ({
   },
 }));
 
+const mockAuthProfiles = vi.hoisted(() => ({
+  current: {
+    profiles: [] as ProviderAuthProfile[] | undefined,
+    isLoading: false,
+    isRefreshing: false,
+    isSupported: true,
+    error: null,
+    refetch: vi.fn(),
+    importCurrent: vi.fn(),
+    remove: vi.fn(),
+    setDefault: vi.fn(),
+    refreshProfile: vi.fn(),
+  },
+}));
+
 vi.mock("@/hooks/use-providers-snapshot", () => ({
   useProvidersSnapshot: () => ({
     entries: mockSnapshot.current.entries,
@@ -142,6 +160,10 @@ vi.mock("@/hooks/use-providers-snapshot", () => ({
   }),
 }));
 
+vi.mock("@/hooks/use-provider-auth-profiles", () => ({
+  useProviderAuthProfiles: () => mockAuthProfiles.current,
+}));
+
 interface RenderOptions {
   visible?: boolean;
   onClose?: () => void;
@@ -150,6 +172,8 @@ interface RenderOptions {
     entries?: ProviderSnapshotEntry[];
     supportsSnapshot?: boolean;
   };
+  authProfiles?: ProviderAuthProfile[];
+  isAuthProfilesSupported?: boolean;
 }
 
 function renderSheet(
@@ -159,6 +183,11 @@ function renderSheet(
   mockSnapshot.current = {
     entries: options?.snapshot?.entries,
     supportsSnapshot: options?.snapshot?.supportsSnapshot ?? false,
+  };
+  mockAuthProfiles.current = {
+    ...mockAuthProfiles.current,
+    profiles: options?.authProfiles ?? [],
+    isSupported: options?.isAuthProfilesSupported ?? true,
   };
 
   const queryClient = new QueryClient({
@@ -231,6 +260,21 @@ function createProviderSessionEntry(
     firstPromptPreview: "Import this external provider session",
     lastPromptPreview: "Import this external provider session",
     lastActivityAt: "2026-04-30T10:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createAuthProfile(overrides?: Partial<ProviderAuthProfile>): ProviderAuthProfile {
+  return {
+    provider: "claude",
+    key: "claude-default",
+    alias: "Claude default",
+    email: "default@example.com",
+    authMode: "external",
+    status: "ready",
+    isDefault: true,
+    createdAt: "2026-04-30T10:00:00.000Z",
+    updatedAt: "2026-04-30T10:00:00.000Z",
     ...overrides,
   };
 }
@@ -483,6 +527,46 @@ describe("WorkspaceImportSheet", () => {
     });
     expect(onImportedAgent).toHaveBeenCalledWith("agent-imported");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("imports a selected session with the selected provider account", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [createProviderSessionEntry({ providerId: "claude", providerLabel: "Claude Code" })],
+    }));
+    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+        authProfiles: [
+          createAuthProfile(),
+          createAuthProfile({
+            key: "claude-personal",
+            alias: "Personal Claude",
+            email: "personal@example.com",
+            isDefault: false,
+          }),
+        ],
+      },
+    );
+
+    await screen.findByText("Continue with account");
+    fireEvent.click(screen.getByTestId("workspace-import-account-claude-claude-personal"));
+    fireEvent.click(await screen.findByTestId("workspace-import-session-claude-provider-thread-1"));
+
+    await waitFor(() => {
+      expect(importAgent).toHaveBeenCalledWith({
+        providerId: "claude",
+        providerHandleId: "provider-thread-1",
+        cwd: "/repo/paseo",
+        authProfileKey: "claude-personal",
+      });
+    });
   });
 
   it("shows an import error state without closing when selected session import fails", async () => {

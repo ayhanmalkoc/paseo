@@ -257,7 +257,7 @@ const MODE_ICONS = {
 
 const EMPTY_AUTH_PROFILES: ProviderAuthProfile[] = [];
 const EMPTY_RUNTIME_PROFILES: RuntimeProfile[] = [];
-const DEFAULT_RUNTIME_PROFILE_LABEL = "Default profile";
+const CUSTOM_SETTINGS_LABEL = "Custom settings";
 
 function alwaysTrue() {
   return true;
@@ -336,7 +336,7 @@ function resolveRuntimeProfileRestartLabel(
   runtimeProfileId: string | null,
 ): string {
   if (!runtimeProfileId) {
-    return DEFAULT_RUNTIME_PROFILE_LABEL;
+    return CUSTOM_SETTINGS_LABEL;
   }
   const profile = runtimeProfiles.find((candidate) => candidate.id === runtimeProfileId);
   return profile?.name ?? "Selected profile";
@@ -387,13 +387,13 @@ function resolveRuntimeProfileControlState(input: {
   const selected = input.runtimeProfiles.find(
     (profile) => profile.id === input.selectedRuntimeProfileId,
   );
-  let display = DEFAULT_RUNTIME_PROFILE_LABEL;
+  let display = CUSTOM_SETTINGS_LABEL;
   if (input.isLoading) {
     display = "Loading profiles...";
   } else if (selected) {
     display = selected.name;
   } else if (input.allowAdHoc) {
-    display = DEFAULT_RUNTIME_PROFILE_LABEL;
+    display = CUSTOM_SETTINGS_LABEL;
   }
   return {
     hasControl:
@@ -754,7 +754,7 @@ function SheetPreferencesTriggerContent({
     <>
       <Settings2 size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
       <Text style={styles.prefsButtonText} numberOfLines={1}>
-        {displayRuntimeProfile || DEFAULT_RUNTIME_PROFILE_LABEL}
+        {displayRuntimeProfile || CUSTOM_SETTINGS_LABEL}
       </Text>
       <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
     </>
@@ -1599,7 +1599,7 @@ function RuntimeProfileAutoMenuItem({
 
   return (
     <DropdownMenuItem selected={selected} onSelect={handleSelect}>
-      {DEFAULT_RUNTIME_PROFILE_LABEL}
+      {CUSTOM_SETTINGS_LABEL}
     </DropdownMenuItem>
   );
 }

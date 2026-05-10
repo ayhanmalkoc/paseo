@@ -3338,7 +3338,7 @@ export class Session {
       });
       return;
     }
-    const { provider, providerHandleId, cwd, labels, requestId } = normalized;
+    const { provider, providerHandleId, cwd, authProfileKey, labels, requestId } = normalized;
     this.sessionLogger.info(
       { providerHandleId, provider },
       `Importing agent ${providerHandleId} (${provider})`,
@@ -3355,7 +3355,11 @@ export class Session {
       const handle = descriptor
         ? applyImportCwdOverride(descriptor.persistence, cwd)
         : buildImportPersistenceHandle({ provider, providerHandleId, cwd });
-      const overrides = cwd ? ({ cwd } satisfies Partial<AgentSessionConfig>) : undefined;
+      const importOverrides = {
+        ...(cwd ? { cwd } : {}),
+        ...(authProfileKey !== undefined ? { authProfileKey } : {}),
+      } satisfies Partial<AgentSessionConfig>;
+      const overrides = Object.keys(importOverrides).length > 0 ? importOverrides : undefined;
 
       await this.unarchiveAgentByHandle(handle);
       const snapshot = await this.agentManager.resumeAgentFromPersistence(

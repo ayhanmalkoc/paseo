@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, type PressableStateCallbackType, ScrollView, Text, View } from "react-native";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient, FetchRecentProviderSessionEntry } from "@server/client/daemon-client";
-import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
+import type { AgentProvider, ProviderAuthProfile } from "@server/server/agent/agent-sdk-types";
 import { IMPORTABLE_PROVIDERS } from "@server/shared/importable-providers";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
@@ -10,6 +10,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { getProviderIcon } from "@/components/provider-icons";
 import { formatTimeAgo } from "@/utils/time";
+import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 
 const IMPORTABLE_PROVIDER_IDS: Set<string> = new Set(IMPORTABLE_PROVIDERS);
@@ -17,6 +18,7 @@ const PER_PROVIDER_LIMIT = 15;
 const IMPORT_SHEET_SNAP_POINTS = ["70%", "92%"];
 const DISABLED_ACCESSIBILITY_STATE = { disabled: true };
 const ALL_FILTER_VALUE = "__all__";
+const DEFAULT_ACCOUNT_VALUE = "__default_account__";
 
 type RecentProviderSessionsClient = Pick<
   DaemonClient,
@@ -245,6 +247,92 @@ function buildProviderFilterOptions(
   return options;
 }
 
+function formatAuthProfileLabel(profile: ProviderAuthProfile): string {
+  return (
+    profile.email ||
+    profile.accountName ||
+    profile.alias ||
+    (profile.authMode === "api-key" ? "Codex API key" : "Codex account")
+  );
+}
+
+function groupAuthProfilesByProvider(
+  profiles: ReadonlyArray<ProviderAuthProfile> | undefined,
+): Map<string, ProviderAuthProfile[]> {
+  const grouped = new Map<string, ProviderAuthProfile[]>();
+  for (const profile of profiles ?? []) {
+    const providerProfiles = grouped.get(profile.provider) ?? [];
+    providerProfiles.push(profile);
+    grouped.set(profile.provider, providerProfiles);
+  }
+  return grouped;
+}
+
+function getAccountSelectorProvider(input: {
+  selectedProvider: string;
+  visibleEntries: ReadonlyArray<FetchRecentProviderSessionEntry>;
+}): string | null {
+  if (input.selectedProvider !== ALL_FILTER_VALUE) {
+    return input.selectedProvider;
+  }
+  const providers = new Set(input.visibleEntries.map((entry) => entry.providerId));
+  return providers.size === 1 ? [...providers][0] : null;
+}
+
+function buildAccountOptions(
+  provider: string,
+  authProfilesByProvider: ReadonlyMap<string, ProviderAuthProfile[]>,
+): SegmentedControlOption<string>[] {
+  const options: SegmentedControlOption<string>[] = [
+    {
+      value: DEFAULT_ACCOUNT_VALUE,
+      label: "Default account",
+      testID: `workspace-import-account-${provider}-default`,
+    },
+  ];
+  for (const profile of authProfilesByProvider.get(provider) ?? []) {
+    options.push({
+      value: profile.key,
+      label: formatAuthProfileLabel(profile),
+      disabled: profile.status !== "ready",
+      testID: `workspace-import-account-${provider}-${profile.key}`,
+    });
+  }
+  return options;
+}
+
+function resolveImportAuthProfileKey(input: {
+  provider: string;
+  selectedAccountByProvider: Readonly<Record<string, string>>;
+  authProfilesByProvider: ReadonlyMap<string, ProviderAuthProfile[]>;
+}): string | undefined {
+  const selected = input.selectedAccountByProvider[input.provider];
+  if (selected && selected !== DEFAULT_ACCOUNT_VALUE) {
+    return selected;
+  }
+  return input.authProfilesByProvider.get(input.provider)?.find((profile) => profile.isDefault)
+    ?.key;
+}
+
+function resolveSelectedAccountValue(
+  provider: string | null,
+  selectedAccountByProvider: Readonly<Record<string, string>>,
+): string {
+  return provider
+    ? (selectedAccountByProvider[provider] ?? DEFAULT_ACCOUNT_VALUE)
+    : DEFAULT_ACCOUNT_VALUE;
+}
+
+function shouldShowAccountSelector(input: {
+  isSupported: boolean;
+  accountSelectorProvider: string | null;
+  visibleEntries: ReadonlyArray<FetchRecentProviderSessionEntry>;
+}): boolean {
+  return (
+    input.isSupported && input.accountSelectorProvider !== null && input.visibleEntries.length > 0
+  );
+}
+
 function WorkspaceImportSheetRow({
   entry,
   disabled,
@@ -317,6 +405,7 @@ export function WorkspaceImportSheet({
   const { entries: snapshotEntries, supportsSnapshot } = useProvidersSnapshot(serverId, {
     enabled: visible,
   });
+  const providerAuthProfiles = useProviderAuthProfiles(serverId, null);
 
   const providersToFetch = useMemo(
     () => resolveProvidersToFetch(supportsSnapshot, snapshotEntries),
@@ -375,16 +464,49 @@ export function WorkspaceImportSheet({
     () => buildProviderFilterOptions(filterProviders, providerLabelById),
     [filterProviders, providerLabelById],
   );
+  const authProfilesByProvider = useMemo(
+    () => groupAuthProfilesByProvider(providerAuthProfiles.profiles),
+    [providerAuthProfiles.profiles],
+  );
+  const [selectedAccountByProvider, setSelectedAccountByProvider] = useState<
+    Record<string, string>
+  >({});
+  const accountSelectorProvider = useMemo(
+    () => getAccountSelectorProvider({ selectedProvider, visibleEntries }),
+    [selectedProvider, visibleEntries],
+  );
+  const accountOptions = useMemo(
+    () =>
+      accountSelectorProvider
+        ? buildAccountOptions(accountSelectorProvider, authProfilesByProvider)
+        : [],
+    [accountSelectorProvider, authProfilesByProvider],
+  );
+  const selectedAccountValue = resolveSelectedAccountValue(
+    accountSelectorProvider,
+    selectedAccountByProvider,
+  );
+  const showAccountSelector = shouldShowAccountSelector({
+    isSupported: providerAuthProfiles.isSupported,
+    accountSelectorProvider,
+    visibleEntries,
+  });
 
   const importMutation = useMutation({
     mutationFn: async (entry: FetchRecentProviderSessionEntry) => {
       if (!client || !workspaceDirectory) {
         throw new Error("Host is not connected");
       }
+      const authProfileKey = resolveImportAuthProfileKey({
+        provider: entry.providerId,
+        selectedAccountByProvider,
+        authProfilesByProvider,
+      });
       const agent = await client.importAgent({
         providerId: entry.providerId,
         providerHandleId: entry.providerHandleId,
         cwd: workspaceDirectory,
+        ...(authProfileKey ? { authProfileKey } : {}),
       });
       return agent;
     },
@@ -405,6 +527,18 @@ export function WorkspaceImportSheet({
       importMutation.mutate(entry);
     },
     [importMutation],
+  );
+  const handleAccountSelect = useCallback(
+    (value: string) => {
+      if (!accountSelectorProvider) {
+        return;
+      }
+      setSelectedAccountByProvider((current) => ({
+        ...current,
+        [accountSelectorProvider]: value,
+      }));
+    },
+    [accountSelectorProvider],
   );
 
   const erroredProviderLabels = useMemo(
@@ -455,6 +589,24 @@ export function WorkspaceImportSheet({
           />
         </ScrollView>
       ) : null}
+      {showAccountSelector ? (
+        <View style={styles.accountSection}>
+          <Text style={styles.accountLabel}>Continue with account</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.accountOptionsRow}
+          >
+            <SegmentedControl
+              testID="workspace-import-account-selector"
+              size="sm"
+              options={accountOptions}
+              value={selectedAccountValue}
+              onValueChange={handleAccountSelect}
+            />
+          </ScrollView>
+        </View>
+      ) : null}
       <SheetStatusMessages
         isClientReady={Boolean(client && workspaceDirectory)}
         isSnapshotUnsupported={isSnapshotUnsupported}
@@ -487,6 +639,17 @@ const styles = StyleSheet.create((theme) => ({
   filterRow: {
     flexDirection: "row",
     paddingBottom: theme.spacing[2],
+  },
+  accountSection: {
+    gap: theme.spacing[1],
+    paddingBottom: theme.spacing[2],
+  },
+  accountLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  accountOptionsRow: {
+    flexDirection: "row",
   },
   list: {
     gap: theme.spacing[1],

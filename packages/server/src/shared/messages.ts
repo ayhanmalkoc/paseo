@@ -1386,6 +1386,7 @@ export const ImportAgentRequestMessageSchema = z.object({
   sessionId: z.string().optional(),
   providerHandleId: z.string().optional(),
   cwd: z.string().optional(),
+  authProfileKey: z.string().nullable().optional(),
   labels: z.record(z.string()).optional(),
   requestId: z.string(),
 });

@@ -158,6 +158,7 @@ const perfNow: () => number =
 
 interface ImportAgentInputBase {
   cwd?: string;
+  authProfileKey?: string | null;
   labels?: Record<string, string>;
 }
 
@@ -2011,6 +2012,7 @@ export class DaemonClient {
         ? { providerId: input.providerId, providerHandleId: input.providerHandleId }
         : { provider: input.provider, sessionId: input.sessionId }),
       ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(input.authProfileKey !== undefined ? { authProfileKey: input.authProfileKey } : {}),
       ...(input.labels && Object.keys(input.labels).length > 0 ? { labels: input.labels } : {}),
     });
 

@@ -23,6 +23,7 @@ export interface NormalizedImportAgentRequest {
   provider: string;
   providerHandleId: string;
   cwd?: string;
+  authProfileKey?: string | null;
   labels?: Record<string, string>;
   requestId: string;
 }
@@ -66,6 +67,10 @@ export function normalizeImportAgentRequest(
     provider,
     providerHandleId,
     cwd: msg.cwd,
+    authProfileKey:
+      typeof msg.authProfileKey === "string"
+        ? msg.authProfileKey.trim() || null
+        : msg.authProfileKey,
     labels: msg.labels,
     requestId: msg.requestId,
   };
