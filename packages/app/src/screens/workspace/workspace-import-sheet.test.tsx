@@ -575,6 +575,48 @@ describe("WorkspaceImportSheet", () => {
     });
   });
 
+  it("explains that a selected Codex account copies the native session before opening", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [createProviderSessionEntry({ providerId: "codex", providerLabel: "Codex" })],
+    }));
+    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("codex")] },
+        authProfiles: [
+          createAuthProfile({
+            provider: "codex",
+            key: "codex-default",
+            alias: "Codex default",
+            email: "default-codex@example.com",
+          }),
+          createAuthProfile({
+            provider: "codex",
+            key: "codex-personal",
+            alias: "Personal Codex",
+            email: "personal-codex@example.com",
+            isDefault: false,
+          }),
+        ],
+      },
+    );
+
+    await screen.findByText("Continue with account");
+    fireEvent.click(screen.getByTestId("workspace-import-account-codex-codex-personal"));
+
+    expect(
+      await screen.findByText(
+        "This Codex session will be copied into the selected account before opening.",
+      ),
+    ).toBeTruthy();
+  });
+
   it("uses the native source account instead of the saved provider default", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",

@@ -7,6 +7,7 @@ import type {
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
+  AgentPreparePersistedSessionForResumeInput,
   McpServerConfig,
   AgentPersistenceHandle,
   AgentPermissionRequest,
@@ -28,12 +29,13 @@ import type {
   ListModelsOptions,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
+  ProviderHomeRef,
 } from "../agent-sdk-types.js";
 import type { Logger } from "pino";
 import { homedir } from "node:os";
 
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Dirent } from "node:fs";
 import * as fsSync from "node:fs";
 import fs from "node:fs/promises";
@@ -384,6 +386,163 @@ async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSetting
 
 function resolveCodexHomeDir(): string {
   return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+}
+
+function resolveCodexHomeDirFromEnv(env: Record<string, string> | undefined): string {
+  return path.resolve(env?.CODEX_HOME ?? resolveCodexHomeDir());
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  const content = await fs.readFile(filePath);
+  hash.update(content);
+  return hash.digest("hex");
+}
+
+async function findCodexRolloutFile(input: {
+  codexHome: string;
+  threadId: string;
+}): Promise<{ filePath: string; relativePath: string } | null> {
+  const sessionsRoot = path.join(input.codexHome, "sessions");
+  const sessionsRootReal = await realpathOrNull(sessionsRoot);
+  if (!sessionsRootReal) {
+    return null;
+  }
+  const stack = [sessionsRootReal];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    if (!dir) {
+      continue;
+    }
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+      if (
+        !entry.isFile() ||
+        !entry.name.endsWith(".jsonl") ||
+        !entry.name.includes(input.threadId)
+      ) {
+        continue;
+      }
+      const fileRealPath = await fs.realpath(fullPath);
+      if (!isPathInside(fileRealPath, sessionsRootReal)) {
+        throw new Error("Refusing to copy a Codex rollout outside the source sessions directory");
+      }
+      const relativePath = path.relative(sessionsRootReal, fileRealPath);
+      return { filePath: fileRealPath, relativePath };
+    }
+  }
+  return null;
+}
+
+async function copyCodexRolloutForResume(input: {
+  sourceCodexHome: string;
+  targetCodexHome: string;
+  threadId: string;
+  sourceProviderHomeRef?: ProviderHomeRef | null;
+  targetProviderHomeRef?: ProviderHomeRef | null;
+}): Promise<Record<string, unknown> | null> {
+  const sourceHome = path.resolve(input.sourceCodexHome);
+  const targetHome = path.resolve(input.targetCodexHome);
+  if (sourceHome === targetHome) {
+    return null;
+  }
+
+  const source = await findCodexRolloutFile({ codexHome: sourceHome, threadId: input.threadId });
+  if (!source) {
+    throw new Error(
+      `Cannot copy Codex session '${input.threadId}' to the selected account because the source rollout was not found`,
+    );
+  }
+
+  const targetSessionsRoot = path.join(targetHome, "sessions");
+  const targetPath = path.join(targetSessionsRoot, source.relativePath);
+  const targetSessionsRootResolved = path.resolve(targetSessionsRoot);
+  const targetPathResolved = path.resolve(targetPath);
+  if (!isPathInside(targetPathResolved, targetSessionsRootResolved)) {
+    throw new Error("Refusing to copy a Codex rollout outside the target sessions directory");
+  }
+
+  await fs.mkdir(path.dirname(targetPathResolved), { recursive: true });
+  const targetDirReal = await fs.realpath(path.dirname(targetPathResolved));
+  const targetRootReal = await fs.realpath(targetSessionsRootResolved);
+  if (!isPathInside(targetDirReal, targetRootReal)) {
+    throw new Error("Refusing to copy a Codex rollout through a target directory symlink");
+  }
+
+  const sourceHash = await sha256File(source.filePath);
+  const targetStat = await lstatOrNull(targetPathResolved);
+  if (targetStat) {
+    if (!targetStat.isFile()) {
+      throw new Error("Cannot copy Codex session because the target rollout path is not a file");
+    }
+    const targetHash = await sha256File(targetPathResolved);
+    if (targetHash !== sourceHash) {
+      throw new Error(
+        "Cannot copy Codex session because the selected account has a different rollout at the target path",
+      );
+    }
+    return {
+      kind: "rollout-file-copy",
+      sourceProviderHomeRef: input.sourceProviderHomeRef ?? null,
+      targetProviderHomeRef: input.targetProviderHomeRef ?? null,
+      threadId: input.threadId,
+      sourceRelativePath: source.relativePath,
+      targetRelativePath: source.relativePath,
+      sourceSha256: sourceHash,
+      targetSha256: targetHash,
+      clonedAt: new Date().toISOString(),
+      alreadyPresent: true,
+    };
+  }
+
+  await fs.copyFile(source.filePath, targetPathResolved, fsSync.constants.COPYFILE_EXCL);
+  const targetHash = await sha256File(targetPathResolved);
+  if (targetHash !== sourceHash) {
+    throw new Error("Copied Codex rollout hash mismatch");
+  }
+
+  return {
+    kind: "rollout-file-copy",
+    sourceProviderHomeRef: input.sourceProviderHomeRef ?? null,
+    targetProviderHomeRef: input.targetProviderHomeRef ?? null,
+    threadId: input.threadId,
+    sourceRelativePath: source.relativePath,
+    targetRelativePath: source.relativePath,
+    sourceSha256: sourceHash,
+    targetSha256: targetHash,
+    clonedAt: new Date().toISOString(),
+  };
+}
+
+async function realpathOrNull(filePath: string): Promise<string | null> {
+  try {
+    return await fs.realpath(filePath);
+  } catch {
+    return null;
+  }
+}
+
+async function lstatOrNull(filePath: string): Promise<fsSync.Stats | null> {
+  try {
+    return await fs.lstat(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function isPathInside(candidate: string, parent: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function decodeEscapedChar(next: string): string {
@@ -3577,6 +3736,7 @@ class CodexAppServerAgentSession implements AgentSession {
         extra: this.config.extra,
         systemPrompt: this.config.systemPrompt,
         mcpServers: this.config.mcpServers,
+        codexSessionClone: this.resumeHandle?.metadata?.codexSessionClone,
       },
     };
   }
@@ -4858,6 +5018,40 @@ export class CodexAppServerAgentClient implements AgentClient {
     );
     await session.connect();
     return session;
+  }
+
+  async preparePersistedSessionForResume(
+    input: AgentPreparePersistedSessionForResumeInput,
+  ): Promise<AgentPersistenceHandle> {
+    const threadId = input.handle.nativeHandle ?? input.handle.sessionId;
+    if (!threadId) {
+      return input.handle;
+    }
+    const sourceProviderHomeRef = input.sourceProviderHomeRef ?? null;
+    const targetProviderHomeRef = input.config.providerHomeRef ?? null;
+    const sourceHome = resolveCodexHomeDirFromEnv(input.sourceLaunchContext?.env);
+    const targetHome = resolveCodexHomeDirFromEnv(input.launchContext.env);
+    const cloneMetadata = await copyCodexRolloutForResume({
+      sourceCodexHome: sourceHome,
+      targetCodexHome: targetHome,
+      threadId,
+      sourceProviderHomeRef,
+      targetProviderHomeRef,
+    });
+    if (!cloneMetadata) {
+      return input.handle;
+    }
+    this.logger.info(
+      { threadId, sourceProviderHomeRef, targetProviderHomeRef },
+      "Copied Codex session rollout to selected account",
+    );
+    return {
+      ...input.handle,
+      metadata: {
+        ...input.handle.metadata,
+        codexSessionClone: cloneMetadata,
+      },
+    };
   }
 
   async listPersistedAgents(

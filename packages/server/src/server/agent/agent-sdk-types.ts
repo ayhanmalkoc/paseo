@@ -623,6 +623,15 @@ export interface PersistedAgentDescriptor {
   source?: PersistedAgentSource;
 }
 
+export interface AgentPreparePersistedSessionForResumeInput {
+  handle: AgentPersistenceHandle;
+  config: AgentSessionConfig;
+  launchContext: AgentLaunchContext;
+  sourceProviderHomeRef?: ProviderHomeRef | null;
+  sourceLaunchContext?: AgentLaunchContext;
+  reason: "import" | "reload";
+}
+
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
@@ -749,6 +758,9 @@ export interface AgentClient {
     launchContext?: AgentLaunchContext,
     options?: AgentResumeSessionOptions,
   ): Promise<AgentSession>;
+  preparePersistedSessionForResume?(
+    input: AgentPreparePersistedSessionForResumeInput,
+  ): Promise<AgentPersistenceHandle>;
   listModels(options: ListModelsOptions): Promise<AgentModelDefinition[]>;
   listModes?(options: ListModesOptions): Promise<AgentMode[]>;
   listPersistedAgents?(options?: ListPersistedAgentsOptions): Promise<PersistedAgentDescriptor[]>;
