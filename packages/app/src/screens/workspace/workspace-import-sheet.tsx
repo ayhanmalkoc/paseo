@@ -10,6 +10,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { getProviderIcon } from "@/components/provider-icons";
 import { formatTimeAgo } from "@/utils/time";
+import { isWeb } from "@/constants/platform";
 import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 
@@ -577,6 +578,7 @@ export function WorkspaceImportSheet({
       {showFilter ? (
         <ScrollView
           horizontal
+          style={styles.horizontalScroller}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterRow}
         >
@@ -595,6 +597,7 @@ export function WorkspaceImportSheet({
           <Text style={styles.accountLabel}>Continue with account</Text>
           <ScrollView
             horizontal
+            style={styles.horizontalScroller}
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.accountOptionsRow}
           >
@@ -638,6 +641,19 @@ export function WorkspaceImportSheet({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  horizontalScroller: {
+    width: "100%",
+    maxWidth: "100%",
+    flexGrow: 0,
+    flexShrink: 1,
+    ...(isWeb
+      ? {
+          overflowX: "auto",
+          overflowY: "hidden",
+          touchAction: "pan-x",
+        }
+      : null),
+  },
   filterRow: {
     flexDirection: "row",
     paddingBottom: theme.spacing[2],
