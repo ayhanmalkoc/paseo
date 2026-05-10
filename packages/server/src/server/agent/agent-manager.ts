@@ -38,6 +38,7 @@ import type {
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
   PersistedAgentSource,
+  ProviderHomeRef,
 } from "./agent-sdk-types.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import {
@@ -1151,6 +1152,7 @@ export class AgentManager {
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       sessionBehavior?: RuntimeProfileSessionBehavior;
+      resumeReason?: "import" | "reload";
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(
@@ -1188,11 +1190,20 @@ export class AgentManager {
       );
     }
     const sessionBehavior = resolveSessionBehavior(options?.sessionBehavior);
+    const preparedHandle =
+      sessionBehavior === "fresh"
+        ? handle
+        : await this.preparePersistedSessionForResume({
+            client,
+            handle,
+            resolvedLaunch,
+            reason: options?.resumeReason ?? "reload",
+          });
     const session =
       sessionBehavior === "fresh"
         ? await client.createSession(resolvedLaunch.config, resolvedLaunch.launchContext)
         : await client.resumeSession(
-            handle,
+            preparedHandle,
             hasResumeOverrides ? resumeOverrides : undefined,
             resolvedLaunch.launchContext,
             { strict: true },
@@ -1293,7 +1304,12 @@ export class AgentManager {
     sessionBehavior: RuntimeProfileSessionBehavior;
   }): Promise<AgentSession> {
     if (input.handle && input.forceCreateSession !== true && input.sessionBehavior === "continue") {
-      const handle = input.handle;
+      const handle = await this.preparePersistedSessionForResume({
+        client: input.client,
+        handle: input.handle,
+        resolvedLaunch: input.resolvedLaunch,
+        reason: "reload",
+      });
       return input.client.resumeSession(
         handle,
         input.resolvedLaunch.config,
@@ -1305,6 +1321,29 @@ export class AgentManager {
       input.resolvedLaunch.config,
       input.resolvedLaunch.launchContext,
     );
+  }
+
+  private async preparePersistedSessionForResume(input: {
+    client: AgentClient;
+    handle: AgentPersistenceHandle;
+    resolvedLaunch: ResolvedAgentLaunch;
+    reason: "import" | "reload";
+  }): Promise<AgentPersistenceHandle> {
+    if (!input.client.preparePersistedSessionForResume) {
+      return input.handle;
+    }
+    const sourceProviderHomeRef = this.resolvePersistenceSourceProviderHomeRef(input.handle);
+    const sourceLaunchContext = sourceProviderHomeRef
+      ? await this.resolveProviderHomeLaunchContext(input.handle.provider, sourceProviderHomeRef)
+      : undefined;
+    return input.client.preparePersistedSessionForResume({
+      handle: input.handle,
+      config: input.resolvedLaunch.config,
+      launchContext: input.resolvedLaunch.launchContext,
+      sourceProviderHomeRef,
+      sourceLaunchContext,
+      reason: input.reason,
+    });
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
@@ -3734,6 +3773,38 @@ export class AgentManager {
       agentId: agent.id,
       profileSnapshot: agent.config.profileSnapshot,
     }));
+  }
+
+  private resolvePersistenceSourceProviderHomeRef(
+    handle: AgentPersistenceHandle,
+  ): ProviderHomeRef | null {
+    const metadata = handle.metadata ?? {};
+    const direct = normalizeProviderHomeRef(
+      metadata.providerHomeRef as ProviderHomeRef | null | undefined,
+      handle.provider,
+    );
+    if (direct) {
+      return direct;
+    }
+    const source =
+      metadata.source && typeof metadata.source === "object"
+        ? (metadata.source as PersistedAgentSource)
+        : null;
+    return normalizeProviderHomeRef(source?.providerHomeRef, handle.provider);
+  }
+
+  private async resolveProviderHomeLaunchContext(
+    provider: AgentProvider,
+    providerHomeRef: ProviderHomeRef,
+  ): Promise<AgentLaunchContext> {
+    if (!this.providerAuthService) {
+      return {};
+    }
+    const launch = await this.providerAuthService.resolveLaunchContext({
+      provider,
+      providerHomeRef,
+    });
+    return launch.env ? { env: launch.env } : {};
   }
 
   private async resolveProviderAuthLaunchContext(

@@ -3386,6 +3386,7 @@ export class Session {
         {
           labels,
           sessionBehavior: sessionBehavior ?? "continue",
+          resumeReason: "import",
         },
       );
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);

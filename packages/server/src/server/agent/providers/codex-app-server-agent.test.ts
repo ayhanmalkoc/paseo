@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -1659,6 +1659,93 @@ describe("Codex app-server provider", () => {
 });
 
 describe("Codex persisted sessions", () => {
+  test("copies a source rollout into the selected Codex account before resuming", async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), "codex-rollout-clone-"));
+    try {
+      const threadId = "019e1330-52de-75a1-9a41-2875b5457d29";
+      const sourceHome = path.join(rootDir, "source-home");
+      const targetHome = path.join(rootDir, "target-home");
+      const rolloutRelativePath = path.join(
+        "2026",
+        "05",
+        "10",
+        `rollout-2026-05-10T20-39-54-${threadId}.jsonl`,
+      );
+      const sourceRolloutPath = path.join(sourceHome, "sessions", rolloutRelativePath);
+      const targetRolloutPath = path.join(targetHome, "sessions", rolloutRelativePath);
+      const rolloutContent = `${JSON.stringify({
+        type: "session_meta",
+        id: threadId,
+        cwd: "/repo/paseo",
+      })}\n`;
+      mkdirSync(path.dirname(sourceRolloutPath), { recursive: true });
+      writeFileSync(sourceRolloutPath, rolloutContent);
+
+      const provider = new CodexAppServerAgentClient(createTestLogger());
+      const prepared = await provider.preparePersistedSessionForResume({
+        handle: {
+          provider: "codex",
+          sessionId: threadId,
+          nativeHandle: threadId,
+          metadata: {
+            source: {
+              kind: "native-default",
+              providerHomeRef: {
+                kind: "native-default",
+                provider: "codex",
+              },
+              label: "Source account",
+            },
+          },
+        },
+        config: createConfig({
+          providerHomeRef: {
+            kind: "managed-profile",
+            provider: "codex",
+            profileKey: "target-account",
+          },
+        }),
+        launchContext: { env: { CODEX_HOME: targetHome } },
+        sourceProviderHomeRef: {
+          kind: "native-default",
+          provider: "codex",
+        },
+        sourceLaunchContext: { env: { CODEX_HOME: sourceHome } },
+        reason: "import",
+      });
+
+      expect(existsSync(targetRolloutPath)).toBe(true);
+      expect(readFileSync(targetRolloutPath, "utf8")).toBe(rolloutContent);
+      expect(prepared.metadata?.source).toEqual({
+        kind: "native-default",
+        providerHomeRef: {
+          kind: "native-default",
+          provider: "codex",
+        },
+        label: "Source account",
+      });
+      expect(prepared.metadata?.codexSessionClone).toEqual(
+        expect.objectContaining({
+          kind: "rollout-file-copy",
+          threadId,
+          sourceRelativePath: rolloutRelativePath,
+          targetRelativePath: rolloutRelativePath,
+          sourceProviderHomeRef: {
+            kind: "native-default",
+            provider: "codex",
+          },
+          targetProviderHomeRef: {
+            kind: "managed-profile",
+            provider: "codex",
+            profileKey: "target-account",
+          },
+        }),
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   test("listPersistedAgents returns only sessions whose cwd matches the requested cwd", async () => {
     const allThreads = [
       {

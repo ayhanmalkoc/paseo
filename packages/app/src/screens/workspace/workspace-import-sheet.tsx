@@ -323,6 +323,26 @@ function buildAccountOptions(
   return options;
 }
 
+function resolveExplicitAccountImportHint(input: {
+  isExplicitAccountSelection: boolean;
+  accountSelectorProvider: string | null;
+}): string | null {
+  if (!input.isExplicitAccountSelection) {
+    return null;
+  }
+  if (input.accountSelectorProvider === "codex") {
+    return "This Codex session will be copied into the selected account before opening.";
+  }
+  return "This session will continue with the selected account.";
+}
+
+function ExplicitAccountImportHint({ hint }: { hint: string | null }) {
+  if (!hint) {
+    return null;
+  }
+  return <Text style={styles.accountHint}>{hint}</Text>;
+}
+
 function resolveImportProviderHomeRef(input: {
   entry: FetchRecentProviderSessionEntry;
   selectedAccountByProvider: Readonly<Record<string, string>>;
@@ -533,6 +553,10 @@ export function WorkspaceImportSheet({
     selectedAccountByProvider,
   );
   const isExplicitAccountSelection = selectedAccountValue !== SOURCE_ACCOUNT_VALUE;
+  const explicitAccountImportHint = resolveExplicitAccountImportHint({
+    isExplicitAccountSelection,
+    accountSelectorProvider,
+  });
   const showAccountSelector = shouldShowAccountSelector({
     isSupported: providerAuthProfiles.isSupported,
     accountSelectorProvider,
@@ -646,11 +670,7 @@ export function WorkspaceImportSheet({
           <Text style={styles.accountHint}>
             Source account resumes the session from the native account that created it.
           </Text>
-          {isExplicitAccountSelection ? (
-            <Text style={styles.accountHint}>
-              A different saved account may fail if it does not have the same native thread.
-            </Text>
-          ) : null}
+          <ExplicitAccountImportHint hint={explicitAccountImportHint} />
           <ScrollView
             horizontal
             style={styles.horizontalScroller}
