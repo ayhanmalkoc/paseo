@@ -487,8 +487,46 @@ async function copyCodexRolloutForResume(input: {
     }
     const targetHash = await sha256File(targetPathResolved);
     if (targetHash !== sourceHash) {
+      const sourceContent = await fs.readFile(source.filePath, "utf8");
+      const targetContent = await fs.readFile(targetPathResolved, "utf8");
+      if (sourceContent.startsWith(targetContent)) {
+        const missingContent = sourceContent.slice(targetContent.length);
+        await fs.appendFile(targetPathResolved, missingContent);
+        const fastForwardedHash = await sha256File(targetPathResolved);
+        if (fastForwardedHash !== sourceHash) {
+          throw new Error("Fast-forwarded Codex rollout hash mismatch");
+        }
+        return {
+          kind: "rollout-file-copy",
+          sourceProviderHomeRef: input.sourceProviderHomeRef ?? null,
+          targetProviderHomeRef: input.targetProviderHomeRef ?? null,
+          threadId: input.threadId,
+          sourceRelativePath: source.relativePath,
+          targetRelativePath: source.relativePath,
+          sourceSha256: sourceHash,
+          targetSha256: fastForwardedHash,
+          clonedAt: new Date().toISOString(),
+          fastForwarded: true,
+          appendedBytes: Buffer.byteLength(missingContent),
+        };
+      }
+      if (targetContent.startsWith(sourceContent)) {
+        return {
+          kind: "rollout-file-copy",
+          sourceProviderHomeRef: input.sourceProviderHomeRef ?? null,
+          targetProviderHomeRef: input.targetProviderHomeRef ?? null,
+          threadId: input.threadId,
+          sourceRelativePath: source.relativePath,
+          targetRelativePath: source.relativePath,
+          sourceSha256: sourceHash,
+          targetSha256: targetHash,
+          clonedAt: new Date().toISOString(),
+          alreadyPresent: true,
+          targetAlreadyAhead: true,
+        };
+      }
       throw new Error(
-        "Cannot copy Codex session because the selected account has a different rollout at the target path",
+        "Cannot sync Codex session because the selected account has a divergent rollout at the target path",
       );
     }
     return {
