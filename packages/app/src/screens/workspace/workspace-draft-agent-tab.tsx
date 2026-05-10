@@ -319,6 +319,9 @@ function buildDraftAgentSnapshot(input: {
   if (!provider) {
     throw new Error("Select a model");
   }
+  const providerHomeRef = authProfileKey
+    ? { kind: "managed-profile" as const, provider, profileKey: authProfileKey }
+    : null;
   return {
     serverId,
     id: tabId,
@@ -337,11 +340,13 @@ function buildDraftAgentSnapshot(input: {
     title: "Agent",
     cwd: workspaceDirectory,
     model,
+    providerHomeRef,
     authProfileKey,
     profileSnapshot: runtimeProfileId
       ? {
           sourceProfileId: runtimeProfileId,
           provider,
+          providerHomeRef,
           accountKey: authProfileKey,
           model,
           modeId,

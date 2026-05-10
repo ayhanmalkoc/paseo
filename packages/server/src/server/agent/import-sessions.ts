@@ -5,6 +5,7 @@ import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type {
   AgentPersistenceHandle,
   AgentProvider,
+  ProviderHomeRef,
   PersistedAgentDescriptor,
   RuntimeProfileSessionBehavior,
 } from "./agent-sdk-types.js";
@@ -24,6 +25,8 @@ export interface NormalizedImportAgentRequest {
   provider: string;
   providerHandleId: string;
   cwd?: string;
+  providerHomeRef?: ProviderHomeRef | null;
+  /** @deprecated COMPAT(providerHomeRef): accepted from old clients only. */
   authProfileKey?: string | null;
   sessionBehavior?: RuntimeProfileSessionBehavior;
   labels?: Record<string, string>;
@@ -69,6 +72,7 @@ export function normalizeImportAgentRequest(
     provider,
     providerHandleId,
     cwd: msg.cwd,
+    providerHomeRef: msg.providerHomeRef,
     authProfileKey:
       typeof msg.authProfileKey === "string"
         ? msg.authProfileKey.trim() || null

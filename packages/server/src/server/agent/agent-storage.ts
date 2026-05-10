@@ -15,6 +15,8 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     modeId: z.string().nullable().optional(),
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
+    providerHomeRef: z.record(z.any()).nullable().optional(),
+    // COMPAT(providerHomeRef): accepted when reading old stored agents.
     authProfileKey: z.string().nullable().optional(),
     runtimeProfileId: z.string().nullable().optional(),
     profileOverrides: z.record(z.any()).nullable().optional(),
@@ -77,6 +79,7 @@ export type SerializableAgentConfig = Pick<
   | "modeId"
   | "model"
   | "thinkingOptionId"
+  | "providerHomeRef"
   | "authProfileKey"
   | "runtimeProfileId"
   | "profileOverrides"

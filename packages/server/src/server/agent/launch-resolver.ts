@@ -3,6 +3,7 @@ import type {
   AgentProfileSnapshot,
   AgentProvider,
   AgentSessionConfig,
+  ProviderHomeRef,
   RuntimeLaunchWarning,
   RuntimeProfile,
   RuntimeProfileLaunchOverrides,
@@ -11,6 +12,12 @@ import type {
 import type { ProviderAuthService } from "./provider-auth-service.js";
 import type { RuntimeProfileService } from "./runtime-profile-service.js";
 import { AccountLeaseCoordinator, type AccountLeaseSnapshot } from "./account-lease-coordinator.js";
+import {
+  createManagedProviderHomeRef,
+  createNativeDefaultProviderHomeRef,
+  getManagedProviderHomeProfileKey,
+  normalizeProviderHomeRef,
+} from "./provider-home-ref.js";
 
 export interface ResolvedAgentLaunch {
   config: AgentSessionConfig;
@@ -55,28 +62,31 @@ export class LaunchResolver {
       !profile && !mergedConfig.profileOverrides && !mergedConfig.profileSnapshot?.sourceProfileId
         ? mergedConfig.profileSnapshot
         : undefined;
-    const resolvedAccountKey = normalizeSelection(
-      mergedConfig.authProfileKey ??
-        previousAdHocSnapshot?.accountKey ??
-        mergedConfig.profileOverrides?.accountKey ??
-        profile?.accountKey,
-    );
+    const requestedProviderHomeRef = resolveProviderHomeRefSelection({
+      provider: mergedConfig.provider,
+      config: mergedConfig,
+      previousAdHocSnapshot,
+      overrides: mergedConfig.profileOverrides,
+      profile,
+    });
     const authLaunch = await this.resolveAuthLaunch({
       provider: mergedConfig.provider,
-      requestedAccountKey: resolvedAccountKey,
+      requestedProviderHomeRef,
       resolveDefault: input.resolveDefaultAuthProfile,
       sourceProfile: profile,
     });
+    const { authProfileKey: _deprecatedAuthProfileKey, ...configWithoutDeprecatedAuth } =
+      mergedConfig;
     const config = {
-      ...mergedConfig,
+      ...configWithoutDeprecatedAuth,
       ...(profile ? { runtimeProfileId: profile.id } : {}),
-      ...(authLaunch.profileKey ? { authProfileKey: authLaunch.profileKey } : {}),
+      providerHomeRef: authLaunch.providerHomeRef,
     };
     const snapshot = this.buildSnapshot({
       profile,
       config,
       overrides: mergedConfig.profileOverrides,
-      accountKey: authLaunch.profileKey,
+      providerHomeRef: authLaunch.providerHomeRef,
     });
     const warnings = this.leaseCoordinator.evaluate({
       candidate: snapshot,
@@ -144,23 +154,29 @@ export class LaunchResolver {
 
   private async resolveAuthLaunch(input: {
     provider: AgentProvider;
-    requestedAccountKey: string | null;
+    requestedProviderHomeRef: ProviderHomeRef | null;
     resolveDefault: boolean;
     sourceProfile: RuntimeProfile | null;
-  }): Promise<{ profileKey: string | null; env?: Record<string, string> }> {
+  }): Promise<{
+    profileKey: string | null;
+    providerHomeRef: ProviderHomeRef;
+    env?: Record<string, string>;
+  }> {
+    const requestedProfileKey = getManagedProviderHomeProfileKey(input.requestedProviderHomeRef);
     if (!this.providerAuthService) {
-      if (input.requestedAccountKey) {
+      if (requestedProfileKey) {
         throw new Error("Provider accounts are not available");
       }
-      return { profileKey: null };
+      return {
+        profileKey: null,
+        providerHomeRef:
+          normalizeProviderHomeRef(input.requestedProviderHomeRef, input.provider) ??
+          createNativeDefaultProviderHomeRef({ provider: input.provider }),
+      };
     }
 
-    if (input.requestedAccountKey) {
-      await this.assertReadyAccount(input.provider, input.requestedAccountKey);
-    }
-
-    if (!input.requestedAccountKey && !input.resolveDefault) {
-      return { profileKey: null };
+    if (requestedProfileKey) {
+      await this.assertReadyAccount(input.provider, requestedProfileKey);
     }
 
     if (input.resolveDefault) {
@@ -169,11 +185,13 @@ export class LaunchResolver {
 
     const authLaunch = await this.providerAuthService.resolveLaunchContext({
       provider: input.provider,
-      authProfileKey: input.requestedAccountKey,
+      providerHomeRef: input.requestedProviderHomeRef,
     });
-    if (input.sourceProfile?.accountKey && !authLaunch.profileKey) {
+    if (requestedProfileKey && !authLaunch.profileKey) {
       throw new Error(
-        `Runtime profile '${input.sourceProfile.name}' references an account that is not ready`,
+        input.sourceProfile
+          ? `Runtime profile '${input.sourceProfile.name}' references an account that is not ready`
+          : `Provider account '${requestedProfileKey}' is not ready`,
       );
     }
     return authLaunch;
@@ -194,13 +212,14 @@ export class LaunchResolver {
     profile: RuntimeProfile | null;
     config: AgentSessionConfig;
     overrides?: RuntimeProfileLaunchOverrides;
-    accountKey: string | null;
+    providerHomeRef: ProviderHomeRef;
   }): AgentProfileSnapshot {
     const { profile, config, overrides } = input;
     return stripUndefined<AgentProfileSnapshot>({
       ...buildSnapshotProfileIdentity(profile),
       provider: config.provider,
-      accountKey: input.accountKey,
+      providerHomeRef: input.providerHomeRef,
+      accountKey: getManagedProviderHomeProfileKey(input.providerHomeRef),
       ...buildSnapshotRuntimeSelection(config),
       ...buildSnapshotProfileSettings(profile, overrides),
       sessionBehavior: resolveSnapshotSessionBehavior(profile, overrides, config),
@@ -212,9 +231,15 @@ export class LaunchResolver {
 }
 
 export function synthesizeAgentProfileSnapshot(config: AgentSessionConfig): AgentProfileSnapshot {
+  const providerHomeRef =
+    normalizeProviderHomeRef(config.providerHomeRef, config.provider) ??
+    // COMPAT(providerHomeRef): old stored configs may only have authProfileKey.
+    resolveManagedHomeRefFromProfileKey(config.provider, config.authProfileKey) ??
+    createNativeDefaultProviderHomeRef({ provider: config.provider });
   return stripUndefined<AgentProfileSnapshot>({
     provider: config.provider,
-    accountKey: normalizeSelection(config.authProfileKey),
+    providerHomeRef,
+    accountKey: getManagedProviderHomeProfileKey(providerHomeRef),
     model: config.model ?? null,
     modeId: config.modeId ?? null,
     thinkingOptionId: config.thinkingOptionId ?? null,
@@ -244,18 +269,60 @@ function normalizeSelection(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function resolveProviderHomeRefSelection(input: {
+  provider: AgentProvider;
+  config: AgentSessionConfig;
+  previousAdHocSnapshot?: AgentProfileSnapshot;
+  overrides?: RuntimeProfileLaunchOverrides;
+  profile: RuntimeProfile | null;
+}): ProviderHomeRef | null {
+  return (
+    normalizeProviderHomeRef(input.config.providerHomeRef, input.provider) ??
+    normalizeProviderHomeRef(input.previousAdHocSnapshot?.providerHomeRef, input.provider) ??
+    normalizeProviderHomeRef(input.overrides?.providerHomeRef, input.provider) ??
+    normalizeProviderHomeRef(input.profile?.providerHomeRef, input.provider) ??
+    resolveManagedHomeRefFromProfileKey(
+      input.provider,
+      firstString(
+        input.config.authProfileKey,
+        input.previousAdHocSnapshot?.accountKey,
+        input.overrides?.accountKey,
+        input.profile?.accountKey,
+      ),
+    )
+  );
+}
+
+function resolveManagedHomeRefFromProfileKey(
+  provider: AgentProvider,
+  profileKey: string | null | undefined,
+): ProviderHomeRef | null {
+  const normalized = normalizeSelection(profileKey);
+  if (!normalized) {
+    return null;
+  }
+  return createManagedProviderHomeRef({ provider, profileKey: normalized });
+}
+
 function buildRuntimeSelectionConfig(
   config: AgentSessionConfig,
   overrides: RuntimeProfileLaunchOverrides,
   profile: RuntimeProfile,
 ): Partial<AgentSessionConfig> {
+  const providerHomeRef =
+    normalizeProviderHomeRef(overrides.providerHomeRef, profile.provider) ??
+    normalizeProviderHomeRef(profile.providerHomeRef, profile.provider) ??
+    resolveManagedHomeRefFromProfileKey(
+      profile.provider,
+      firstString(overrides.accountKey, profile.accountKey),
+    );
   return {
     modeId: firstString(overrides.modeId, profile.modeId, config.modeId) ?? undefined,
     model: firstString(overrides.model, profile.model, config.model) ?? undefined,
     thinkingOptionId:
       firstString(overrides.thinkingOptionId, profile.thinkingOptionId, config.thinkingOptionId) ??
       undefined,
-    authProfileKey: firstString(overrides.accountKey, profile.accountKey) ?? undefined,
+    ...(providerHomeRef ? { providerHomeRef } : {}),
   };
 }
 

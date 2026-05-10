@@ -37,7 +37,11 @@ describe("LaunchResolver", () => {
 
     expect(resolved.config).toMatchObject({
       provider: "codex",
-      authProfileKey: "profile-account",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "profile-account",
+      },
       model: "gpt-profile",
       modeId: "full-access",
       thinkingOptionId: "xhigh",
@@ -46,6 +50,11 @@ describe("LaunchResolver", () => {
     });
     expect(resolved.snapshot).toMatchObject({
       sourceProfileId: "profile-1",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "profile-account",
+      },
       accountKey: "profile-account",
       model: "gpt-profile",
       modeId: "full-access",
@@ -108,12 +117,21 @@ describe("LaunchResolver", () => {
     });
 
     expect(resolved.config).toMatchObject({
-      authProfileKey: "override-account",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "override-account",
+      },
       model: "gpt-override",
       modeId: "auto",
       thinkingOptionId: "medium",
     });
     expect(resolved.snapshot).toMatchObject({
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "override-account",
+      },
       accountKey: "override-account",
       model: "gpt-override",
       modeId: "auto",
@@ -160,6 +178,11 @@ describe("LaunchResolver", () => {
 
     expect(resolved.snapshot).toMatchObject({
       provider: "codex",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "composer-account",
+      },
       accountKey: "composer-account",
       model: "gpt-composer",
       modeId: "auto",
@@ -206,6 +229,11 @@ describe("LaunchResolver", () => {
 
     expect(resolved.snapshot).toMatchObject({
       provider: "codex",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "composer-account",
+      },
       accountKey: "composer-account",
       model: "gpt-5.4",
       modeId: "full-access",
@@ -395,12 +423,23 @@ function createResolver({ profile }: { profile: RuntimeProfile }) {
     listProfiles: async () =>
       ["profile-account", "composer-account", "override-account"].map(createProviderAccount),
     syncCurrentProfile: async (provider: string) => ({ provider, status: "unsupported" }),
-    resolveLaunchContext: async (selection: { authProfileKey?: string | null }) => ({
-      profileKey: selection.authProfileKey ?? null,
-      env: selection.authProfileKey
-        ? { CODEX_HOME: `C:\\profiles\\${selection.authProfileKey}` }
-        : undefined,
-    }),
+    resolveLaunchContext: async (selection: {
+      providerHomeRef?: { kind: string; provider: string; profileKey?: string | null } | null;
+      authProfileKey?: string | null;
+    }) => {
+      const profileKey =
+        selection.providerHomeRef?.kind === "managed-profile"
+          ? (selection.providerHomeRef.profileKey ?? null)
+          : (selection.authProfileKey ?? null);
+      const providerHomeRef = profileKey
+        ? { kind: "managed-profile" as const, provider: "codex", profileKey }
+        : { kind: "native-default" as const, provider: "codex", homePath: "C:\\Users\\me\\.codex" };
+      return {
+        profileKey,
+        providerHomeRef,
+        env: profileKey ? { CODEX_HOME: `C:\\profiles\\${profileKey}` } : undefined,
+      };
+    },
   } as unknown as ProviderAuthService;
 
   return new LaunchResolver({

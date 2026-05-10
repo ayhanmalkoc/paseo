@@ -89,8 +89,21 @@ describe("CodexProviderAuthAdapter", () => {
       ).resolves.toContain("gpt-5.4");
       expect(adapter.resolveLaunchContext(profile)).toEqual({
         profileKey: profile.key,
+        providerHomeRef: {
+          kind: "managed-profile",
+          provider: "codex",
+          profileKey: profile.key,
+          label: "Codex API key",
+        },
         env: { CODEX_HOME: profile.providerHomePath },
-        metadata: { authProfileKey: profile.key },
+        metadata: {
+          providerHomeRef: {
+            kind: "managed-profile",
+            provider: "codex",
+            profileKey: profile.key,
+            label: "Codex API key",
+          },
+        },
       });
     } finally {
       rmSync(root, { recursive: true, force: true });

@@ -381,8 +381,6 @@ function resolveAuthProfileKey(input: {
   return (
     normalizeValid(initialValues?.authProfileKey) ||
     normalizeValid(providerPrefs?.authProfileKey) ||
-    availableAuthProfiles.find((profile) => profile.isDefault && profile.status === "ready")?.key ||
-    availableAuthProfiles.find((profile) => profile.status === "ready")?.key ||
     ""
   );
 }

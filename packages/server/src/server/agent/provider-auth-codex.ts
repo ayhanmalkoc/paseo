@@ -10,6 +10,7 @@ import type {
   ProviderAuthLaunchContext,
   StoredProviderAuthProfile,
 } from "./provider-auth-service.js";
+import { createManagedProviderHomeRef } from "./provider-home-ref.js";
 
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_AUTH_FILENAME = "auth.json";
@@ -114,13 +115,20 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
   }
 
   resolveLaunchContext(profile: StoredProviderAuthProfile): ProviderAuthLaunchContext {
+    const providerHomeRef = createManagedProviderHomeRef({
+      provider: profile.provider,
+      profileKey: profile.key,
+      label: profile.email ?? profile.accountName ?? profile.alias,
+      accountFingerprint: profile.accountId ?? profile.userId ?? profile.email,
+    });
     return {
       profileKey: profile.key,
+      providerHomeRef,
       env: {
         CODEX_HOME: profile.providerHomePath,
       },
       metadata: {
-        authProfileKey: profile.key,
+        providerHomeRef,
       },
     };
   }

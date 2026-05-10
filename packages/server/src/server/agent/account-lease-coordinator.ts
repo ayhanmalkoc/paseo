@@ -3,6 +3,7 @@ import type {
   RuntimeLaunchWarning,
   RuntimeProfileConcurrencyPolicy,
 } from "./agent-sdk-types.js";
+import { getProviderHomeRefKey } from "./provider-home-ref.js";
 
 export interface AccountLeaseSnapshot {
   agentId: string;
@@ -45,9 +46,15 @@ export class AccountLeaseCoordinator {
       if (!snapshot) {
         return false;
       }
+      const candidateHomeKey = getProviderHomeRefKey(input.candidate.providerHomeRef);
+      const snapshotHomeKey = getProviderHomeRefKey(snapshot.providerHomeRef);
+      if (candidateHomeKey && candidateHomeKey === snapshotHomeKey) {
+        return true;
+      }
+      // COMPAT(providerHomeRef): old snapshots may only carry accountKey.
       if (
+        !candidateHomeKey &&
         input.candidate.accountKey &&
-        snapshot.provider === input.candidate.provider &&
         snapshot.accountKey === input.candidate.accountKey
       ) {
         return true;
@@ -76,23 +83,38 @@ function buildWarning(
   agents: AccountLeaseSnapshot[],
 ): RuntimeLaunchWarning {
   const agentIds = agents.map((agent) => agent.agentId);
+  const providerHomeRef =
+    candidate.sourceProfileId && candidate.providerHomeRef?.kind === "native-default"
+      ? null
+      : (candidate.providerHomeRef ?? null);
   const accountKey = candidate.accountKey ?? null;
   const runtimeProfileId = candidate.sourceProfileId ?? null;
-  const target = describeLeaseTarget(accountKey, runtimeProfileId);
+  const target = describeLeaseTarget(providerHomeRef, accountKey, runtimeProfileId);
   const message =
     policy === "single-active"
       ? `Cannot start another active agent with ${target}.`
       : `Another active agent is already using ${target}.`;
   return {
-    code: accountKey ? "account-in-use" : "runtime-profile-in-use",
+    code: providerHomeRef || accountKey ? "account-in-use" : "runtime-profile-in-use",
     message,
+    ...(providerHomeRef ? { providerHomeRef } : {}),
     accountKey,
     runtimeProfileId,
     agentIds,
   };
 }
 
-function describeLeaseTarget(accountKey: string | null, runtimeProfileId: string | null): string {
+function describeLeaseTarget(
+  providerHomeRef: AgentProfileSnapshot["providerHomeRef"] | null,
+  accountKey: string | null,
+  runtimeProfileId: string | null,
+): string {
+  if (providerHomeRef) {
+    if (providerHomeRef.kind === "managed-profile" && providerHomeRef.profileKey) {
+      return `provider home '${providerHomeRef.profileKey}'`;
+    }
+    return "native provider home";
+  }
   if (accountKey && runtimeProfileId) {
     return `account '${accountKey}' and runtime profile '${runtimeProfileId}'`;
   }

@@ -1943,7 +1943,8 @@ export class Session {
       case "restart_agent_with_auth_profile_request":
         return this.handleRestartAgentWithAuthProfileRequest(
           msg.agentId,
-          msg.authProfileKey,
+          msg.providerHomeRef,
+          msg.authProfileKey ?? null,
           msg.sessionBehavior,
           msg.requestId,
         );
@@ -3340,8 +3341,16 @@ export class Session {
       });
       return;
     }
-    const { provider, providerHandleId, cwd, authProfileKey, sessionBehavior, labels, requestId } =
-      normalized;
+    const {
+      provider,
+      providerHandleId,
+      cwd,
+      providerHomeRef,
+      authProfileKey,
+      sessionBehavior,
+      labels,
+      requestId,
+    } = normalized;
     this.sessionLogger.info(
       { providerHandleId, provider },
       `Importing agent ${providerHandleId} (${provider})`,
@@ -3349,6 +3358,7 @@ export class Session {
 
     try {
       const descriptor = await this.agentManager.findPersistedAgent(provider, providerHandleId, {
+        sourceProviderHomeRef: providerHomeRef,
         sourceAuthProfileKey: authProfileKey,
       });
       if (!descriptor && provider === "opencode" && !cwd) {
@@ -3362,7 +3372,9 @@ export class Session {
         : buildImportPersistenceHandle({ provider, providerHandleId, cwd });
       const importOverrides = {
         ...(cwd ? { cwd } : {}),
-        ...(authProfileKey !== undefined ? { authProfileKey } : {}),
+        ...(providerHomeRef ? { providerHomeRef } : {}),
+        // COMPAT(providerHomeRef): old clients may select a managed source by authProfileKey.
+        ...(authProfileKey !== undefined && !providerHomeRef ? { authProfileKey } : {}),
       } satisfies Partial<AgentSessionConfig>;
       const overrides = Object.keys(importOverrides).length > 0 ? importOverrides : undefined;
 
@@ -4796,6 +4808,7 @@ export class Session {
 
   private async handleRestartAgentWithAuthProfileRequest(
     agentId: string,
+    providerHomeRef: AgentSessionConfig["providerHomeRef"] | undefined,
     authProfileKey: string | null,
     sessionBehavior: AgentSessionConfig["sessionBehavior"] | undefined,
     requestId: string,
@@ -4807,6 +4820,7 @@ export class Session {
 
     try {
       await this.agentManager.restartAgentWithAuthProfile(agentId, authProfileKey, {
+        providerHomeRef,
         sessionBehavior,
       });
       this.sessionLogger.info(

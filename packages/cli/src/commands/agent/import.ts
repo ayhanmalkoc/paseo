@@ -164,7 +164,15 @@ export async function runImportCommand(
       provider,
       sessionId,
       cwd,
-      ...(authProfileKey ? { authProfileKey } : {}),
+      ...(authProfileKey
+        ? {
+            providerHomeRef: {
+              kind: "managed-profile" as const,
+              provider,
+              profileKey: authProfileKey,
+            },
+          }
+        : {}),
       sessionBehavior,
       ...(Object.keys(labels).length > 0 ? { labels } : {}),
     });

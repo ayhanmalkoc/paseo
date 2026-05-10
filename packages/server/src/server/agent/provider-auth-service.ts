@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import type { Logger } from "pino";
 
@@ -7,7 +8,13 @@ import type {
   AgentProvider,
   ProviderAuthProfile,
   ProviderAuthUsageSnapshot,
+  ProviderHomeRef,
 } from "./agent-sdk-types.js";
+import {
+  createManagedProviderHomeRef,
+  createNativeDefaultProviderHomeRef,
+  normalizeProviderHomeRef,
+} from "./provider-home-ref.js";
 
 export type ProviderAuthImportSource = "current" | "file";
 
@@ -21,11 +28,14 @@ export interface ProviderAuthImportRequest {
 
 export interface ProviderAuthLaunchSelection {
   provider: AgentProvider;
+  providerHomeRef?: ProviderHomeRef | null;
+  /** @deprecated COMPAT(providerHomeRef): accepted from old clients only. */
   authProfileKey?: string | null;
 }
 
 export interface ProviderAuthLaunchContext {
   profileKey: string | null;
+  providerHomeRef: ProviderHomeRef;
   env?: Record<string, string>;
   metadata?: Record<string, unknown>;
 }
@@ -135,6 +145,14 @@ export class ProviderAuthService {
 
   supportsProvider(provider: AgentProvider): boolean {
     return this.adapters.has(provider);
+  }
+
+  getNativeDefaultProviderHomeRef(provider: AgentProvider): ProviderHomeRef {
+    return createNativeDefaultProviderHomeRef({
+      provider,
+      homePath: resolveNativeDefaultProviderHomePath(provider),
+      label: provider === "codex" ? "Codex CLI default" : "Native default",
+    });
   }
 
   async listProfiles(provider?: AgentProvider): Promise<ProviderAuthProfile[]> {
@@ -274,14 +292,59 @@ export class ProviderAuthService {
     selection: ProviderAuthLaunchSelection,
   ): Promise<ProviderAuthLaunchContext> {
     const adapter = this.adapters.get(selection.provider);
+    const nativeHomeRef = this.getNativeDefaultProviderHomeRef(selection.provider);
+    const requestedHomeRef = normalizeProviderHomeRef(
+      selection.providerHomeRef,
+      selection.provider,
+    );
     if (!adapter) {
-      return { profileKey: null };
+      if (
+        requestedHomeRef?.kind === "managed-profile" ||
+        normalizeProfileKey(selection.authProfileKey)
+      ) {
+        throw new Error(`Provider '${selection.provider}' does not support auth profiles`);
+      }
+      return {
+        profileKey: null,
+        providerHomeRef: nativeHomeRef,
+        metadata: {
+          providerHomeRef: nativeHomeRef,
+        },
+      };
+    }
+    if (requestedHomeRef?.kind === "native-default") {
+      return {
+        profileKey: null,
+        providerHomeRef: requestedHomeRef ?? nativeHomeRef,
+        metadata: {
+          providerHomeRef: requestedHomeRef ?? nativeHomeRef,
+        },
+      };
     }
     const registry = await this.load();
     const state = this.getOrCreateProviderState(registry, selection.provider);
-    const selected = this.selectProfileForLaunch(state, selection.authProfileKey);
+    const requestedProfileKey =
+      requestedHomeRef?.kind === "managed-profile"
+        ? requestedHomeRef.profileKey
+        : selection.authProfileKey;
+    if (!normalizeProfileKey(requestedProfileKey)) {
+      return {
+        profileKey: null,
+        providerHomeRef: nativeHomeRef,
+        metadata: {
+          providerHomeRef: nativeHomeRef,
+        },
+      };
+    }
+    const selected = this.selectProfileForLaunch(state, requestedProfileKey);
     if (!selected) {
-      return { profileKey: null };
+      return {
+        profileKey: null,
+        providerHomeRef: nativeHomeRef,
+        metadata: {
+          providerHomeRef: nativeHomeRef,
+        },
+      };
     }
     selected.lastUsedAt = this.now().toISOString();
     await this.save(registry);
@@ -322,6 +385,12 @@ export class ProviderAuthService {
     profile: StoredProviderAuthProfile,
     defaultProfileKey: string | null,
   ): ProviderAuthProfile {
+    const providerHomeRef = createManagedProviderHomeRef({
+      provider: profile.provider,
+      profileKey: profile.key,
+      label: profile.email ?? profile.accountName ?? profile.alias,
+      accountFingerprint: profile.accountId ?? profile.userId ?? profile.email,
+    });
     return {
       provider: profile.provider,
       key: profile.key,
@@ -338,6 +407,7 @@ export class ProviderAuthService {
       updatedAt: profile.updatedAt,
       lastUsedAt: profile.lastUsedAt,
       usage: profile.usage,
+      providerHomeRef,
     };
   }
 
@@ -505,6 +575,13 @@ function normalizeProfileKey(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveNativeDefaultProviderHomePath(provider: AgentProvider): string | null {
+  if (provider === "codex") {
+    return path.resolve(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"));
+  }
+  return null;
 }
 
 function mergeProfileMetadata(

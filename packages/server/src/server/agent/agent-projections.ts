@@ -114,7 +114,8 @@ export function toAgentPayload(
     provider: agent.provider,
     cwd: agent.cwd,
     model: agent.config.model ?? null,
-    authProfileKey: agent.config.authProfileKey ?? null,
+    providerHomeRef: agent.config.providerHomeRef ?? null,
+    authProfileKey: agent.config.providerHomeRef?.profileKey ?? null,
     profileSnapshot: agent.config.profileSnapshot,
     thinkingOptionId,
     effectiveThinkingOptionId,
@@ -192,12 +193,21 @@ function buildStoredAgentConfigPayload(
   runtimeInfo: AgentRuntimeInfo | undefined,
 ): Pick<
   AgentSnapshotPayload,
-  "authProfileKey" | "effectiveThinkingOptionId" | "model" | "profileSnapshot" | "thinkingOptionId"
+  | "authProfileKey"
+  | "effectiveThinkingOptionId"
+  | "model"
+  | "profileSnapshot"
+  | "providerHomeRef"
+  | "thinkingOptionId"
 > {
   const configuredThinkingOptionId = record.config?.thinkingOptionId ?? null;
+  const providerHomeRef = record.config?.providerHomeRef as
+    | AgentSnapshotPayload["providerHomeRef"]
+    | undefined;
   return {
     model: record.config?.model ?? null,
-    authProfileKey: record.config?.authProfileKey ?? null,
+    providerHomeRef: providerHomeRef ?? null,
+    authProfileKey: providerHomeRef?.profileKey ?? record.config?.authProfileKey ?? null,
     profileSnapshot: record.config?.profileSnapshot,
     thinkingOptionId: configuredThinkingOptionId,
     effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({
@@ -346,8 +356,10 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   if (config.thinkingOptionId) {
     serializable.thinkingOptionId = config.thinkingOptionId;
   }
-  if (Object.prototype.hasOwnProperty.call(config, "authProfileKey")) {
-    serializable.authProfileKey = config.authProfileKey ?? null;
+  if (Object.prototype.hasOwnProperty.call(config, "providerHomeRef")) {
+    serializable.providerHomeRef = sanitizeMetadata(config.providerHomeRef) as
+      | SerializableAgentConfig["providerHomeRef"]
+      | undefined;
   }
   if (Object.prototype.hasOwnProperty.call(config, "runtimeProfileId")) {
     serializable.runtimeProfileId = config.runtimeProfileId ?? null;
