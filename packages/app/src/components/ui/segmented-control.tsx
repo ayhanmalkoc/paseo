@@ -21,6 +21,7 @@ interface SegmentedControlProps<T extends string> {
   onValueChange: (value: T) => void;
   size?: SegmentedControlSize;
   hideLabels?: boolean;
+  constrainWidth?: boolean;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }
@@ -31,6 +32,7 @@ export function SegmentedControl<T extends string>({
   onValueChange,
   size = "md",
   hideLabels = false,
+  constrainWidth = true,
   style,
   testID,
 }: SegmentedControlProps<T>) {
@@ -41,8 +43,13 @@ export function SegmentedControl<T extends string>({
   const iconSize = size === "sm" ? theme.iconSize.sm : theme.iconSize.md;
 
   const containerStyle = useMemo(
-    () => [styles.container, containerSizeStyle, style],
-    [containerSizeStyle, style],
+    () => [
+      styles.container,
+      constrainWidth && styles.containerConstrained,
+      containerSizeStyle,
+      style,
+    ],
+    [constrainWidth, containerSizeStyle, style],
   );
 
   return (
@@ -142,10 +149,12 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flexDirection: "row",
     alignItems: "stretch",
-    maxWidth: "100%",
     backgroundColor: theme.colors.surface2,
     borderRadius: theme.borderRadius.lg,
     gap: 2,
+  },
+  containerConstrained: {
+    maxWidth: "100%",
   },
   containerSm: {
     padding: 2,
