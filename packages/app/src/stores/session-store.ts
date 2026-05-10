@@ -16,6 +16,7 @@ import type {
   AgentUsage,
   AgentPersistenceHandle,
   AgentProfileSnapshot,
+  ProviderHomeRef,
 } from "@server/server/agent/agent-sdk-types";
 import type {
   ServerInfoStatusPayload,
@@ -99,6 +100,7 @@ export interface Agent {
   title: string | null;
   cwd: string;
   model: string | null;
+  providerHomeRef?: ProviderHomeRef | null;
   authProfileKey?: string | null;
   profileSnapshot?: AgentProfileSnapshot;
   features?: AgentFeature[];

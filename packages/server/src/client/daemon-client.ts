@@ -159,6 +159,8 @@ const perfNow: () => number =
 
 interface ImportAgentInputBase {
   cwd?: string;
+  providerHomeRef?: AgentSessionConfig["providerHomeRef"] | null;
+  /** @deprecated COMPAT(providerHomeRef): old callers may still pass authProfileKey. */
   authProfileKey?: string | null;
   sessionBehavior?: RuntimeProfileSessionBehavior;
   labels?: Record<string, string>;
@@ -2014,6 +2016,7 @@ export class DaemonClient {
         ? { providerId: input.providerId, providerHandleId: input.providerHandleId }
         : { provider: input.provider, sessionId: input.sessionId }),
       ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(input.providerHomeRef !== undefined ? { providerHomeRef: input.providerHomeRef } : {}),
       ...(input.authProfileKey !== undefined ? { authProfileKey: input.authProfileKey } : {}),
       ...(input.sessionBehavior !== undefined ? { sessionBehavior: input.sessionBehavior } : {}),
       ...(input.labels && Object.keys(input.labels).length > 0 ? { labels: input.labels } : {}),
@@ -2296,13 +2299,19 @@ export class DaemonClient {
   async restartAgentWithAuthProfile(
     agentId: string,
     authProfileKey: string | null,
-    options?: { sessionBehavior?: RuntimeProfileSessionBehavior },
+    options?: {
+      providerHomeRef?: AgentSessionConfig["providerHomeRef"] | null;
+      sessionBehavior?: RuntimeProfileSessionBehavior;
+    },
   ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "restart_agent_with_auth_profile_request",
       agentId,
-      authProfileKey,
+      ...(options?.providerHomeRef !== undefined
+        ? { providerHomeRef: options.providerHomeRef }
+        : {}),
+      ...(authProfileKey !== undefined ? { authProfileKey } : {}),
       ...(options?.sessionBehavior ? { sessionBehavior: options.sessionBehavior } : {}),
       requestId,
     });

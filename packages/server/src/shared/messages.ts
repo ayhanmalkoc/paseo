@@ -140,6 +140,7 @@ import type {
   ToolCallTimelineItem,
   AgentUsage,
   ProviderAuthProfile,
+  ProviderHomeRef,
   RuntimeProfile,
   RuntimeProfilePatch,
   RuntimeProfileLaunchOverrides,
@@ -232,6 +233,15 @@ const ProviderAuthUsageSnapshotSchema = z.object({
   refreshedAt: z.string(),
 });
 
+const ProviderHomeRefSchema: z.ZodType<ProviderHomeRef> = z.object({
+  kind: z.enum(["native-default", "managed-profile"]),
+  provider: AgentProviderSchema,
+  profileKey: z.string().nullable().optional(),
+  homePath: z.string().nullable().optional(),
+  accountFingerprint: z.string().nullable().optional(),
+  label: z.string().nullable().optional(),
+});
+
 export const ProviderAuthProfileSchema: z.ZodType<ProviderAuthProfile> = z.object({
   provider: AgentProviderSchema,
   key: z.string(),
@@ -248,6 +258,7 @@ export const ProviderAuthProfileSchema: z.ZodType<ProviderAuthProfile> = z.objec
   updatedAt: z.string(),
   lastUsedAt: z.string().optional(),
   usage: ProviderAuthUsageSnapshotSchema.optional(),
+  providerHomeRef: ProviderHomeRefSchema.optional(),
 });
 
 const RuntimeProfileConcurrencyPolicySchema = z.enum(["allow", "warn", "single-active"]);
@@ -255,6 +266,8 @@ const RuntimeProfileSessionBehaviorSchema = z.enum(["continue", "fresh"]);
 
 const RuntimeProfileFieldsSchema = z.object({
   provider: AgentProviderSchema.optional(),
+  providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
+  // COMPAT(providerHomeRef): accepted from old clients/storage and normalized server-side.
   accountKey: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   modeId: z.string().nullable().optional(),
@@ -356,6 +369,8 @@ export const AgentProfileSnapshotSchema: z.ZodType<AgentProfileSnapshot> = z.obj
   sourceProfileVersion: z.number().int().positive().optional(),
   sourceProfileName: z.string().optional(),
   provider: AgentProviderSchema,
+  providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
+  // COMPAT(providerHomeRef): retained so old clients can still parse snapshots.
   accountKey: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   modeId: z.string().nullable().optional(),
@@ -406,6 +421,7 @@ export const RuntimeLaunchWarningSchema: z.ZodType<RuntimeLaunchWarning> = z.obj
     "provider-unavailable",
   ]),
   message: z.string(),
+  providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
   accountKey: z.string().nullable().optional(),
   runtimeProfileId: z.string().nullable().optional(),
   agentIds: z.array(z.string()).optional(),
@@ -460,6 +476,8 @@ const AgentSessionConfigSchema = z.object({
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
+  providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
+  // COMPAT(providerHomeRef): accepted from old clients/storage and normalized server-side.
   authProfileKey: z.string().nullable().optional(),
   runtimeProfileId: z.string().nullable().optional(),
   profileOverrides: RuntimeProfileLaunchOverridesSchema.optional(),
@@ -818,6 +836,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
   model: z.string().nullable(),
+  providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
+  // COMPAT(providerHomeRef): old clients read authProfileKey from snapshots.
   authProfileKey: z.string().nullable().optional(),
   profileSnapshot: AgentProfileSnapshotSchema.optional(),
   features: z.array(AgentFeatureSchema).optional(),
@@ -873,6 +893,8 @@ export type AgentStreamEventPayload = z.infer<typeof AgentStreamEventPayloadSche
 
 const RecentProviderSessionSourcePayloadSchema = z.object({
   kind: z.enum(["native-default", "auth-profile"]),
+  providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
+  // COMPAT(providerHomeRef): old clients key managed homes by authProfileKey.
   authProfileKey: z.string().nullable().optional(),
   label: z.string().nullable().optional(),
 });
@@ -1397,6 +1419,8 @@ export const ImportAgentRequestMessageSchema = z.object({
   sessionId: z.string().optional(),
   providerHandleId: z.string().optional(),
   cwd: z.string().optional(),
+  providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
+  // COMPAT(providerHomeRef): old clients send authProfileKey.
   authProfileKey: z.string().nullable().optional(),
   sessionBehavior: RuntimeProfileSessionBehaviorSchema.optional(),
   labels: z.record(z.string()).optional(),
@@ -1489,7 +1513,9 @@ export const SetAgentThinkingResponseMessageSchema = z.object({
 export const RestartAgentWithAuthProfileRequestMessageSchema = z.object({
   type: z.literal("restart_agent_with_auth_profile_request"),
   agentId: z.string(),
-  authProfileKey: z.string().nullable(),
+  providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
+  // COMPAT(providerHomeRef): old clients send authProfileKey.
+  authProfileKey: z.string().nullable().optional(),
   sessionBehavior: RuntimeProfileSessionBehaviorSchema.optional(),
   requestId: z.string(),
 });

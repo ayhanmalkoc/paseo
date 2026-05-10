@@ -565,7 +565,11 @@ describe("WorkspaceImportSheet", () => {
         providerId: "claude",
         providerHandleId: "provider-thread-1",
         cwd: "/repo/paseo",
-        authProfileKey: "claude-personal",
+        providerHomeRef: {
+          kind: "managed-profile",
+          provider: "claude",
+          profileKey: "claude-personal",
+        },
         sessionBehavior: "continue",
       });
     });
@@ -644,7 +648,11 @@ describe("WorkspaceImportSheet", () => {
         providerId: "claude",
         providerHandleId: "provider-thread-1",
         cwd: "/repo/paseo",
-        authProfileKey: "claude-default",
+        providerHomeRef: {
+          kind: "managed-profile",
+          provider: "claude",
+          profileKey: "claude-default",
+        },
         sessionBehavior: "continue",
       });
     });

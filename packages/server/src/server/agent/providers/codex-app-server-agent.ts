@@ -3569,7 +3569,7 @@ class CodexAppServerAgentSession implements AgentSession {
         modeId: this.currentMode,
         model: this.config.model ?? null,
         thinkingOptionId,
-        authProfileKey: this.config.authProfileKey ?? null,
+        providerHomeRef: this.config.providerHomeRef ?? null,
         runtimeProfileId: this.config.runtimeProfileId ?? null,
         profileOverrides: this.config.profileOverrides,
         profileSnapshot: this.config.profileSnapshot,
@@ -4908,6 +4908,7 @@ export class CodexAppServerAgentClient implements AgentClient {
           };
           if (options?.source) {
             metadata.source = options.source;
+            metadata.providerHomeRef = options.source.providerHomeRef ?? null;
           }
 
           const descriptor: PersistedAgentDescriptor = {

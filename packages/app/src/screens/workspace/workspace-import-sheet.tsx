@@ -2,7 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, type PressableStateCallbackType, ScrollView, Text, View } from "react-native";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient, FetchRecentProviderSessionEntry } from "@server/client/daemon-client";
-import type { AgentProvider, ProviderAuthProfile } from "@server/server/agent/agent-sdk-types";
+import type {
+  AgentProvider,
+  ProviderAuthProfile,
+  ProviderHomeRef,
+} from "@server/server/agent/agent-sdk-types";
 import { IMPORTABLE_PROVIDERS } from "@server/shared/importable-providers";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
@@ -167,10 +171,14 @@ function getPromptPreview(entry: FetchRecentProviderSessionEntry): string {
 }
 
 function getProviderSessionEntryKey(entry: FetchRecentProviderSessionEntry): string {
-  const sourceKey =
-    entry.source?.kind === "auth-profile"
-      ? `auth-profile:${entry.source.authProfileKey ?? ""}`
-      : (entry.source?.kind ?? "unknown-source");
+  let sourceKey = entry.source?.kind ?? "unknown-source";
+  if (entry.source?.providerHomeRef) {
+    sourceKey = `${entry.source.providerHomeRef.kind}:${
+      entry.source.providerHomeRef.profileKey ?? entry.source.providerHomeRef.homePath ?? ""
+    }`;
+  } else if (entry.source?.kind === "auth-profile") {
+    sourceKey = `auth-profile:${entry.source.authProfileKey ?? ""}`;
+  }
   return `${entry.providerId}:${entry.providerHandleId}:${sourceKey}`;
 }
 
@@ -315,17 +323,34 @@ function buildAccountOptions(
   return options;
 }
 
-function resolveImportAuthProfileKey(input: {
+function resolveImportProviderHomeRef(input: {
   entry: FetchRecentProviderSessionEntry;
   selectedAccountByProvider: Readonly<Record<string, string>>;
-}): string | undefined {
+  authProfilesByProvider: ReadonlyMap<string, ProviderAuthProfile[]>;
+}): ProviderHomeRef | undefined {
   const selected = input.selectedAccountByProvider[input.entry.providerId];
   if (selected && selected !== SOURCE_ACCOUNT_VALUE) {
-    return selected;
+    const profile = input.authProfilesByProvider
+      .get(input.entry.providerId)
+      ?.find((candidate) => candidate.key === selected);
+    return (
+      profile?.providerHomeRef ?? {
+        kind: "managed-profile",
+        provider: input.entry.providerId,
+        profileKey: selected,
+      }
+    );
+  }
+  if (input.entry.source?.providerHomeRef) {
+    return input.entry.source.providerHomeRef;
   }
   const sourceAuthProfileKey = input.entry.source?.authProfileKey;
   return typeof sourceAuthProfileKey === "string" && sourceAuthProfileKey.length > 0
-    ? sourceAuthProfileKey
+    ? {
+        kind: "managed-profile",
+        provider: input.entry.providerId,
+        profileKey: sourceAuthProfileKey,
+      }
     : undefined;
 }
 
@@ -519,15 +544,16 @@ export function WorkspaceImportSheet({
       if (!client || !workspaceDirectory) {
         throw new Error("Host is not connected");
       }
-      const authProfileKey = resolveImportAuthProfileKey({
+      const providerHomeRef = resolveImportProviderHomeRef({
         entry,
         selectedAccountByProvider,
+        authProfilesByProvider,
       });
       const agent = await client.importAgent({
         providerId: entry.providerId,
         providerHandleId: entry.providerHandleId,
         cwd: workspaceDirectory,
-        ...(authProfileKey ? { authProfileKey } : {}),
+        ...(providerHomeRef ? { providerHomeRef } : {}),
         sessionBehavior: "continue",
       });
       return agent;

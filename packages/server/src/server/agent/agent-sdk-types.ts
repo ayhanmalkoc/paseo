@@ -111,6 +111,7 @@ export interface ProviderAuthProfile {
   updatedAt: string;
   lastUsedAt?: string;
   usage?: ProviderAuthUsageSnapshot;
+  providerHomeRef?: ProviderHomeRef;
 }
 
 export type ProviderAccount = ProviderAuthProfile;
@@ -143,11 +144,24 @@ export interface AccountLoginSession {
 export type RuntimeProfileConcurrencyPolicy = "allow" | "warn" | "single-active";
 export type RuntimeProfileSessionBehavior = "continue" | "fresh";
 
+export type ProviderHomeKind = "native-default" | "managed-profile";
+
+export interface ProviderHomeRef {
+  kind: ProviderHomeKind;
+  provider: AgentProvider;
+  profileKey?: string | null;
+  homePath?: string | null;
+  accountFingerprint?: string | null;
+  label?: string | null;
+}
+
 export interface RuntimeProfile {
   id: string;
   version: number;
   name: string;
   provider: AgentProvider;
+  providerHomeRef?: ProviderHomeRef | null;
+  /** @deprecated COMPAT(providerHomeRef): normalized at protocol/storage boundary. */
   accountKey?: string | null;
   model?: string | null;
   modeId?: string | null;
@@ -168,6 +182,7 @@ export type RuntimeProfilePatch = Partial<
     RuntimeProfile,
     | "name"
     | "provider"
+    | "providerHomeRef"
     | "accountKey"
     | "model"
     | "modeId"
@@ -185,6 +200,7 @@ export type RuntimeProfilePatch = Partial<
 export type RuntimeProfileLaunchOverrides = Partial<
   Pick<
     RuntimeProfile,
+    | "providerHomeRef"
     | "accountKey"
     | "model"
     | "modeId"
@@ -203,6 +219,8 @@ export interface AgentProfileSnapshot {
   sourceProfileVersion?: number;
   sourceProfileName?: string;
   provider: AgentProvider;
+  providerHomeRef?: ProviderHomeRef | null;
+  /** @deprecated COMPAT(providerHomeRef): retained for old clients only. */
   accountKey?: string | null;
   model?: string | null;
   modeId?: string | null;
@@ -224,6 +242,7 @@ export interface RuntimeLaunchWarning {
     | "invalid-account"
     | "provider-unavailable";
   message: string;
+  providerHomeRef?: ProviderHomeRef | null;
   accountKey?: string | null;
   runtimeProfileId?: string | null;
   agentIds?: string[];
@@ -273,6 +292,8 @@ export type PersistedAgentSourceKind = "native-default" | "auth-profile";
 
 export interface PersistedAgentSource {
   kind: PersistedAgentSourceKind;
+  providerHomeRef?: ProviderHomeRef | null;
+  /** @deprecated COMPAT(providerHomeRef): retained for old clients only. */
   authProfileKey?: string | null;
   label?: string | null;
 }
@@ -613,6 +634,8 @@ export interface AgentSessionConfig {
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
+  providerHomeRef?: ProviderHomeRef | null;
+  /** @deprecated COMPAT(providerHomeRef): normalized at protocol/storage boundary. */
   authProfileKey?: string | null;
   runtimeProfileId?: string | null;
   profileOverrides?: RuntimeProfileLaunchOverrides;

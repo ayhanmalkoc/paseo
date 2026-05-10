@@ -5,11 +5,13 @@ import type { Logger } from "pino";
 
 import type {
   AgentProvider,
+  ProviderHomeRef,
   RuntimeProfile,
   RuntimeProfilePatch,
   RuntimeProfileConcurrencyPolicy,
   RuntimeProfileSessionBehavior,
 } from "./agent-sdk-types.js";
+import { normalizeProviderHomeRef } from "./provider-home-ref.js";
 
 interface StoredRuntimeProfileRegistry {
   schemaVersion: 1;
@@ -27,6 +29,7 @@ type LegacyRuntimeProfileInput = Partial<RuntimeProfile> & {
   mcpServerIds?: unknown;
   skillIds?: unknown;
   worktreePolicy?: unknown;
+  providerHomeRef?: ProviderHomeRef | null;
 };
 
 export class RuntimeProfileService {
@@ -214,6 +217,8 @@ function normalizeProfile(profile: LegacyRuntimeProfileInput): RuntimeProfile {
         : 1,
     name,
     provider,
+    providerHomeRef: normalizeProviderHomeRef(profile.providerHomeRef, provider),
+    // COMPAT(providerHomeRef): keep reading accountKey until old profile files age out.
     accountKey: normalizeNullableString(profile.accountKey),
     model: normalizeNullableString(profile.model),
     modeId: normalizeNullableString(profile.modeId),

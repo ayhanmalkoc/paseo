@@ -455,7 +455,7 @@ describe("resolveFormState", () => {
     expect(resolved.authProfileKey).toBe("profile-work");
   });
 
-  it("falls back to the default provider auth profile when the saved key is missing", () => {
+  it("keeps native provider default when the saved auth profile key is missing", () => {
     const resolved = resolveFormState(
       undefined,
       {
@@ -469,7 +469,7 @@ describe("resolveFormState", () => {
       CODEX_AUTH_PROFILES,
     );
 
-    expect(resolved.authProfileKey).toBe("profile-default");
+    expect(resolved.authProfileKey).toBe("");
   });
 
   it("falls back to the first thinking option when model exposes options without a provider default", () => {

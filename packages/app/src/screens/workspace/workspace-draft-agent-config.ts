@@ -5,6 +5,7 @@ export function buildWorkspaceDraftAgentConfig(input: {
   cwd: string;
   modeId?: string;
   model?: string;
+  providerHomeRef?: AgentSessionConfig["providerHomeRef"];
   authProfileKey?: string;
   runtimeProfileId?: string;
   thinkingOptionId?: string;
@@ -17,13 +18,22 @@ export function buildWorkspaceDraftAgentConfig(input: {
       runtimeProfileId: input.runtimeProfileId,
     };
   }
+  const providerHomeRef =
+    input.providerHomeRef ??
+    (input.authProfileKey
+      ? {
+          kind: "managed-profile" as const,
+          provider: input.provider,
+          profileKey: input.authProfileKey,
+        }
+      : undefined);
 
   return {
     provider: input.provider,
     cwd: input.cwd,
     ...(input.modeId ? { modeId: input.modeId } : {}),
     ...(input.model ? { model: input.model } : {}),
-    ...(input.authProfileKey ? { authProfileKey: input.authProfileKey } : {}),
+    ...(providerHomeRef ? { providerHomeRef } : {}),
     ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
     ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
     ...(input.featureValues ? { featureValues: input.featureValues } : {}),

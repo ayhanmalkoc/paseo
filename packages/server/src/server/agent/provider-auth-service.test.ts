@@ -74,8 +74,22 @@ class FakeAuthAdapter implements ProviderAuthAdapter {
   resolveLaunchContext(profile: StoredProviderAuthProfile) {
     return {
       profileKey: profile.key,
+      providerHomeRef: {
+        kind: "managed-profile" as const,
+        provider: "codex" as const,
+        profileKey: profile.key,
+        label: profile.alias,
+      },
       env: {
         CODEX_HOME: profile.providerHomePath,
+      },
+      metadata: {
+        providerHomeRef: {
+          kind: "managed-profile" as const,
+          provider: "codex" as const,
+          profileKey: profile.key,
+          label: profile.alias,
+        },
       },
     };
   }
@@ -120,7 +134,14 @@ describe("ProviderAuthService", () => {
     });
     expect(profile).not.toHaveProperty("providerHomePath");
 
-    const launchContext = await service.resolveLaunchContext({ provider: "codex" });
+    const nativeLaunchContext = await service.resolveLaunchContext({ provider: "codex" });
+    expect(nativeLaunchContext.profileKey).toBeNull();
+    expect(nativeLaunchContext.providerHomeRef.kind).toBe("native-default");
+
+    const launchContext = await service.resolveLaunchContext({
+      provider: "codex",
+      providerHomeRef: profile.providerHomeRef,
+    });
     expect(launchContext.profileKey).toBe("profile-a");
     expect(launchContext.env?.CODEX_HOME).toContain(path.join("profiles", "profile-a"));
 
@@ -136,7 +157,10 @@ describe("ProviderAuthService", () => {
     expect(refreshed.plan).toBe("plus");
     expect(refreshed.usage?.primaryUsedPercent).toBe(12);
 
-    const launchContext = await service.resolveLaunchContext({ provider: "codex" });
+    const launchContext = await service.resolveLaunchContext({
+      provider: "codex",
+      providerHomeRef: refreshed.providerHomeRef,
+    });
     const codexHome = launchContext.env?.CODEX_HOME;
     expect(codexHome).toBeTruthy();
 
