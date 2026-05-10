@@ -531,7 +531,15 @@ export class ScheduleService {
       modeId: schedule.target.config.modeId ?? getUnattendedModeId(schedule.target.config.provider),
       model: schedule.target.config.model,
       thinkingOptionId: schedule.target.config.thinkingOptionId,
-      authProfileKey: schedule.target.config.authProfileKey,
+      providerHomeRef:
+        schedule.target.config.providerHomeRef ??
+        (schedule.target.config.authProfileKey
+          ? {
+              kind: "managed-profile" as const,
+              provider: schedule.target.config.provider,
+              profileKey: schedule.target.config.authProfileKey,
+            }
+          : undefined),
       runtimeProfileId: schedule.target.config.runtimeProfileId,
       profileOverrides: schedule.target.config
         .profileOverrides as AgentSessionConfig["profileOverrides"],

@@ -101,7 +101,7 @@ export interface Agent {
   cwd: string;
   model: string | null;
   providerHomeRef?: ProviderHomeRef | null;
-  authProfileKey?: string | null;
+  accountKey?: string | null;
   profileSnapshot?: AgentProfileSnapshot;
   features?: AgentFeature[];
   thinkingOptionId?: string | null;

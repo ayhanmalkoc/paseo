@@ -21,13 +21,28 @@ export interface FavoriteModelRow {
   description?: string;
 }
 
-const providerPreferencesSchema = z.object({
-  model: z.string().optional(),
-  mode: z.string().optional(),
-  authProfileKey: z.string().optional(),
-  thinkingByModel: z.record(z.string()).optional(),
-  featureValues: z.record(z.unknown()).optional(),
-});
+export interface ProviderPreferences {
+  model?: string;
+  mode?: string;
+  accountKey?: string;
+  thinkingByModel?: Record<string, string>;
+  featureValues?: Record<string, unknown>;
+}
+
+const providerPreferencesSchema: z.ZodType<ProviderPreferences> = z
+  .object({
+    model: z.string().optional(),
+    mode: z.string().optional(),
+    accountKey: z.string().optional(),
+    // COMPAT(providerHomeRef): older app preferences stored account selection as authProfileKey.
+    authProfileKey: z.string().optional(),
+    thinkingByModel: z.record(z.string()).optional(),
+    featureValues: z.record(z.unknown()).optional(),
+  })
+  .transform(({ authProfileKey, accountKey, ...value }) => {
+    const resolvedAccountKey = accountKey ?? authProfileKey;
+    return resolvedAccountKey ? { ...value, accountKey: resolvedAccountKey } : value;
+  }) as z.ZodType<ProviderPreferences>;
 
 const formPreferencesSchema = z.object({
   provider: z.string().optional(),
@@ -42,7 +57,6 @@ const formPreferencesSchema = z.object({
     .optional(),
 });
 
-export type ProviderPreferences = z.infer<typeof providerPreferencesSchema>;
 export type FormPreferences = z.infer<typeof formPreferencesSchema>;
 
 const DEFAULT_FORM_PREFERENCES: FormPreferences = {};

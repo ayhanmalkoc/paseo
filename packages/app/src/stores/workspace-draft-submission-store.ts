@@ -12,7 +12,7 @@ export interface PendingWorkspaceDraftSubmission {
   provider: AgentProvider;
   modeId?: string;
   model?: string;
-  authProfileKey?: string;
+  accountKey?: string;
   runtimeProfileId?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;

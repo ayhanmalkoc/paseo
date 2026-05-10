@@ -22,7 +22,11 @@ describe("LaunchResolver", () => {
       provider: "codex",
       cwd: "C:\\dev\\paseo",
       runtimeProfileId: "profile-1",
-      authProfileKey: "composer-account",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "composer-account",
+      },
       model: "gpt-composer",
       modeId: "auto",
       thinkingOptionId: "low",
@@ -152,7 +156,11 @@ describe("LaunchResolver", () => {
       provider: "codex",
       cwd: "C:\\dev\\paseo",
       runtimeProfileId: null,
-      authProfileKey: "composer-account",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "composer-account",
+      },
       model: "gpt-composer",
       modeId: "auto",
       thinkingOptionId: "low",
@@ -200,7 +208,11 @@ describe("LaunchResolver", () => {
       provider: "codex",
       cwd: "C:\\dev\\paseo",
       runtimeProfileId: null,
-      authProfileKey: "composer-account",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "composer-account",
+      },
       model: "gpt-5.4",
       modeId: "full-access",
       thinkingOptionId: "medium",
@@ -425,12 +437,11 @@ function createResolver({ profile }: { profile: RuntimeProfile }) {
     syncCurrentProfile: async (provider: string) => ({ provider, status: "unsupported" }),
     resolveLaunchContext: async (selection: {
       providerHomeRef?: { kind: string; provider: string; profileKey?: string | null } | null;
-      authProfileKey?: string | null;
     }) => {
       const profileKey =
         selection.providerHomeRef?.kind === "managed-profile"
           ? (selection.providerHomeRef.profileKey ?? null)
-          : (selection.authProfileKey ?? null);
+          : null;
       const providerHomeRef = profileKey
         ? { kind: "managed-profile" as const, provider: "codex", profileKey }
         : { kind: "native-default" as const, provider: "codex", homePath: "C:\\Users\\me\\.codex" };

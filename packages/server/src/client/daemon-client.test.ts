@@ -2140,7 +2140,11 @@ test("imports an agent by provider handle id", async () => {
     providerId: "custom-codex",
     providerHandleId: "thread-1",
     cwd: "/tmp/repo",
-    authProfileKey: "codex-work",
+    providerHomeRef: {
+      kind: "managed-profile",
+      provider: "codex",
+      profileKey: "codex-work",
+    },
     sessionBehavior: "continue",
   });
 
@@ -2154,7 +2158,7 @@ test("imports an agent by provider handle id", async () => {
       providerHandleId?: string;
       sessionId?: string;
       cwd?: string;
-      authProfileKey?: string | null;
+      providerHomeRef?: { kind: string; provider: string; profileKey?: string };
       sessionBehavior?: string;
     };
   };
@@ -2163,7 +2167,11 @@ test("imports an agent by provider handle id", async () => {
     providerId: "custom-codex",
     providerHandleId: "thread-1",
     cwd: "/tmp/repo",
-    authProfileKey: "codex-work",
+    providerHomeRef: {
+      kind: "managed-profile",
+      provider: "codex",
+      profileKey: "codex-work",
+    },
     sessionBehavior: "continue",
   });
   expect(request.message).not.toHaveProperty("sessionId");

@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { AgentProviderSchema } from "../agent/provider-manifest.js";
 
+const ScheduleProviderHomeRefSchema = z.object({
+  kind: z.enum(["native-default", "managed-profile"]),
+  provider: AgentProviderSchema,
+  profileKey: z.string().trim().min(1).nullable().optional(),
+  homePath: z.string().trim().min(1).nullable().optional(),
+  accountFingerprint: z.string().trim().min(1).nullable().optional(),
+  label: z.string().trim().min(1).nullable().optional(),
+});
+
 export const ScheduleStatusSchema = z.enum(["active", "paused", "completed"]);
 export type ScheduleStatus = z.infer<typeof ScheduleStatusSchema>;
 
@@ -29,6 +38,8 @@ export const ScheduleTargetSchema = z.discriminatedUnion("type", [
       modeId: z.string().trim().min(1).optional(),
       model: z.string().trim().min(1).optional(),
       thinkingOptionId: z.string().trim().min(1).optional(),
+      providerHomeRef: ScheduleProviderHomeRefSchema.nullable().optional(),
+      // COMPAT(providerHomeRef): old schedule targets stored managed accounts as authProfileKey.
       authProfileKey: z.string().trim().min(1).nullable().optional(),
       runtimeProfileId: z.string().trim().min(1).nullable().optional(),
       profileOverrides: z.record(z.unknown()).optional(),

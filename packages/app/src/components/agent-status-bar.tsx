@@ -61,6 +61,7 @@ import type {
   AgentProfileSnapshot,
   AgentProvider,
   ProviderAuthProfile,
+  ProviderHomeRef,
   RuntimeLaunchWarning,
   RuntimeProfile,
   RuntimeProfileSessionBehavior,
@@ -99,9 +100,9 @@ interface PendingRuntimeProfileRestart {
 }
 
 interface AuthProfileRestartClient {
-  restartAgentWithAuthProfile(
+  restartAgentWithProviderHome(
     agentId: string,
-    authProfileKey: string | null,
+    providerHomeRef: ProviderHomeRef | null,
     options?: { sessionBehavior?: RuntimeProfileSessionBehavior },
   ): Promise<void>;
 }
@@ -148,8 +149,8 @@ interface ControlledAgentStatusBarProps {
   onSelectModel?: (modelId: string) => void;
   onSelectProviderAndModel?: (provider: string, modelId: string) => void;
   authProfiles?: ProviderAuthProfile[];
-  selectedAuthProfileKey?: string;
-  onSelectAuthProfile?: (authProfileKey: string) => void;
+  selectedAccountKey?: string;
+  onSelectAuthProfile?: (accountKey: string) => void;
   isAuthProfilesLoading?: boolean;
   runtimeProfiles?: RuntimeProfile[];
   selectedRuntimeProfileId?: string;
@@ -185,8 +186,8 @@ export interface DraftAgentStatusBarProps {
   selectedModel: string;
   onSelectModel: (modelId: string) => void;
   authProfiles?: ProviderAuthProfile[];
-  selectedAuthProfileKey?: string;
-  onSelectAuthProfile?: (authProfileKey: string) => void;
+  selectedAccountKey?: string;
+  onSelectAuthProfile?: (accountKey: string) => void;
   isAuthProfilesLoading?: boolean;
   runtimeProfiles?: RuntimeProfile[];
   selectedRuntimeProfileId?: string;
@@ -332,12 +333,12 @@ function normalizeRuntimeProfileSelection(value: string | null | undefined): str
 
 function resolveAuthProfileRestartLabel(
   authProfiles: ProviderAuthProfile[],
-  authProfileKey: string | null,
+  accountKey: string | null,
 ): string {
-  if (!authProfileKey) {
+  if (!accountKey) {
     return "Default account";
   }
-  const profile = authProfiles.find((candidate) => candidate.key === authProfileKey);
+  const profile = authProfiles.find((candidate) => candidate.key === accountKey);
   return profile ? formatAuthProfileLabel(profile) : "Selected account";
 }
 
@@ -367,34 +368,32 @@ function resolveRuntimeProfileSessionBehavior(
 
 function resolveDisplayAuthProfile(input: {
   authProfiles: ProviderAuthProfile[];
-  selectedAuthProfileKey: string | undefined;
+  selectedAccountKey: string | undefined;
   isLoading: boolean;
 }): string {
   if (input.isLoading && input.authProfiles.length === 0) {
     return "Loading accounts...";
   }
-  if (!input.selectedAuthProfileKey) {
+  if (!input.selectedAccountKey) {
     const defaultProfile = input.authProfiles.find((profile) => profile.isDefault);
     return defaultProfile ? formatAuthProfileLabel(defaultProfile) : "Default account";
   }
-  const selected = input.authProfiles.find(
-    (profile) => profile.key === input.selectedAuthProfileKey,
-  );
+  const selected = input.authProfiles.find((profile) => profile.key === input.selectedAccountKey);
   return selected ? formatAuthProfileLabel(selected) : "Default account";
 }
 
 function resolveAuthProfileControlState(input: {
   authProfiles: ProviderAuthProfile[];
-  selectedAuthProfileKey: string | undefined;
+  selectedAccountKey: string | undefined;
   isLoading: boolean;
-  onSelectAuthProfile?: (authProfileKey: string) => void;
+  onSelectAuthProfile?: (accountKey: string) => void;
 }) {
   return {
     hasControl: input.isLoading || input.authProfiles.length > 0,
     canSelect: Boolean(input.onSelectAuthProfile && input.authProfiles.length > 0),
     display: resolveDisplayAuthProfile({
       authProfiles: input.authProfiles,
-      selectedAuthProfileKey: input.selectedAuthProfileKey,
+      selectedAccountKey: input.selectedAccountKey,
       isLoading: input.isLoading,
     }),
   };
@@ -638,7 +637,7 @@ type AgentStatusBarSlice = {
   currentModeId: string | null | undefined;
   runtimeModelId: string | null;
   model: string | null | undefined;
-  authProfileKey: string | null | undefined;
+  accountKey: string | null | undefined;
   profileSnapshot: AgentProfileSnapshot | undefined;
   features: AgentFeature[] | undefined;
   thinkingOptionId: string | null | undefined;
@@ -660,7 +659,7 @@ function selectAgentStatusBarSlice(
     currentModeId: currentAgent.currentModeId,
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
     model: currentAgent.model,
-    authProfileKey: currentAgent.authProfileKey,
+    accountKey: currentAgent.accountKey,
     profileSnapshot: currentAgent.profileSnapshot,
     features: currentAgent.features,
     thinkingOptionId: currentAgent.thinkingOptionId,
@@ -683,7 +682,7 @@ function useAgentStatusBarAuthProfileState(serverId: string, agent: AgentStatusB
 
   return {
     authProfiles: providerAuthProfiles.profiles ?? EMPTY_AUTH_PROFILES,
-    selectedAuthProfileKey: agent?.authProfileKey ?? undefined,
+    selectedAccountKey: agent?.accountKey ?? undefined,
     isAuthProfilesLoading: providerAuthProfiles.isLoading,
   };
 }
@@ -820,7 +819,7 @@ function ControlledStatusBar({
   onSelectModel,
   onSelectProviderAndModel,
   authProfiles = EMPTY_AUTH_PROFILES,
-  selectedAuthProfileKey,
+  selectedAccountKey,
   onSelectAuthProfile,
   isAuthProfilesLoading = false,
   runtimeProfiles = EMPTY_RUNTIME_PROFILES,
@@ -869,7 +868,7 @@ function ControlledStatusBar({
   const canSelectModel = selectability.model;
   const authProfileControl = resolveAuthProfileControlState({
     authProfiles,
-    selectedAuthProfileKey,
+    selectedAccountKey,
     isLoading: isAuthProfilesLoading,
     onSelectAuthProfile,
   });
@@ -1160,7 +1159,7 @@ function ControlledStatusBar({
           modelOptions={modelOptions}
           selectedModelId={selectedModelId}
           authProfiles={authProfiles}
-          selectedAuthProfileKey={selectedAuthProfileKey}
+          selectedAccountKey={selectedAccountKey}
           hasAuthProfileControl={hasAuthProfileControl}
           canSelectAuthProfile={canSelectAuthProfile}
           isAuthProfilesLoading={isAuthProfilesLoading}
@@ -1243,7 +1242,7 @@ function ControlledStatusBar({
           selectedModeId={selectedModeId}
           selectedModelId={selectedModelId}
           authProfiles={authProfiles}
-          selectedAuthProfileKey={selectedAuthProfileKey}
+          selectedAccountKey={selectedAccountKey}
           hasAuthProfileControl={hasAuthProfileControl}
           canSelectAuthProfile={canSelectAuthProfile}
           isAuthProfilesLoading={isAuthProfilesLoading}
@@ -1317,7 +1316,7 @@ interface DesktopStatusBarContentProps {
   modelOptions?: StatusOption[];
   selectedModelId?: string;
   authProfiles: ProviderAuthProfile[];
-  selectedAuthProfileKey?: string;
+  selectedAccountKey?: string;
   hasAuthProfileControl: boolean;
   canSelectAuthProfile: boolean;
   isAuthProfilesLoading: boolean;
@@ -1408,7 +1407,7 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     selectedModeId,
     selectedModelId,
     authProfiles,
-    selectedAuthProfileKey,
+    selectedAccountKey,
     hasAuthProfileControl,
     canSelectAuthProfile,
     runtimeProfiles,
@@ -1490,7 +1489,7 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
           selectedModeId={selectedModeId}
           selectedModelId={selectedModelId}
           authProfiles={authProfiles}
-          selectedAuthProfileKey={selectedAuthProfileKey}
+          selectedAccountKey={selectedAccountKey}
           hasAuthProfileControl={hasAuthProfileControl}
           canSelectAuthProfile={canSelectAuthProfile}
           runtimeProfiles={runtimeProfiles}
@@ -1549,7 +1548,7 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
 
 function SheetAuthProfileSection({
   authProfiles,
-  selectedAuthProfileKey,
+  selectedAccountKey,
   canSelectAuthProfile,
   disabled,
   displayAuthProfile,
@@ -1559,7 +1558,7 @@ function SheetAuthProfileSection({
   handleAuthProfileSelect,
 }: {
   authProfiles: ProviderAuthProfile[];
-  selectedAuthProfileKey?: string;
+  selectedAccountKey?: string;
   canSelectAuthProfile: boolean;
   disabled: boolean;
   displayAuthProfile: string;
@@ -1592,14 +1591,14 @@ function SheetAuthProfileSection({
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="start">
           <AuthProfileAutoMenuItem
-            selected={!selectedAuthProfileKey}
+            selected={!selectedAccountKey}
             onSelectAuthProfile={handleAuthProfileSelect}
           />
           {authProfiles.map((profile) => (
             <AuthProfileMenuItem
               key={profile.key}
               profile={profile}
-              selected={profile.key === selectedAuthProfileKey}
+              selected={profile.key === selectedAccountKey}
               onSelectAuthProfile={handleAuthProfileSelect}
             />
           ))}
@@ -1725,7 +1724,7 @@ interface SheetStatusBarContentProps {
   selectedModeId?: string;
   selectedModelId?: string;
   authProfiles: ProviderAuthProfile[];
-  selectedAuthProfileKey?: string;
+  selectedAccountKey?: string;
   hasAuthProfileControl: boolean;
   canSelectAuthProfile: boolean;
   isAuthProfilesLoading: boolean;
@@ -1793,7 +1792,7 @@ type PreferencesSheetBodyProps = Pick<
   | "selectedModeId"
   | "selectedModelId"
   | "authProfiles"
-  | "selectedAuthProfileKey"
+  | "selectedAccountKey"
   | "hasAuthProfileControl"
   | "canSelectAuthProfile"
   | "runtimeProfiles"
@@ -1855,7 +1854,7 @@ function PreferencesSheetBody(props: PreferencesSheetBodyProps) {
     selectedModeId,
     selectedModelId,
     authProfiles,
-    selectedAuthProfileKey,
+    selectedAccountKey,
     hasAuthProfileControl,
     canSelectAuthProfile,
     runtimeProfiles,
@@ -1968,7 +1967,7 @@ function PreferencesSheetBody(props: PreferencesSheetBodyProps) {
       {hasAuthProfileControl && shouldRenderDirectRuntimeControls ? (
         <SheetAuthProfileSection
           authProfiles={authProfiles}
-          selectedAuthProfileKey={selectedAuthProfileKey}
+          selectedAccountKey={selectedAccountKey}
           canSelectAuthProfile={canSelectAuthProfile}
           disabled={disabled}
           displayAuthProfile={displayAuthProfile}
@@ -2353,7 +2352,7 @@ function AuthProfileAutoMenuItem({
   onSelectAuthProfile,
 }: {
   selected: boolean;
-  onSelectAuthProfile?: (authProfileKey: string) => void;
+  onSelectAuthProfile?: (accountKey: string) => void;
 }) {
   const handleSelect = useCallback(() => {
     onSelectAuthProfile?.("");
@@ -2373,7 +2372,7 @@ function AuthProfileMenuItem({
 }: {
   profile: ProviderAuthProfile;
   selected: boolean;
-  onSelectAuthProfile?: (authProfileKey: string) => void;
+  onSelectAuthProfile?: (accountKey: string) => void;
 }) {
   const handleSelect = useCallback(() => {
     onSelectAuthProfile?.(profile.key);
@@ -2478,22 +2477,23 @@ const AUTH_PROFILE_RESTART_SNAP_POINTS = ["42%", "70%"];
 
 function useActiveAuthProfileRestartController(options: {
   agentId: string;
+  provider: AgentProvider | undefined;
   authProfiles: ProviderAuthProfile[];
-  selectedAuthProfileKey: string | undefined;
+  selectedAccountKey: string | undefined;
   client: AuthProfileRestartClient | null;
   toast: ReturnType<typeof useToast>;
 }) {
-  const { agentId, authProfiles, selectedAuthProfileKey, client, toast } = options;
+  const { agentId, provider, authProfiles, selectedAccountKey, client, toast } = options;
   const [pending, setPending] = useState<PendingAuthProfileRestart | null>(null);
   const [isRestarting, setIsRestarting] = useState(false);
 
   const requestRestart = useCallback(
-    (authProfileKey: string) => {
+    (accountKey: string) => {
       if (!client) {
         return;
       }
-      const normalizedNextKey = normalizeAuthProfileSelection(authProfileKey);
-      const normalizedCurrentKey = normalizeAuthProfileSelection(selectedAuthProfileKey);
+      const normalizedNextKey = normalizeAuthProfileSelection(accountKey);
+      const normalizedCurrentKey = normalizeAuthProfileSelection(selectedAccountKey);
       if (normalizedNextKey === normalizedCurrentKey) {
         return;
       }
@@ -2503,7 +2503,7 @@ function useActiveAuthProfileRestartController(options: {
         sessionBehavior: DEFAULT_SESSION_BEHAVIOR,
       });
     },
-    [authProfiles, client, selectedAuthProfileKey],
+    [authProfiles, client, selectedAccountKey],
   );
 
   const close = useCallback(() => {
@@ -2523,17 +2523,31 @@ function useActiveAuthProfileRestartController(options: {
     setIsRestarting(true);
     void (async () => {
       try {
-        await client.restartAgentWithAuthProfile(agentId, nextKey, { sessionBehavior });
+        const selectedProfile = authProfiles.find((profile) => profile.key === nextKey);
+        let providerHomeRef: ProviderHomeRef | null = null;
+        if (nextKey && selectedProfile) {
+          providerHomeRef = {
+            kind: "managed-profile",
+            provider: selectedProfile.provider,
+            profileKey: selectedProfile.key,
+            label: selectedProfile.email ?? selectedProfile.accountName ?? selectedProfile.alias,
+            accountFingerprint:
+              selectedProfile.accountId ?? selectedProfile.userId ?? selectedProfile.email,
+          };
+        } else if (provider) {
+          providerHomeRef = { kind: "native-default", provider };
+        }
+        await client.restartAgentWithProviderHome(agentId, providerHomeRef, { sessionBehavior });
         toast.show(`Restarting agent with ${nextLabel}`, { variant: "success" });
       } catch (error) {
-        console.warn("[AgentStatusBar] restartAgentWithAuthProfile failed", error);
+        console.warn("[AgentStatusBar] restartAgentWithProviderHome failed", error);
         toast.error(toErrorMessage(error));
       } finally {
         setIsRestarting(false);
         setPending(null);
       }
     })();
-  }, [agentId, client, pending, toast]);
+  }, [agentId, authProfiles, client, pending, provider, toast]);
 
   return {
     pending,
@@ -2864,8 +2878,9 @@ export const AgentStatusBar = memo(function AgentStatusBar({
   const runtimeProfileState = useAgentStatusBarRuntimeProfileState(serverId, agent);
   const authProfileRestart = useActiveAuthProfileRestartController({
     agentId,
+    provider: agentProvider,
     authProfiles: authProfileState.authProfiles,
-    selectedAuthProfileKey: authProfileState.selectedAuthProfileKey,
+    selectedAccountKey: authProfileState.selectedAccountKey,
     client,
     toast,
   });
@@ -3083,7 +3098,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
         features={agent.features}
         onSetFeature={handleSetFeature}
         authProfiles={authProfileState.authProfiles}
-        selectedAuthProfileKey={authProfileState.selectedAuthProfileKey}
+        selectedAccountKey={authProfileState.selectedAccountKey}
         onSelectAuthProfile={authProfileRestart.requestRestart}
         isAuthProfilesLoading={authProfileState.isAuthProfilesLoading}
         runtimeProfiles={runtimeProfileState.runtimeProfiles}
@@ -3126,7 +3141,7 @@ export function DraftAgentStatusBar({
   selectedModel,
   onSelectModel,
   authProfiles,
-  selectedAuthProfileKey,
+  selectedAccountKey,
   onSelectAuthProfile,
   isAuthProfilesLoading,
   runtimeProfiles = EMPTY_RUNTIME_PROFILES,
@@ -3212,7 +3227,7 @@ export function DraftAgentStatusBar({
       onSelectModel={onSelectModel}
       onSelectProviderAndModel={onSelectProviderAndModel}
       authProfiles={authProfiles}
-      selectedAuthProfileKey={selectedAuthProfileKey}
+      selectedAccountKey={selectedAccountKey}
       onSelectAuthProfile={onSelectAuthProfile}
       isAuthProfilesLoading={isAuthProfilesLoading}
       runtimeProfiles={runtimeProfiles}

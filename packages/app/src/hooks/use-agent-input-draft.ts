@@ -40,7 +40,7 @@ interface UseAgentInputDraftInput {
 type DraftComposerState = UseAgentFormStateResult & {
   workingDir: string;
   effectiveModelId: string;
-  effectiveAuthProfileKey: string;
+  effectiveAccountKey: string;
   effectiveRuntimeProfileId: string;
   effectiveThinkingOptionId: string;
   featureValues: Record<string, unknown> | undefined;
@@ -218,7 +218,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       }),
     [effectiveModelId, formState.availableModels, formState.selectedThinkingOptionId],
   );
-  const effectiveAuthProfileKey = formState.selectedAuthProfileKey.trim();
+  const effectiveAccountKey = formState.selectedAccountKey.trim();
   const effectiveRuntimeProfileId = formState.selectedRuntimeProfileId.trim();
 
   const workingDir = lockedWorkingDir || formState.workingDir;
@@ -244,7 +244,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
             modeOptions: formState.modeOptions,
             selectedMode: formState.selectedMode,
             effectiveModelId,
-            authProfileKey: effectiveAuthProfileKey,
+            accountKey: effectiveAccountKey,
             runtimeProfileId: effectiveRuntimeProfileId,
             effectiveThinkingOptionId,
             featureValues: draftFeatureValues,
@@ -253,7 +253,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     [
       composerOptions,
       effectiveModelId,
-      effectiveAuthProfileKey,
+      effectiveAccountKey,
       effectiveRuntimeProfileId,
       effectiveThinkingOptionId,
       draftFeatureValues,
@@ -273,7 +273,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       ...formState,
       workingDir,
       effectiveModelId,
-      effectiveAuthProfileKey,
+      effectiveAccountKey,
       effectiveRuntimeProfileId,
       effectiveThinkingOptionId,
       featureValues: draftFeatureValues,
@@ -288,7 +288,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     commandDraftConfig,
     composerOptions,
     effectiveModelId,
-    effectiveAuthProfileKey,
+    effectiveAccountKey,
     effectiveRuntimeProfileId,
     effectiveThinkingOptionId,
     draftFeatures,

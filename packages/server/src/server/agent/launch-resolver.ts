@@ -75,10 +75,8 @@ export class LaunchResolver {
       resolveDefault: input.resolveDefaultAuthProfile,
       sourceProfile: profile,
     });
-    const { authProfileKey: _deprecatedAuthProfileKey, ...configWithoutDeprecatedAuth } =
-      mergedConfig;
     const config = {
-      ...configWithoutDeprecatedAuth,
+      ...mergedConfig,
       ...(profile ? { runtimeProfileId: profile.id } : {}),
       providerHomeRef: authLaunch.providerHomeRef,
     };
@@ -233,8 +231,6 @@ export class LaunchResolver {
 export function synthesizeAgentProfileSnapshot(config: AgentSessionConfig): AgentProfileSnapshot {
   const providerHomeRef =
     normalizeProviderHomeRef(config.providerHomeRef, config.provider) ??
-    // COMPAT(providerHomeRef): old stored configs may only have authProfileKey.
-    resolveManagedHomeRefFromProfileKey(config.provider, config.authProfileKey) ??
     createNativeDefaultProviderHomeRef({ provider: config.provider });
   return stripUndefined<AgentProfileSnapshot>({
     provider: config.provider,
@@ -284,7 +280,6 @@ function resolveProviderHomeRefSelection(input: {
     resolveManagedHomeRefFromProfileKey(
       input.provider,
       firstString(
-        input.config.authProfileKey,
         input.previousAdHocSnapshot?.accountKey,
         input.overrides?.accountKey,
         input.profile?.accountKey,

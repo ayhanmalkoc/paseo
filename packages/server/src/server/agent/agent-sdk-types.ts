@@ -644,8 +644,6 @@ export interface AgentSessionConfig {
   model?: string;
   thinkingOptionId?: string;
   providerHomeRef?: ProviderHomeRef | null;
-  /** @deprecated COMPAT(providerHomeRef): normalized at protocol/storage boundary. */
-  authProfileKey?: string | null;
   runtimeProfileId?: string | null;
   profileOverrides?: RuntimeProfileLaunchOverrides;
   profileSnapshot?: AgentProfileSnapshot;

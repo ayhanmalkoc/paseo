@@ -55,8 +55,8 @@ export interface UseAgentFormStateResult {
   setModeFromUser: (modeId: string) => void;
   selectedModel: string;
   setModelFromUser: (modelId: string) => void;
-  selectedAuthProfileKey: string;
-  setAuthProfileFromUser: (authProfileKey: string) => void;
+  selectedAccountKey: string;
+  setAccountFromUser: (accountKey: string) => void;
   selectedRuntimeProfileId: string;
   setRuntimeProfileFromUser: (runtimeProfileId: string) => void;
   runtimeProfiles: RuntimeProfile[];
@@ -156,7 +156,7 @@ async function persistProviderPreferences(input: {
       updates: {
         model: modelId || undefined,
         mode: formState.modeId || undefined,
-        authProfileKey: formState.authProfileKey || undefined,
+        accountKey: formState.accountKey || undefined,
         ...(modelId && formState.thinkingOptionId
           ? { thinkingByModel: { [modelId]: formState.thinkingOptionId } }
           : {}),
@@ -190,7 +190,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         provider: null,
         modeId: "",
         model: "",
-        authProfileKey: "",
+        accountKey: "",
         runtimeProfileId: "",
         thinkingOptionId: "",
         workingDir: "",
@@ -448,18 +448,18 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     [availableModels, updatePreferences],
   );
 
-  const setAuthProfileFromUser = useCallback(
-    (authProfileKey: string) => {
-      dispatch({ type: "SET_AUTH_PROFILE_FROM_USER", authProfileKey });
+  const setAccountFromUser = useCallback(
+    (accountKey: string) => {
+      dispatch({ type: "SET_ACCOUNT_FROM_USER", accountKey });
       const provider = reducerStateRef.current.form.provider;
       if (provider) {
-        const normalizedAuthProfileKey = authProfileKey.trim();
+        const normalizedAccountKey = accountKey.trim();
         void updatePreferences((current) =>
           mergeSelectedComposerPreferences({
             preferences: current,
             provider,
             updates: {
-              authProfileKey: normalizedAuthProfileKey || undefined,
+              accountKey: normalizedAccountKey || undefined,
             },
           }),
         );
@@ -551,8 +551,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       setModeFromUser,
       selectedModel: resolvedModelId,
       setModelFromUser,
-      selectedAuthProfileKey: formState.authProfileKey,
-      setAuthProfileFromUser,
+      selectedAccountKey: formState.accountKey,
+      setAccountFromUser,
       selectedRuntimeProfileId: formState.runtimeProfileId,
       setRuntimeProfileFromUser,
       runtimeProfiles: runtimeProfilesQuery.profiles,
@@ -587,7 +587,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       formState.modeId,
       resolvedModelId,
       formState.thinkingOptionId,
-      formState.authProfileKey,
+      formState.accountKey,
       formState.runtimeProfileId,
       formState.workingDir,
       setSelectedServerId,
@@ -595,7 +595,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       setProviderFromUser,
       setModeFromUser,
       setModelFromUser,
-      setAuthProfileFromUser,
+      setAccountFromUser,
       setRuntimeProfileFromUser,
       setThinkingOptionFromUser,
       setWorkingDir,

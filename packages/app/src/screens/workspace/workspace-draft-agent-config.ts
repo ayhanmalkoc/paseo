@@ -6,7 +6,7 @@ export function buildWorkspaceDraftAgentConfig(input: {
   modeId?: string;
   model?: string;
   providerHomeRef?: AgentSessionConfig["providerHomeRef"];
-  authProfileKey?: string;
+  accountKey?: string;
   runtimeProfileId?: string;
   thinkingOptionId?: string;
   featureValues?: Record<string, unknown>;
@@ -20,11 +20,11 @@ export function buildWorkspaceDraftAgentConfig(input: {
   }
   const providerHomeRef =
     input.providerHomeRef ??
-    (input.authProfileKey
+    (input.accountKey
       ? {
           kind: "managed-profile" as const,
           provider: input.provider,
-          profileKey: input.authProfileKey,
+          profileKey: input.accountKey,
         }
       : undefined);
 

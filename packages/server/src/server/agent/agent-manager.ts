@@ -142,22 +142,6 @@ function normalizeAuthProfileKey(value: string | null | undefined): string | nul
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeConfigProviderHomeRef(config: AgentSessionConfig): void {
-  if (normalizeProviderHomeRef(config.providerHomeRef, config.provider)) {
-    return;
-  }
-  const legacyProfileKey = normalizeAuthProfileKey(config.authProfileKey);
-  if (!legacyProfileKey) {
-    return;
-  }
-  // COMPAT(providerHomeRef): normalize legacy launch identity before internal use.
-  config.providerHomeRef = {
-    kind: "managed-profile",
-    provider: config.provider,
-    profileKey: legacyProfileKey,
-  };
-}
-
 function formatProviderAuthProfileLabel(profile: {
   email?: string;
   accountName?: string;
@@ -839,14 +823,14 @@ export class AgentManager {
       return [this.getNativeDefaultPersistedAgentListSource(provider)];
     }
     if (normalizedSourceHomeRef?.kind === "managed-profile") {
-      const source = await this.getAuthProfilePersistedAgentListSource(
+      const source = await this.getManagedAccountPersistedAgentListSource(
         provider,
         normalizedSourceHomeRef.profileKey ?? null,
       );
       return source ? [source] : [this.getNativeDefaultPersistedAgentListSource(provider)];
     }
     if (sourceAuthProfileKey !== undefined) {
-      const source = await this.getAuthProfilePersistedAgentListSource(
+      const source = await this.getManagedAccountPersistedAgentListSource(
         provider,
         sourceAuthProfileKey,
       );
@@ -884,11 +868,11 @@ export class AgentManager {
     };
   }
 
-  private async getAuthProfilePersistedAgentListSource(
+  private async getManagedAccountPersistedAgentListSource(
     provider: AgentProvider,
-    authProfileKey: string | null,
+    accountKey: string | null,
   ): Promise<PersistedAgentListSource | null> {
-    const normalizedProfileKey = normalizeAuthProfileKey(authProfileKey);
+    const normalizedProfileKey = normalizeAuthProfileKey(accountKey);
     if (!normalizedProfileKey || !this.providerAuthService?.supportsProvider(provider)) {
       return null;
     }
@@ -1588,11 +1572,11 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  async restartAgentWithAuthProfile(
+  async restartAgentWithProviderHome(
     agentId: string,
-    authProfileKey: string | null,
     options?: {
       providerHomeRef?: AgentSessionConfig["providerHomeRef"] | null;
+      legacyAccountKey?: string | null;
       sessionBehavior?: RuntimeProfileSessionBehavior;
     },
   ): Promise<ManagedAgent> {
@@ -1605,16 +1589,17 @@ export class AgentManager {
       throw new Error(`Provider '${agent.provider}' does not support auth profiles`);
     }
 
-    const requestedProfileKey = normalizeAuthProfileKey(authProfileKey);
+    const legacyAccountKey = normalizeAuthProfileKey(options?.legacyAccountKey);
     const requestedProviderHomeRef =
       normalizeProviderHomeRef(options?.providerHomeRef, agent.provider) ??
-      (requestedProfileKey
+      (legacyAccountKey
         ? {
             kind: "managed-profile" as const,
             provider: agent.provider,
-            profileKey: requestedProfileKey,
+            profileKey: legacyAccountKey,
           }
-        : this.providerAuthService?.getNativeDefaultProviderHomeRef(agent.provider));
+        : undefined) ??
+      this.providerAuthService?.getNativeDefaultProviderHomeRef(agent.provider);
     const requestedConfig = {
       ...agent.config,
       providerHomeRef: requestedProviderHomeRef,
@@ -1623,8 +1608,7 @@ export class AgentManager {
     const authLaunch = await this.resolveProviderAuthLaunchContext(normalizedConfig, {
       resolveDefault: true,
     });
-    const requestedManagedProfileKey =
-      getManagedProviderHomeProfileKey(requestedProviderHomeRef) ?? requestedProfileKey;
+    const requestedManagedProfileKey = getManagedProviderHomeProfileKey(requestedProviderHomeRef);
     if (requestedManagedProfileKey && !authLaunch.profileKey) {
       throw new Error(`No ready auth profile is available for provider '${agent.provider}'`);
     }
@@ -3679,8 +3663,8 @@ export class AgentManager {
 
   private async normalizeConfig(config: AgentSessionConfig): Promise<AgentSessionConfig> {
     const normalized: AgentSessionConfig = { ...config };
-    normalizeConfigProviderHomeRef(normalized);
-    delete normalized.authProfileKey;
+    // COMPAT(providerHomeRef): old untyped callers may still include authProfileKey.
+    delete (normalized as AgentSessionConfig & { authProfileKey?: unknown }).authProfileKey;
 
     // Always resolve cwd to absolute path for consistent history file lookup
     if (normalized.cwd) {
@@ -3832,8 +3816,6 @@ export class AgentManager {
     return this.providerAuthService.resolveLaunchContext({
       provider: config.provider,
       providerHomeRef: config.providerHomeRef,
-      // COMPAT(providerHomeRef): old configs may still carry authProfileKey.
-      authProfileKey: normalizeAuthProfileKey(config.authProfileKey),
     });
   }
 

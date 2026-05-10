@@ -80,7 +80,6 @@ export type SerializableAgentConfig = Pick<
   | "model"
   | "thinkingOptionId"
   | "providerHomeRef"
-  | "authProfileKey"
   | "runtimeProfileId"
   | "profileOverrides"
   | "profileSnapshot"

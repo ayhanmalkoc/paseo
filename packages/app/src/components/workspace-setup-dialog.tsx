@@ -109,7 +109,7 @@ function buildCreateAgentOptions({
     modeOptions: { id: string }[];
     selectedMode: string;
     effectiveModelId: string | null;
-    effectiveAuthProfileKey: string | null;
+    effectiveAccountKey: string | null;
     effectiveRuntimeProfileId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
@@ -137,8 +137,8 @@ function buildCreateAgentOptions({
     ...(!usesRuntimeProfile && composerState.effectiveModelId
       ? { model: composerState.effectiveModelId }
       : {}),
-    ...(!usesRuntimeProfile && composerState.effectiveAuthProfileKey
-      ? { authProfileKey: composerState.effectiveAuthProfileKey }
+    ...(!usesRuntimeProfile && composerState.effectiveAccountKey
+      ? { accountKey: composerState.effectiveAccountKey }
       : {}),
     ...(!usesRuntimeProfile && composerState.effectiveThinkingOptionId
       ? { thinkingOptionId: composerState.effectiveThinkingOptionId }

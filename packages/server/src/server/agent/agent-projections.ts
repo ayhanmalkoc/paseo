@@ -115,6 +115,7 @@ export function toAgentPayload(
     cwd: agent.cwd,
     model: agent.config.model ?? null,
     providerHomeRef: agent.config.providerHomeRef ?? null,
+    accountKey: agent.config.providerHomeRef?.profileKey ?? null,
     authProfileKey: agent.config.providerHomeRef?.profileKey ?? null,
     profileSnapshot: agent.config.profileSnapshot,
     thinkingOptionId,
@@ -193,6 +194,7 @@ function buildStoredAgentConfigPayload(
   runtimeInfo: AgentRuntimeInfo | undefined,
 ): Pick<
   AgentSnapshotPayload,
+  | "accountKey"
   | "authProfileKey"
   | "effectiveThinkingOptionId"
   | "model"
@@ -207,6 +209,7 @@ function buildStoredAgentConfigPayload(
   return {
     model: record.config?.model ?? null,
     providerHomeRef: providerHomeRef ?? null,
+    accountKey: providerHomeRef?.profileKey ?? record.config?.authProfileKey ?? null,
     authProfileKey: providerHomeRef?.profileKey ?? record.config?.authProfileKey ?? null,
     profileSnapshot: record.config?.profileSnapshot,
     thinkingOptionId: configuredThinkingOptionId,

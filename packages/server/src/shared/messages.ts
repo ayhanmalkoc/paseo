@@ -837,6 +837,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   cwd: z.string(),
   model: z.string().nullable(),
   providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
+  accountKey: z.string().nullable().optional(),
   // COMPAT(providerHomeRef): old clients read authProfileKey from snapshots.
   authProfileKey: z.string().nullable().optional(),
   profileSnapshot: AgentProfileSnapshotSchema.optional(),
