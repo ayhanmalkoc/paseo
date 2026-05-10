@@ -17,6 +17,7 @@ import type {
   AgentRunOptions,
   AgentRunResult,
   AgentRuntimeInfo,
+  AgentResumeSessionOptions,
   AgentSession,
   AgentSessionConfig,
   AgentSlashCommand,
@@ -2816,6 +2817,7 @@ class CodexAppServerAgentSession implements AgentSession {
     private readonly deps: CodexAppServerAgentDeps = {},
     private readonly ephemeral: boolean = false,
     private readonly goalsEnabled: boolean = false,
+    private readonly resumeOptions: AgentResumeSessionOptions = {},
   ) {
     this.logger = logger.child({ module: "agent", provider: CODEX_PROVIDER });
     if (config.modeId === undefined) {
@@ -3114,6 +3116,14 @@ class CodexAppServerAgentSession implements AgentSession {
       }
       await this.client.request("thread/resume", params);
     } catch (error) {
+      if (this.resumeOptions.strict) {
+        throw new Error(
+          `Failed to resume Codex thread '${this.currentThreadId}': ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { cause: error },
+        );
+      }
       this.logger.warn({ error }, "Failed to resume Codex thread, starting new thread");
       this.currentThreadId = null;
       await this.ensureThread();
@@ -3563,6 +3573,7 @@ class CodexAppServerAgentSession implements AgentSession {
         runtimeProfileId: this.config.runtimeProfileId ?? null,
         profileOverrides: this.config.profileOverrides,
         profileSnapshot: this.config.profileSnapshot,
+        sessionBehavior: this.config.sessionBehavior,
         extra: this.config.extra,
         systemPrompt: this.config.systemPrompt,
         mcpServers: this.config.mcpServers,
@@ -4825,6 +4836,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     handle: { sessionId: string; metadata?: Record<string, unknown> },
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const storedConfig = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const merged: AgentSessionConfig = {
@@ -4842,6 +4854,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       this.deps,
       false,
       goalsEnabled,
+      options,
     );
     await session.connect();
     return session;

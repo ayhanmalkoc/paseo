@@ -15,6 +15,7 @@ describe("LaunchResolver", () => {
         model: "gpt-profile",
         modeId: "full-access",
         thinkingOptionId: "xhigh",
+        sessionBehavior: "fresh",
       }),
     });
     const config: AgentSessionConfig = {
@@ -41,6 +42,7 @@ describe("LaunchResolver", () => {
       modeId: "full-access",
       thinkingOptionId: "xhigh",
       runtimeProfileId: "profile-1",
+      sessionBehavior: "fresh",
     });
     expect(resolved.snapshot).toMatchObject({
       sourceProfileId: "profile-1",
@@ -48,8 +50,30 @@ describe("LaunchResolver", () => {
       model: "gpt-profile",
       modeId: "full-access",
       thinkingOptionId: "xhigh",
+      sessionBehavior: "fresh",
     });
     expect(resolved.launchContext.env.CODEX_HOME).toBe("C:\\profiles\\profile-account");
+  });
+
+  test("runtime profile session behavior defaults to continue", async () => {
+    const resolver = createResolver({
+      profile: createRuntimeProfile(),
+    });
+    const config: AgentSessionConfig = {
+      provider: "codex",
+      cwd: "C:\\dev\\paseo",
+      runtimeProfileId: "profile-1",
+    };
+
+    const resolved = await resolver.resolve({
+      agentId: "agent-1",
+      config,
+      normalizedConfig: config,
+      resolveDefaultAuthProfile: false,
+    });
+
+    expect(resolved.config.sessionBehavior).toBe("continue");
+    expect(resolved.snapshot.sessionBehavior).toBe("continue");
   });
 
   test("explicit runtime profile overrides win over stored profile selections", async () => {

@@ -357,6 +357,9 @@ function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentC
   if (config.profileSnapshot) {
     serializable.profileSnapshot = config.profileSnapshot;
   }
+  if (config.sessionBehavior) {
+    serializable.sessionBehavior = config.sessionBehavior;
+  }
   if (Object.prototype.hasOwnProperty.call(config, "featureValues")) {
     const featureValues = sanitizeMetadata(config.featureValues);
     if (featureValues !== undefined) {

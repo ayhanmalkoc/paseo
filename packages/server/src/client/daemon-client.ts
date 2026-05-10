@@ -95,6 +95,7 @@ import type {
   AgentSessionConfig,
   AccountLoginMethod,
   RuntimeLaunchWarning,
+  RuntimeProfileSessionBehavior,
   RuntimeProfilePatch,
 } from "../server/agent/agent-sdk-types.js";
 import type { MutableDaemonConfig, MutableDaemonConfigPatch } from "../shared/messages.js";
@@ -159,6 +160,7 @@ const perfNow: () => number =
 interface ImportAgentInputBase {
   cwd?: string;
   authProfileKey?: string | null;
+  sessionBehavior?: RuntimeProfileSessionBehavior;
   labels?: Record<string, string>;
 }
 
@@ -2013,6 +2015,7 @@ export class DaemonClient {
         : { provider: input.provider, sessionId: input.sessionId }),
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.authProfileKey !== undefined ? { authProfileKey: input.authProfileKey } : {}),
+      ...(input.sessionBehavior !== undefined ? { sessionBehavior: input.sessionBehavior } : {}),
       ...(input.labels && Object.keys(input.labels).length > 0 ? { labels: input.labels } : {}),
     });
 
@@ -2290,12 +2293,17 @@ export class DaemonClient {
     }
   }
 
-  async restartAgentWithAuthProfile(agentId: string, authProfileKey: string | null): Promise<void> {
+  async restartAgentWithAuthProfile(
+    agentId: string,
+    authProfileKey: string | null,
+    options?: { sessionBehavior?: RuntimeProfileSessionBehavior },
+  ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "restart_agent_with_auth_profile_request",
       agentId,
       authProfileKey,
+      ...(options?.sessionBehavior ? { sessionBehavior: options.sessionBehavior } : {}),
       requestId,
     });
     const payload = await this.sendRequest({
@@ -2322,7 +2330,10 @@ export class DaemonClient {
     agentId: string,
     runtimeProfileId: string | null,
     profileOverrides?: AgentSessionConfig["profileOverrides"],
-    options?: { acceptRuntimeWarnings?: boolean },
+    options?: {
+      acceptRuntimeWarnings?: boolean;
+      sessionBehavior?: RuntimeProfileSessionBehavior;
+    },
   ): Promise<RestartAgentWithRuntimeProfilePayload> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
@@ -2330,6 +2341,7 @@ export class DaemonClient {
       agentId,
       runtimeProfileId,
       ...(profileOverrides ? { profileOverrides } : {}),
+      ...(options?.sessionBehavior ? { sessionBehavior: options.sessionBehavior } : {}),
       ...(options?.acceptRuntimeWarnings ? { acceptRuntimeWarnings: true } : {}),
       requestId,
     });

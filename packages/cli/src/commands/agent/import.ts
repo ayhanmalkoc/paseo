@@ -3,7 +3,7 @@ import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import type { CommandError, CommandOptions, SingleResult } from "../../output/index.js";
 import { agentRunSchema, type AgentRunResult } from "./run.js";
-import type { AgentSnapshotPayload } from "@getpaseo/server";
+import type { AgentSnapshotPayload, RuntimeProfileSessionBehavior } from "@getpaseo/server";
 
 const IMPORT_PROVIDERS = new Set(["claude", "codex", "opencode", "acp"]);
 
@@ -13,6 +13,8 @@ export function addImportOptions(cmd: Command): Command {
     .argument("<id>", "Provider session/thread ID to import")
     .requiredOption("--provider <provider>", "Agent provider: claude, codex, opencode, or acp")
     .option("--cwd <path>", "Working directory for providers that require it")
+    .option("--account <key>", "Provider account/auth profile key to use while importing")
+    .option("--session-behavior <behavior>", "Import behavior: continue or fresh", "continue")
     .option(
       "--label <key=value>",
       "Add label(s) to the agent (can be used multiple times)",
@@ -24,6 +26,8 @@ export function addImportOptions(cmd: Command): Command {
 export interface AgentImportOptions extends CommandOptions {
   provider?: string;
   cwd?: string;
+  account?: string;
+  sessionBehavior?: string;
   label?: string[];
   host?: string;
 }
@@ -92,6 +96,18 @@ function parseImportLabels(labelFlags: string[] | undefined): Record<string, str
   return labels;
 }
 
+function parseSessionBehavior(value: string | undefined): RuntimeProfileSessionBehavior {
+  const normalized = value?.trim() || "continue";
+  if (normalized === "continue" || normalized === "fresh") {
+    return normalized;
+  }
+  throw {
+    code: "INVALID_SESSION_BEHAVIOR",
+    message: `Unsupported session behavior: ${normalized}`,
+    details: "Supported values: continue, fresh",
+  } satisfies CommandError;
+}
+
 export function resolveImportCwd(explicitCwd: string | undefined, defaultCwd: string): string {
   const cwd = explicitCwd?.trim() ?? defaultCwd;
   if (!cwd.trim()) {
@@ -137,6 +153,8 @@ export async function runImportCommand(
 
   const provider = parseImportProvider(options.provider);
   const cwd = resolveImportCwd(options.cwd, process.cwd());
+  const authProfileKey = options.account?.trim();
+  const sessionBehavior = parseSessionBehavior(options.sessionBehavior);
 
   const labels = parseImportLabels(options.label);
   const client = await connectToDaemonOrThrow(options.host, host);
@@ -146,6 +164,8 @@ export async function runImportCommand(
       provider,
       sessionId,
       cwd,
+      ...(authProfileKey ? { authProfileKey } : {}),
+      sessionBehavior,
       ...(Object.keys(labels).length > 0 ? { labels } : {}),
     });
 

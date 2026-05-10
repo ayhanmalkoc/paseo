@@ -33,6 +33,7 @@ import type {
   AgentUsage,
   AgentRuntimeInfo,
   RuntimeLaunchWarning,
+  RuntimeProfileSessionBehavior,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
@@ -103,6 +104,9 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
   if (record.config.systemPrompt != null) {
     config.systemPrompt = record.config.systemPrompt;
   }
+  if (record.config.sessionBehavior != null) {
+    config.sessionBehavior = record.config.sessionBehavior;
+  }
   if (record.config.mcpServers != null) config.mcpServers = record.config.mcpServers;
   return config;
 }
@@ -113,6 +117,18 @@ function normalizeAuthProfileKey(value: string | null | undefined): string | nul
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveSessionBehavior(
+  requested: RuntimeProfileSessionBehavior | undefined,
+  config?: AgentSessionConfig,
+): RuntimeProfileSessionBehavior {
+  return (
+    requested ??
+    config?.sessionBehavior ??
+    config?.profileSnapshot?.sessionBehavior ??
+    DEFAULT_SESSION_BEHAVIOR
+  );
 }
 
 export { AGENT_LIFECYCLE_STATUSES, type AgentLifecycleStatus };
@@ -176,12 +192,16 @@ interface AgentManagerRescueTimeouts {
 
 interface ReloadAgentSessionOptions {
   forceCreateSession?: boolean;
+  sessionBehavior?: RuntimeProfileSessionBehavior;
+  useResolvedSessionBehavior?: boolean;
   rehydrateFromDisk?: boolean;
   resolveDefaultAuthProfile?: boolean;
   runtimeProfileId?: string | null;
   profileOverrides?: AgentSessionConfig["profileOverrides"];
   acceptRuntimeWarnings?: boolean;
 }
+
+const DEFAULT_SESSION_BEHAVIOR: RuntimeProfileSessionBehavior = "continue";
 
 interface ProviderEnabledFlag {
   enabled: boolean;
@@ -947,6 +967,7 @@ export class AgentManager {
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
+      sessionBehavior?: RuntimeProfileSessionBehavior;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(
@@ -983,11 +1004,16 @@ export class AgentManager {
         `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
       );
     }
-    const session = await client.resumeSession(
-      handle,
-      hasResumeOverrides ? resumeOverrides : undefined,
-      resolvedLaunch.launchContext,
-    );
+    const sessionBehavior = resolveSessionBehavior(options?.sessionBehavior);
+    const session =
+      sessionBehavior === "fresh"
+        ? await client.createSession(resolvedLaunch.config, resolvedLaunch.launchContext)
+        : await client.resumeSession(
+            handle,
+            hasResumeOverrides ? resumeOverrides : undefined,
+            resolvedLaunch.launchContext,
+            { strict: true },
+          );
     return this.registerSession(session, resolvedLaunch.config, resolvedAgentId, options);
   }
 
@@ -1033,10 +1059,17 @@ export class AgentManager {
     });
     this.requireRuntimeWarningConfirmation(resolvedLaunch, options?.acceptRuntimeWarnings === true);
 
-    const session =
-      handle && options?.forceCreateSession !== true
-        ? await client.resumeSession(handle, resolvedLaunch.config, resolvedLaunch.launchContext)
-        : await client.createSession(resolvedLaunch.config, resolvedLaunch.launchContext);
+    const sessionBehavior = resolveSessionBehavior(
+      options?.sessionBehavior,
+      options?.useResolvedSessionBehavior === true ? resolvedLaunch.config : undefined,
+    );
+    const session = await this.openReloadedSession({
+      client,
+      handle,
+      resolvedLaunch,
+      forceCreateSession: options?.forceCreateSession,
+      sessionBehavior,
+    });
 
     this.agentStreamCoalescer.flushAndDiscard(agentId);
     // Remove the existing agent entry before swapping sessions
@@ -1067,6 +1100,28 @@ export class AgentManager {
       lastError: preservedLastError,
       attention: preservedAttention,
     });
+  }
+
+  private async openReloadedSession(input: {
+    client: AgentClient;
+    handle: AgentPersistenceHandle | null;
+    resolvedLaunch: ResolvedAgentLaunch;
+    forceCreateSession?: boolean;
+    sessionBehavior: RuntimeProfileSessionBehavior;
+  }): Promise<AgentSession> {
+    if (input.handle && input.forceCreateSession !== true && input.sessionBehavior === "continue") {
+      const handle = input.handle;
+      return input.client.resumeSession(
+        handle,
+        input.resolvedLaunch.config,
+        input.resolvedLaunch.launchContext,
+        { strict: true },
+      );
+    }
+    return input.client.createSession(
+      input.resolvedLaunch.config,
+      input.resolvedLaunch.launchContext,
+    );
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
@@ -1314,6 +1369,7 @@ export class AgentManager {
   async restartAgentWithAuthProfile(
     agentId: string,
     authProfileKey: string | null,
+    options?: { sessionBehavior?: RuntimeProfileSessionBehavior },
   ): Promise<ManagedAgent> {
     const agent = this.requireSessionAgent(agentId);
     const providerAuthService = this.providerAuthService;
@@ -1345,7 +1401,7 @@ export class AgentManager {
     return this.reloadAgentSession(
       agentId,
       { authProfileKey: authLaunch.profileKey },
-      { forceCreateSession: true },
+      { sessionBehavior: options?.sessionBehavior ?? DEFAULT_SESSION_BEHAVIOR },
     );
   }
 
@@ -1353,7 +1409,10 @@ export class AgentManager {
     agentId: string,
     runtimeProfileId: string | null,
     profileOverrides?: AgentSessionConfig["profileOverrides"],
-    options?: { acceptRuntimeWarnings?: boolean },
+    options?: {
+      acceptRuntimeWarnings?: boolean;
+      sessionBehavior?: RuntimeProfileSessionBehavior;
+    },
   ): Promise<ManagedAgent> {
     this.requireSessionAgent(agentId);
     const requestedProfileId = normalizeAuthProfileKey(runtimeProfileId);
@@ -1366,7 +1425,7 @@ export class AgentManager {
           profileSnapshot: undefined,
         },
         {
-          forceCreateSession: true,
+          sessionBehavior: options?.sessionBehavior ?? DEFAULT_SESSION_BEHAVIOR,
           resolveDefaultAuthProfile: true,
           runtimeProfileId: null,
           profileOverrides: undefined,
@@ -1381,7 +1440,8 @@ export class AgentManager {
         profileOverrides,
       },
       {
-        forceCreateSession: true,
+        sessionBehavior: options?.sessionBehavior,
+        useResolvedSessionBehavior: true,
         resolveDefaultAuthProfile: true,
         runtimeProfileId: requestedProfileId,
         profileOverrides,

@@ -523,6 +523,7 @@ describe("WorkspaceImportSheet", () => {
         providerId: "claude",
         providerHandleId: "provider-thread-1",
         cwd: "/repo/paseo",
+        sessionBehavior: "continue",
       });
     });
     expect(onImportedAgent).toHaveBeenCalledWith("agent-imported");
@@ -565,6 +566,7 @@ describe("WorkspaceImportSheet", () => {
         providerHandleId: "provider-thread-1",
         cwd: "/repo/paseo",
         authProfileKey: "claude-personal",
+        sessionBehavior: "continue",
       });
     });
   });
@@ -599,6 +601,7 @@ describe("WorkspaceImportSheet", () => {
       providerId: "claude",
       providerHandleId: "provider-thread-1",
       cwd: "/repo/paseo",
+      sessionBehavior: "continue",
     });
     expect(onImportedAgent).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();

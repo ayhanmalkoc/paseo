@@ -1944,6 +1944,7 @@ export class Session {
         return this.handleRestartAgentWithAuthProfileRequest(
           msg.agentId,
           msg.authProfileKey,
+          msg.sessionBehavior,
           msg.requestId,
         );
       case "restart_agent_with_runtime_profile_request":
@@ -1951,6 +1952,7 @@ export class Session {
           msg.agentId,
           msg.runtimeProfileId,
           msg.profileOverrides,
+          msg.sessionBehavior,
           msg.acceptRuntimeWarnings === true,
           msg.requestId,
         );
@@ -3338,7 +3340,8 @@ export class Session {
       });
       return;
     }
-    const { provider, providerHandleId, cwd, authProfileKey, labels, requestId } = normalized;
+    const { provider, providerHandleId, cwd, authProfileKey, sessionBehavior, labels, requestId } =
+      normalized;
     this.sessionLogger.info(
       { providerHandleId, provider },
       `Importing agent ${providerHandleId} (${provider})`,
@@ -3368,6 +3371,7 @@ export class Session {
         undefined,
         {
           labels,
+          sessionBehavior: sessionBehavior ?? "continue",
         },
       );
       await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
@@ -4791,6 +4795,7 @@ export class Session {
   private async handleRestartAgentWithAuthProfileRequest(
     agentId: string,
     authProfileKey: string | null,
+    sessionBehavior: AgentSessionConfig["sessionBehavior"] | undefined,
     requestId: string,
   ): Promise<void> {
     this.sessionLogger.info(
@@ -4799,7 +4804,9 @@ export class Session {
     );
 
     try {
-      await this.agentManager.restartAgentWithAuthProfile(agentId, authProfileKey);
+      await this.agentManager.restartAgentWithAuthProfile(agentId, authProfileKey, {
+        sessionBehavior,
+      });
       this.sessionLogger.info(
         { agentId, authProfileKey, requestId },
         "session: restart_agent_with_auth_profile_request success",
@@ -4838,6 +4845,7 @@ export class Session {
     agentId: string,
     runtimeProfileId: string | null,
     profileOverrides: AgentSessionConfig["profileOverrides"] | undefined,
+    sessionBehavior: AgentSessionConfig["sessionBehavior"] | undefined,
     acceptRuntimeWarnings: boolean,
     requestId: string,
   ): Promise<void> {
@@ -4851,7 +4859,7 @@ export class Session {
         agentId,
         runtimeProfileId,
         profileOverrides,
-        { acceptRuntimeWarnings },
+        { acceptRuntimeWarnings, sessionBehavior },
       );
       this.sessionLogger.info(
         { agentId, runtimeProfileId, requestId },

@@ -61,5 +61,6 @@ describe("RuntimeProfileService", () => {
     });
     expect(profiles[0]).not.toHaveProperty("featureDefaults");
     expect(profiles[0]).not.toHaveProperty("workspaceDefaults");
+    expect(profiles[0]?.sessionBehavior).toBe("continue");
   });
 });

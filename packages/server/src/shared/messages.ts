@@ -251,6 +251,7 @@ export const ProviderAuthProfileSchema: z.ZodType<ProviderAuthProfile> = z.objec
 });
 
 const RuntimeProfileConcurrencyPolicySchema = z.enum(["allow", "warn", "single-active"]);
+const RuntimeProfileSessionBehaviorSchema = z.enum(["continue", "fresh"]);
 
 const RuntimeProfileFieldsSchema = z.object({
   provider: AgentProviderSchema.optional(),
@@ -264,6 +265,7 @@ const RuntimeProfileFieldsSchema = z.object({
   envOverlay: z.record(z.string()).optional(),
   mcpServers: z.record(z.lazy(() => McpServerConfigSchema)).optional(),
   concurrencyPolicy: RuntimeProfileConcurrencyPolicySchema.optional(),
+  sessionBehavior: RuntimeProfileSessionBehaviorSchema.optional(),
 });
 
 const DeprecatedRuntimeProfileFieldsSchema = z.object({
@@ -363,6 +365,7 @@ export const AgentProfileSnapshotSchema: z.ZodType<AgentProfileSnapshot> = z.obj
   featureValues: z.record(z.unknown()).optional(),
   envOverlay: z.record(z.string()).optional(),
   concurrencyPolicy: RuntimeProfileConcurrencyPolicySchema.optional(),
+  sessionBehavior: RuntimeProfileSessionBehaviorSchema.optional(),
   resolvedAt: z.string(),
 });
 
@@ -461,6 +464,7 @@ const AgentSessionConfigSchema = z.object({
   runtimeProfileId: z.string().nullable().optional(),
   profileOverrides: RuntimeProfileLaunchOverridesSchema.optional(),
   profileSnapshot: AgentProfileSnapshotSchema.optional(),
+  sessionBehavior: RuntimeProfileSessionBehaviorSchema.optional(),
   featureValues: z.record(z.unknown()).optional(),
   title: z.string().trim().min(1).max(MAX_EXPLICIT_AGENT_TITLE_CHARS).optional().nullable(),
   approvalPolicy: z.string().optional(),
@@ -1387,6 +1391,7 @@ export const ImportAgentRequestMessageSchema = z.object({
   providerHandleId: z.string().optional(),
   cwd: z.string().optional(),
   authProfileKey: z.string().nullable().optional(),
+  sessionBehavior: RuntimeProfileSessionBehaviorSchema.optional(),
   labels: z.record(z.string()).optional(),
   requestId: z.string(),
 });
@@ -1478,6 +1483,7 @@ export const RestartAgentWithAuthProfileRequestMessageSchema = z.object({
   type: z.literal("restart_agent_with_auth_profile_request"),
   agentId: z.string(),
   authProfileKey: z.string().nullable(),
+  sessionBehavior: RuntimeProfileSessionBehaviorSchema.optional(),
   requestId: z.string(),
 });
 
@@ -1491,6 +1497,7 @@ export const RestartAgentWithRuntimeProfileRequestMessageSchema = z.object({
   agentId: z.string(),
   runtimeProfileId: z.string().nullable(),
   profileOverrides: RuntimeProfileLaunchOverridesSchema.optional(),
+  sessionBehavior: RuntimeProfileSessionBehaviorSchema.optional(),
   acceptRuntimeWarnings: z.boolean().optional(),
   requestId: z.string(),
 });

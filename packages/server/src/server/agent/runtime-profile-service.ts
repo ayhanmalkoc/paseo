@@ -8,6 +8,7 @@ import type {
   RuntimeProfile,
   RuntimeProfilePatch,
   RuntimeProfileConcurrencyPolicy,
+  RuntimeProfileSessionBehavior,
 } from "./agent-sdk-types.js";
 
 interface StoredRuntimeProfileRegistry {
@@ -17,6 +18,7 @@ interface StoredRuntimeProfileRegistry {
 
 const CURRENT_SCHEMA_VERSION = 1;
 const DEFAULT_CONCURRENCY_POLICY: RuntimeProfileConcurrencyPolicy = "warn";
+const DEFAULT_SESSION_BEHAVIOR: RuntimeProfileSessionBehavior = "continue";
 type RuntimeProfileSubscriber = (profiles: RuntimeProfile[]) => void;
 type LegacyRuntimeProfileInput = Partial<RuntimeProfile> & {
   featureDefaults?: Record<string, unknown>;
@@ -73,6 +75,7 @@ export class RuntimeProfileService {
       name: input.name,
       provider: input.provider,
       concurrencyPolicy: input.concurrencyPolicy ?? DEFAULT_CONCURRENCY_POLICY,
+      sessionBehavior: input.sessionBehavior ?? DEFAULT_SESSION_BEHAVIOR,
       createdAt: now,
       updatedAt: now,
     });
@@ -221,6 +224,7 @@ function normalizeProfile(profile: LegacyRuntimeProfileInput): RuntimeProfile {
     envOverlay: normalizeStringRecord(profile.envOverlay),
     mcpServers: profile.mcpServers,
     concurrencyPolicy: normalizeConcurrencyPolicy(profile.concurrencyPolicy),
+    sessionBehavior: normalizeSessionBehavior(profile.sessionBehavior),
     createdAt: normalizeRequiredString(profile.createdAt, "Runtime profile createdAt"),
     updatedAt: normalizeRequiredString(profile.updatedAt, "Runtime profile updatedAt"),
   };
@@ -272,6 +276,10 @@ function normalizeConcurrencyPolicy(value: unknown): RuntimeProfileConcurrencyPo
   return value === "allow" || value === "single-active" || value === "warn"
     ? value
     : DEFAULT_CONCURRENCY_POLICY;
+}
+
+function normalizeSessionBehavior(value: unknown): RuntimeProfileSessionBehavior {
+  return value === "fresh" || value === "continue" ? value : DEFAULT_SESSION_BEHAVIOR;
 }
 
 function compareRuntimeProfiles(left: RuntimeProfile, right: RuntimeProfile): number {

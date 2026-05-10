@@ -64,6 +64,7 @@ import type {
   ProviderAuthProfile,
   RuntimeLaunchWarning,
   RuntimeProfile,
+  RuntimeProfileSessionBehavior,
 } from "@server/server/agent/agent-sdk-types";
 import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
 import { getModeVisuals, type AgentModeColorTier } from "@server/server/agent/provider-manifest";
@@ -88,16 +89,22 @@ interface StatusOption {
 interface PendingAuthProfileRestart {
   key: string | null;
   label: string;
+  sessionBehavior: RuntimeProfileSessionBehavior;
 }
 
 interface PendingRuntimeProfileRestart {
   id: string | null;
   label: string;
+  sessionBehavior: RuntimeProfileSessionBehavior;
   warnings?: RuntimeLaunchWarning[];
 }
 
 interface AuthProfileRestartClient {
-  restartAgentWithAuthProfile(agentId: string, authProfileKey: string | null): Promise<void>;
+  restartAgentWithAuthProfile(
+    agentId: string,
+    authProfileKey: string | null,
+    options?: { sessionBehavior?: RuntimeProfileSessionBehavior },
+  ): Promise<void>;
 }
 
 interface RuntimeProfileRestartClient {
@@ -105,7 +112,10 @@ interface RuntimeProfileRestartClient {
     agentId: string,
     runtimeProfileId: string | null,
     profileOverrides?: unknown,
-    options?: { acceptRuntimeWarnings?: boolean },
+    options?: {
+      acceptRuntimeWarnings?: boolean;
+      sessionBehavior?: RuntimeProfileSessionBehavior;
+    },
   ): Promise<unknown>;
 }
 
@@ -258,6 +268,7 @@ const MODE_ICONS = {
 const EMPTY_AUTH_PROFILES: ProviderAuthProfile[] = [];
 const EMPTY_RUNTIME_PROFILES: RuntimeProfile[] = [];
 const CUSTOM_SETTINGS_LABEL = "Custom settings";
+const DEFAULT_SESSION_BEHAVIOR: RuntimeProfileSessionBehavior = "continue";
 
 function alwaysTrue() {
   return true;
@@ -340,6 +351,19 @@ function resolveRuntimeProfileRestartLabel(
   }
   const profile = runtimeProfiles.find((candidate) => candidate.id === runtimeProfileId);
   return profile?.name ?? "Selected profile";
+}
+
+function resolveRuntimeProfileSessionBehavior(
+  runtimeProfiles: RuntimeProfile[],
+  runtimeProfileId: string | null,
+): RuntimeProfileSessionBehavior {
+  if (!runtimeProfileId) {
+    return DEFAULT_SESSION_BEHAVIOR;
+  }
+  return (
+    runtimeProfiles.find((candidate) => candidate.id === runtimeProfileId)?.sessionBehavior ??
+    DEFAULT_SESSION_BEHAVIOR
+  );
 }
 
 function resolveDisplayAuthProfile(input: {
@@ -2477,6 +2501,7 @@ function useActiveAuthProfileRestartController(options: {
       setPending({
         key: normalizedNextKey,
         label: resolveAuthProfileRestartLabel(authProfiles, normalizedNextKey),
+        sessionBehavior: DEFAULT_SESSION_BEHAVIOR,
       });
     },
     [authProfiles, client, selectedAuthProfileKey],
@@ -2495,10 +2520,11 @@ function useActiveAuthProfileRestartController(options: {
     }
     const nextKey = pending.key;
     const nextLabel = pending.label;
+    const sessionBehavior = pending.sessionBehavior;
     setIsRestarting(true);
     void (async () => {
       try {
-        await client.restartAgentWithAuthProfile(agentId, nextKey);
+        await client.restartAgentWithAuthProfile(agentId, nextKey, { sessionBehavior });
         toast.show(`Restarting agent with ${nextLabel}`, { variant: "success" });
       } catch (error) {
         console.warn("[AgentStatusBar] restartAgentWithAuthProfile failed", error);
@@ -2569,6 +2595,7 @@ function useActiveRuntimeProfileRestartController(options: {
       setPending({
         id: normalizedNextId,
         label: resolveRuntimeProfileRestartLabel(runtimeProfiles, normalizedNextId),
+        sessionBehavior: resolveRuntimeProfileSessionBehavior(runtimeProfiles, normalizedNextId),
       });
     },
     [client, runtimeProfiles, selectedRuntimeProfileId, selectedRuntimeProfileVersion],
@@ -2591,6 +2618,7 @@ function useActiveRuntimeProfileRestartController(options: {
       }
       const nextId = pending.id;
       const nextLabel = pending.label;
+      const sessionBehavior = pending.sessionBehavior;
       const latestProfile = runtimeProfiles.find((profile) => profile.id === nextId);
       setIsRestarting(true);
       setProgress({ phase: "restarting", label: nextLabel });
@@ -2598,6 +2626,7 @@ function useActiveRuntimeProfileRestartController(options: {
         try {
           await client.restartAgentWithRuntimeProfile(agentId, nextId, undefined, {
             acceptRuntimeWarnings,
+            sessionBehavior,
           });
           setPending(null);
           setExpectedSnapshot({
@@ -2609,7 +2638,7 @@ function useActiveRuntimeProfileRestartController(options: {
         } catch (error) {
           const warnings = getRuntimeLaunchWarnings(error);
           if (warnings && warnings.length > 0 && !acceptRuntimeWarnings) {
-            setPending({ id: nextId, label: nextLabel, warnings });
+            setPending({ id: nextId, label: nextLabel, sessionBehavior, warnings });
             setProgress({ phase: "idle", label: "" });
             return;
           }
@@ -2672,6 +2701,7 @@ function AuthProfileRestartConfirmationSheet({
   onConfirm: () => void;
 }) {
   const restartTargetLabel = pending?.label ?? "Selected account";
+  const isFreshSession = pending?.sessionBehavior === "fresh";
   const secondaryButtonStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
       styles.restartConfirmButton,
@@ -2702,8 +2732,9 @@ function AuthProfileRestartConfirmationSheet({
     >
       <View style={styles.restartConfirmContent}>
         <Text style={styles.restartConfirmText}>
-          Switch this agent to {restartTargetLabel}. Any running turn will stop and the provider
-          process will restart with the selected account.
+          {isFreshSession
+            ? `Switch this agent to ${restartTargetLabel} and start a fresh provider session. Any running turn will stop.`
+            : `Switch this agent to ${restartTargetLabel} and continue this conversation. Any running turn will stop and Paseo will resume the same provider session when possible.`}
         </Text>
         <View style={styles.restartConfirmActions}>
           <Pressable
@@ -2721,7 +2752,7 @@ function AuthProfileRestartConfirmationSheet({
             style={primaryButtonStyle}
           >
             <Text style={styles.restartConfirmPrimaryText}>
-              {isRestarting ? "Restarting..." : "Restart"}
+              {isRestarting ? "Switching..." : "Switch"}
             </Text>
           </Pressable>
         </View>
@@ -2745,16 +2776,26 @@ function RuntimeProfileRestartConfirmationSheet({
 }) {
   const restartTargetLabel = pending?.label ?? "Selected profile";
   const hasWarnings = Boolean(pending?.warnings?.length);
+  const isFreshSession = pending?.sessionBehavior === "fresh";
   const isProgressVisible = progress.phase !== "idle";
   const visible = pending !== null || isProgressVisible;
+  const confirmationText = useMemo(() => {
+    if (hasWarnings) {
+      return "Another active agent is already using this profile or account.";
+    }
+    if (isFreshSession) {
+      return `Switch this agent to ${restartTargetLabel} and start a fresh provider session. Any running turn will stop.`;
+    }
+    return `Switch this agent to ${restartTargetLabel} and continue this conversation. Any running turn will stop and Paseo will resume the same provider session when possible.`;
+  }, [hasWarnings, isFreshSession, restartTargetLabel]);
   const primaryButtonLabel = useMemo(() => {
     if (isRestarting) {
-      return "Restarting...";
+      return "Switching...";
     }
     if (hasWarnings) {
-      return "Restart anyway";
+      return "Switch anyway";
     }
-    return "Restart";
+    return "Switch";
   }, [hasWarnings, isRestarting]);
   const secondaryButtonStyle = useCallback(
     ({ pressed }: PressableStateCallbackType) => [
@@ -2799,11 +2840,7 @@ function RuntimeProfileRestartConfirmationSheet({
           </View>
         ) : (
           <>
-            <Text style={styles.restartConfirmText}>
-              {hasWarnings
-                ? "Another active agent is already using this profile or account."
-                : `Switch this agent to ${restartTargetLabel}. Any running turn will stop and the provider process will restart with the selected runtime profile.`}
-            </Text>
+            <Text style={styles.restartConfirmText}>{confirmationText}</Text>
             {pending?.warnings?.map((warning) => (
               <Text key={warning.message} style={styles.restartWarningText}>
                 {warning.message}
