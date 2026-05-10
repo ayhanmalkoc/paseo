@@ -4863,7 +4863,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
-    const child = await this.spawnAppServer();
+    const child = await this.spawnAppServer(options?.launchContext?.env);
     const client =
       this.deps._createCodexClient?.(child, this.logger) ??
       new CodexAppServerClient(child, this.logger);
@@ -4900,7 +4900,17 @@ export class CodexAppServerAgentClient implements AgentClient {
             timeline = [];
           }
 
-          return {
+          const metadata: Record<string, unknown> = {
+            provider: CODEX_PROVIDER,
+            cwd,
+            title,
+            threadId,
+          };
+          if (options?.source) {
+            metadata.source = options.source;
+          }
+
+          const descriptor: PersistedAgentDescriptor = {
             provider: CODEX_PROVIDER,
             sessionId: threadId,
             cwd,
@@ -4914,15 +4924,14 @@ export class CodexAppServerAgentClient implements AgentClient {
               provider: CODEX_PROVIDER,
               sessionId: threadId,
               nativeHandle: threadId,
-              metadata: {
-                provider: CODEX_PROVIDER,
-                cwd,
-                title,
-                threadId,
-              },
+              metadata,
             },
             timeline,
           };
+          if (options?.source) {
+            descriptor.source = options.source;
+          }
+          return descriptor;
         }),
       );
 

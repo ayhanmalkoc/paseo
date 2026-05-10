@@ -15,6 +15,7 @@ import type {
   AgentClient,
   AgentCreateSessionOptions,
   AgentFeature,
+  AgentLaunchContext,
   AgentSlashCommand,
   AgentMode,
   AgentPermissionRequest,
@@ -36,6 +37,7 @@ import type {
   RuntimeProfileSessionBehavior,
   ListPersistedAgentsOptions,
   PersistedAgentDescriptor,
+  PersistedAgentSource,
 } from "./agent-sdk-types.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import {
@@ -117,6 +119,14 @@ function normalizeAuthProfileKey(value: string | null | undefined): string | nul
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function formatProviderAuthProfileLabel(profile: {
+  email?: string;
+  accountName?: string;
+  alias?: string;
+}): string {
+  return profile.email || profile.accountName || profile.alias || "Saved account";
 }
 
 function resolveSessionBehavior(
@@ -202,6 +212,7 @@ interface ReloadAgentSessionOptions {
 }
 
 const DEFAULT_SESSION_BEHAVIOR: RuntimeProfileSessionBehavior = "continue";
+const CODEX_AUTH_PROFILE_HOME_ENV = "CODEX_HOME";
 
 interface ProviderEnabledFlag {
   enabled: boolean;
@@ -209,6 +220,11 @@ interface ProviderEnabledFlag {
 }
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
+
+interface PersistedAgentListSource {
+  source: PersistedAgentSource;
+  launchContext?: AgentLaunchContext;
+}
 
 export interface AgentManagerOptions {
   clients?: ProviderClientMap;
@@ -738,18 +754,13 @@ export class AgentManager {
     );
     const descriptorLists = await Promise.all(
       providerEntries.map(async ([provider, client]) => {
-        try {
-          return await client.listPersistedAgents!({
-            limit: options?.limit,
-            cwd: options?.cwd,
-          });
-        } catch (error) {
-          this.logger.warn(
-            { err: error, provider },
-            "Failed to list persisted agents for provider",
-          );
-          return [];
-        }
+        const sources = await this.getPersistedAgentListSources(provider);
+        const sourceLists = await Promise.all(
+          sources.map((source) =>
+            this.listPersistedAgentsForSource(provider, client, options, source),
+          ),
+        );
+        return sourceLists.flat();
       }),
     );
     const descriptors: PersistedAgentDescriptor[] = descriptorLists.flat();
@@ -758,6 +769,107 @@ export class AgentManager {
     return descriptors
       .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
       .slice(0, limit);
+  }
+
+  private async listPersistedAgentsForSource(
+    provider: AgentProvider,
+    client: AgentClient,
+    options: ImportablePersistedAgentQueryOptions | undefined,
+    source: PersistedAgentListSource,
+  ): Promise<PersistedAgentDescriptor[]> {
+    try {
+      return await client.listPersistedAgents!({
+        limit: options?.limit,
+        cwd: options?.cwd,
+        launchContext: source.launchContext,
+        source: source.source,
+      });
+    } catch (error) {
+      this.logger.warn(
+        { err: error, provider, source: source.source },
+        "Failed to list persisted agents for provider source",
+      );
+      return [];
+    }
+  }
+
+  private async getPersistedAgentListSources(
+    provider: AgentProvider,
+    sourceAuthProfileKey?: string | null,
+  ): Promise<PersistedAgentListSource[]> {
+    if (sourceAuthProfileKey !== undefined) {
+      const source = await this.getAuthProfilePersistedAgentListSource(
+        provider,
+        sourceAuthProfileKey,
+      );
+      return source ? [source] : [this.getNativeDefaultPersistedAgentListSource(provider)];
+    }
+
+    const sources = [this.getNativeDefaultPersistedAgentListSource(provider)];
+    if (provider !== "codex" || !this.providerAuthService?.supportsProvider(provider)) {
+      return sources;
+    }
+
+    const profiles = await this.providerAuthService.listProfiles(provider);
+    for (const profile of profiles) {
+      const source = this.toAuthProfilePersistedAgentListSource(provider, profile);
+      if (source) {
+        sources.push(source);
+      }
+    }
+    return sources;
+  }
+
+  private getNativeDefaultPersistedAgentListSource(
+    provider: AgentProvider,
+  ): PersistedAgentListSource {
+    return {
+      source: {
+        kind: "native-default",
+        label: provider === "codex" ? "Codex CLI default" : "Native default",
+      },
+    };
+  }
+
+  private async getAuthProfilePersistedAgentListSource(
+    provider: AgentProvider,
+    authProfileKey: string | null,
+  ): Promise<PersistedAgentListSource | null> {
+    const normalizedProfileKey = normalizeAuthProfileKey(authProfileKey);
+    if (!normalizedProfileKey || !this.providerAuthService?.supportsProvider(provider)) {
+      return null;
+    }
+    const profiles = await this.providerAuthService.listProfiles(provider);
+    const profile = profiles.find((entry) => entry.key === normalizedProfileKey);
+    return profile ? this.toAuthProfilePersistedAgentListSource(provider, profile) : null;
+  }
+
+  private toAuthProfilePersistedAgentListSource(
+    provider: AgentProvider,
+    profile: {
+      key: string;
+      email?: string;
+      accountName?: string;
+      alias?: string;
+      status?: string;
+      providerHomePath?: string;
+    },
+  ): PersistedAgentListSource | null {
+    if (provider !== "codex" || profile.status !== "ready" || !profile.providerHomePath) {
+      return null;
+    }
+    return {
+      source: {
+        kind: "auth-profile",
+        authProfileKey: profile.key,
+        label: formatProviderAuthProfileLabel(profile),
+      },
+      launchContext: {
+        env: {
+          [CODEX_AUTH_PROFILE_HOME_ENV]: profile.providerHomePath,
+        },
+      },
+    };
   }
 
   private isProviderImportable(
@@ -782,13 +894,23 @@ export class AgentManager {
   async findPersistedAgent(
     provider: AgentProvider,
     sessionId: string,
+    options?: { sourceAuthProfileKey?: string | null },
   ): Promise<PersistedAgentDescriptor | null> {
     const client = this.requireClient(provider);
     if (!client.listPersistedAgents) {
       return null;
     }
 
-    const descriptors = await client.listPersistedAgents({ limit: 200 });
+    const sources = await this.getPersistedAgentListSources(
+      provider,
+      options?.sourceAuthProfileKey,
+    );
+    const descriptorLists = await Promise.all(
+      sources.map((source) =>
+        this.listPersistedAgentsForSource(provider, client, { limit: 200 }, source),
+      ),
+    );
+    const descriptors = descriptorLists.flat();
     return (
       descriptors.find((descriptor) => {
         return (

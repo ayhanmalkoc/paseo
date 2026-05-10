@@ -269,6 +269,14 @@ export interface AgentPersistenceHandle {
   metadata?: AgentMetadata;
 }
 
+export type PersistedAgentSourceKind = "native-default" | "auth-profile";
+
+export interface PersistedAgentSource {
+  kind: PersistedAgentSourceKind;
+  authProfileKey?: string | null;
+  label?: string | null;
+}
+
 export type AgentPromptContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string }
@@ -579,6 +587,8 @@ export interface ListPersistedAgentsOptions {
    * cheaply may ignore this hint.
    */
   cwd?: string;
+  launchContext?: AgentLaunchContext;
+  source?: PersistedAgentSource;
 }
 
 export interface PersistedAgentDescriptor {
@@ -589,6 +599,7 @@ export interface PersistedAgentDescriptor {
   lastActivityAt: Date;
   persistence: AgentPersistenceHandle;
   timeline: AgentTimelineItem[];
+  source?: PersistedAgentSource;
 }
 
 export interface AgentSessionConfig {

@@ -291,6 +291,7 @@ export function toRecentProviderSessionDescriptorPayload(
     firstPromptPreview: promptPreviews[0] ?? null,
     lastPromptPreview: promptPreviews.at(-1) ?? null,
     lastActivityAt: descriptor.lastActivityAt.toISOString(),
+    ...(descriptor.source ? { source: descriptor.source } : {}),
   };
 }
 

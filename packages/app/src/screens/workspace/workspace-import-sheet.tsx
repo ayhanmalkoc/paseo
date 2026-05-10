@@ -19,7 +19,7 @@ const PER_PROVIDER_LIMIT = 15;
 const IMPORT_SHEET_SNAP_POINTS = ["70%", "92%"];
 const DISABLED_ACCESSIBILITY_STATE = { disabled: true };
 const ALL_FILTER_VALUE = "__all__";
-const DEFAULT_ACCOUNT_VALUE = "__default_account__";
+const SOURCE_ACCOUNT_VALUE = "__source_account__";
 
 type RecentProviderSessionsClient = Pick<
   DaemonClient,
@@ -114,7 +114,7 @@ function aggregateSessionEntries(
   for (const query of queries) {
     if (!query.data) continue;
     for (const entry of query.data.entries) {
-      const key = `${entry.providerId}:${entry.providerHandleId}`;
+      const key = getProviderSessionEntryKey(entry);
       if (seen.has(key)) continue;
       seen.add(key);
       collected.push(entry);
@@ -164,6 +164,19 @@ function getSessionTitle(entry: FetchRecentProviderSessionEntry): string {
 
 function getPromptPreview(entry: FetchRecentProviderSessionEntry): string {
   return entry.lastPromptPreview?.trim() || entry.firstPromptPreview?.trim() || "No prompt preview";
+}
+
+function getProviderSessionEntryKey(entry: FetchRecentProviderSessionEntry): string {
+  const sourceKey =
+    entry.source?.kind === "auth-profile"
+      ? `auth-profile:${entry.source.authProfileKey ?? ""}`
+      : (entry.source?.kind ?? "unknown-source");
+  return `${entry.providerId}:${entry.providerHandleId}:${sourceKey}`;
+}
+
+function getSourceLabel(entry: FetchRecentProviderSessionEntry): string | null {
+  const label = entry.source?.label?.trim();
+  return label ? `Source: ${label}` : null;
 }
 
 interface SheetStatusMessagesProps {
@@ -286,9 +299,9 @@ function buildAccountOptions(
 ): SegmentedControlOption<string>[] {
   const options: SegmentedControlOption<string>[] = [
     {
-      value: DEFAULT_ACCOUNT_VALUE,
-      label: "Default account",
-      testID: `workspace-import-account-${provider}-default`,
+      value: SOURCE_ACCOUNT_VALUE,
+      label: "Source account",
+      testID: `workspace-import-account-${provider}-source`,
     },
   ];
   for (const profile of authProfilesByProvider.get(provider) ?? []) {
@@ -303,16 +316,17 @@ function buildAccountOptions(
 }
 
 function resolveImportAuthProfileKey(input: {
-  provider: string;
+  entry: FetchRecentProviderSessionEntry;
   selectedAccountByProvider: Readonly<Record<string, string>>;
-  authProfilesByProvider: ReadonlyMap<string, ProviderAuthProfile[]>;
 }): string | undefined {
-  const selected = input.selectedAccountByProvider[input.provider];
-  if (selected && selected !== DEFAULT_ACCOUNT_VALUE) {
+  const selected = input.selectedAccountByProvider[input.entry.providerId];
+  if (selected && selected !== SOURCE_ACCOUNT_VALUE) {
     return selected;
   }
-  return input.authProfilesByProvider.get(input.provider)?.find((profile) => profile.isDefault)
-    ?.key;
+  const sourceAuthProfileKey = input.entry.source?.authProfileKey;
+  return typeof sourceAuthProfileKey === "string" && sourceAuthProfileKey.length > 0
+    ? sourceAuthProfileKey
+    : undefined;
 }
 
 function resolveSelectedAccountValue(
@@ -320,8 +334,8 @@ function resolveSelectedAccountValue(
   selectedAccountByProvider: Readonly<Record<string, string>>,
 ): string {
   return provider
-    ? (selectedAccountByProvider[provider] ?? DEFAULT_ACCOUNT_VALUE)
-    : DEFAULT_ACCOUNT_VALUE;
+    ? (selectedAccountByProvider[provider] ?? SOURCE_ACCOUNT_VALUE)
+    : SOURCE_ACCOUNT_VALUE;
 }
 
 function shouldShowAccountSelector(input: {
@@ -348,6 +362,7 @@ function WorkspaceImportSheetRow({
   const { theme } = useUnistyles();
   const title = getSessionTitle(entry);
   const promptPreview = getPromptPreview(entry);
+  const sourceLabel = getSourceLabel(entry);
   const lastActivity = formatTimeAgo(new Date(entry.lastActivityAt));
   const ProviderIcon = getProviderIcon(entry.providerId);
   const accessibilityState = useMemo(
@@ -388,6 +403,11 @@ function WorkspaceImportSheetRow({
         <Text style={styles.rowPreview} numberOfLines={2}>
           {promptPreview}
         </Text>
+        {sourceLabel ? (
+          <Text style={styles.rowSource} numberOfLines={1}>
+            {sourceLabel}
+          </Text>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -487,6 +507,7 @@ export function WorkspaceImportSheet({
     accountSelectorProvider,
     selectedAccountByProvider,
   );
+  const isExplicitAccountSelection = selectedAccountValue !== SOURCE_ACCOUNT_VALUE;
   const showAccountSelector = shouldShowAccountSelector({
     isSupported: providerAuthProfiles.isSupported,
     accountSelectorProvider,
@@ -499,9 +520,8 @@ export function WorkspaceImportSheet({
         throw new Error("Host is not connected");
       }
       const authProfileKey = resolveImportAuthProfileKey({
-        provider: entry.providerId,
+        entry,
         selectedAccountByProvider,
-        authProfilesByProvider,
       });
       const agent = await client.importAgent({
         providerId: entry.providerId,
@@ -521,7 +541,7 @@ export function WorkspaceImportSheet({
 
   const importingSessionKey =
     importMutation.isPending && importMutation.variables
-      ? `${importMutation.variables.providerId}:${importMutation.variables.providerHandleId}`
+      ? getProviderSessionEntryKey(importMutation.variables)
       : null;
 
   const handleImportSession = useCallback(
@@ -598,8 +618,13 @@ export function WorkspaceImportSheet({
         <View style={styles.accountSection}>
           <Text style={styles.accountLabel}>Continue with account</Text>
           <Text style={styles.accountHint}>
-            Paseo will try to resume the imported provider session with this account.
+            Source account resumes the session from the native account that created it.
           </Text>
+          {isExplicitAccountSelection ? (
+            <Text style={styles.accountHint}>
+              A different saved account may fail if it does not have the same native thread.
+            </Text>
+          ) : null}
           <ScrollView
             horizontal
             style={styles.horizontalScroller}
@@ -632,10 +657,10 @@ export function WorkspaceImportSheet({
         <View style={styles.list}>
           {visibleEntries.map((entry) => (
             <WorkspaceImportSheetRow
-              key={`${entry.providerId}:${entry.providerHandleId}`}
+              key={getProviderSessionEntryKey(entry)}
               entry={entry}
               disabled={importMutation.isPending}
-              importing={importingSessionKey === `${entry.providerId}:${entry.providerHandleId}`}
+              importing={importingSessionKey === getProviderSessionEntryKey(entry)}
               onImportSession={handleImportSession}
             />
           ))}
@@ -728,6 +753,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     lineHeight: 20,
+  },
+  rowSource: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
   },
   statusRow: {
     flexDirection: "row",
