@@ -574,6 +574,7 @@ export function WorkspaceImportSheet({
       testID="workspace-import-sheet"
       desktopMaxWidth={560}
       snapPoints={IMPORT_SHEET_SNAP_POINTS}
+      enableContentPanningGesture={false}
     >
       {showFilter ? (
         <ScrollView

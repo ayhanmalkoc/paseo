@@ -173,6 +173,7 @@ export interface AdaptiveModalSheetProps {
   /** When provided, wraps the card content in a FileDropZone. */
   onFilesDropped?: (files: ImageAttachment[]) => void;
   scrollable?: boolean;
+  enableContentPanningGesture?: boolean;
 }
 
 export function AdaptiveModalSheet({
@@ -187,6 +188,7 @@ export function AdaptiveModalSheet({
   desktopMaxWidth,
   onFilesDropped,
   scrollable = true,
+  enableContentPanningGesture = true,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const isMobile = useIsCompactFormFactor();
@@ -231,6 +233,7 @@ export function AdaptiveModalSheet({
         onDismiss={handleSheetDismiss}
         backdropComponent={renderBackdrop}
         enablePanDownToClose
+        enableContentPanningGesture={enableContentPanningGesture}
         backgroundComponent={SheetBackground}
         handleIndicatorStyle={handleIndicatorStyle}
         keyboardBehavior="extend"
