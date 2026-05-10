@@ -228,7 +228,8 @@ Do not expose home paths or token paths in app-visible payloads.
 
 - Never copy `auth.json`, `config.toml`, token files, caches, logs, or
   provider-global history.
-- Never overwrite a different target rollout.
+- Never overwrite a divergent target rollout. If one rollout is a strict prefix
+  of the other, sync only by appending the missing JSONL suffix.
 - Never follow symlinks outside source or target home.
 - Never clone for unsupported providers.
 - Never clone without explicit cross-account user action.
@@ -288,7 +289,9 @@ Tests:
   marker.
 - Target account is the active account for the next turn after import.
 - Missing source rollout produces a clear import error.
-- Existing different target rollout is not overwritten.
+- Existing older target rollout fast-forwards by appending the missing JSONL
+  suffix.
+- Existing divergent target rollout is not overwritten.
 - Unsupported providers do not clone.
 - CLI cross-account import clones automatically when `--account` selects a
   different Codex home.

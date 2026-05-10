@@ -1746,6 +1746,213 @@ describe("Codex persisted sessions", () => {
     }
   });
 
+  test("fast-forwards an older selected account rollout before resuming", async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), "codex-rollout-fast-forward-"));
+    try {
+      const threadId = "019e1375-6e62-7f30-8abe-8c2537b3adab";
+      const sourceHome = path.join(rootDir, "source-home");
+      const targetHome = path.join(rootDir, "target-home");
+      const rolloutRelativePath = path.join(
+        "2026",
+        "05",
+        "10",
+        `rollout-2026-05-10T21-55-23-${threadId}.jsonl`,
+      );
+      const sourceRolloutPath = path.join(sourceHome, "sessions", rolloutRelativePath);
+      const targetRolloutPath = path.join(targetHome, "sessions", rolloutRelativePath);
+      const targetContent = `${JSON.stringify({
+        type: "response_item",
+        payload: { type: "message", role: "assistant", text: "CROSS_ACCOUNT_CLONE_001" },
+      })}\n`;
+      const sourceContent = `${targetContent}${JSON.stringify({
+        type: "response_item",
+        payload: { type: "message", role: "assistant", text: "ACCOUNT_SWITCH_CHAIN_001" },
+      })}\n`;
+      mkdirSync(path.dirname(sourceRolloutPath), { recursive: true });
+      mkdirSync(path.dirname(targetRolloutPath), { recursive: true });
+      writeFileSync(sourceRolloutPath, sourceContent);
+      writeFileSync(targetRolloutPath, targetContent);
+
+      const provider = new CodexAppServerAgentClient(createTestLogger());
+      const prepared = await provider.preparePersistedSessionForResume({
+        handle: {
+          provider: "codex",
+          sessionId: threadId,
+          nativeHandle: threadId,
+          metadata: {
+            codexSessionClone: {
+              threadId,
+              targetRelativePath: rolloutRelativePath,
+            },
+          },
+        },
+        config: createConfig({
+          providerHomeRef: {
+            kind: "managed-profile",
+            provider: "codex",
+            profileKey: "target-account",
+            label: "target@example.com",
+          },
+        }),
+        launchContext: { env: { CODEX_HOME: targetHome } },
+        sourceProviderHomeRef: {
+          kind: "managed-profile",
+          provider: "codex",
+          profileKey: "source-account",
+          label: "source@example.com",
+        },
+        sourceLaunchContext: { env: { CODEX_HOME: sourceHome } },
+        reason: "reload",
+      });
+
+      expect(readFileSync(targetRolloutPath, "utf8")).toBe(sourceContent);
+      expect(prepared.metadata?.codexSessionClone).toEqual(
+        expect.objectContaining({
+          kind: "rollout-file-copy",
+          threadId,
+          sourceRelativePath: rolloutRelativePath,
+          targetRelativePath: rolloutRelativePath,
+          fastForwarded: true,
+          appendedBytes: Buffer.byteLength(sourceContent.slice(targetContent.length)),
+          sourceProviderHomeRef: {
+            kind: "managed-profile",
+            provider: "codex",
+            profileKey: "source-account",
+            label: "source@example.com",
+          },
+          targetProviderHomeRef: {
+            kind: "managed-profile",
+            provider: "codex",
+            profileKey: "target-account",
+            label: "target@example.com",
+          },
+        }),
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses an already newer selected account rollout before resuming", async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), "codex-rollout-target-ahead-"));
+    try {
+      const threadId = "019e1375-6e62-7f30-8abe-8c2537b3adab";
+      const sourceHome = path.join(rootDir, "source-home");
+      const targetHome = path.join(rootDir, "target-home");
+      const rolloutRelativePath = path.join(
+        "2026",
+        "05",
+        "10",
+        `rollout-2026-05-10T21-55-23-${threadId}.jsonl`,
+      );
+      const sourceRolloutPath = path.join(sourceHome, "sessions", rolloutRelativePath);
+      const targetRolloutPath = path.join(targetHome, "sessions", rolloutRelativePath);
+      const sourceContent = `${JSON.stringify({
+        type: "response_item",
+        payload: { type: "message", role: "assistant", text: "CROSS_ACCOUNT_CLONE_001" },
+      })}\n`;
+      const targetContent = `${sourceContent}${JSON.stringify({
+        type: "response_item",
+        payload: { type: "message", role: "assistant", text: "ACCOUNT_SWITCH_CHAIN_001" },
+      })}\n`;
+      mkdirSync(path.dirname(sourceRolloutPath), { recursive: true });
+      mkdirSync(path.dirname(targetRolloutPath), { recursive: true });
+      writeFileSync(sourceRolloutPath, sourceContent);
+      writeFileSync(targetRolloutPath, targetContent);
+
+      const provider = new CodexAppServerAgentClient(createTestLogger());
+      const prepared = await provider.preparePersistedSessionForResume({
+        handle: {
+          provider: "codex",
+          sessionId: threadId,
+          nativeHandle: threadId,
+          metadata: {},
+        },
+        config: createConfig({
+          providerHomeRef: {
+            kind: "managed-profile",
+            provider: "codex",
+            profileKey: "target-account",
+          },
+        }),
+        launchContext: { env: { CODEX_HOME: targetHome } },
+        sourceProviderHomeRef: {
+          kind: "managed-profile",
+          provider: "codex",
+          profileKey: "source-account",
+        },
+        sourceLaunchContext: { env: { CODEX_HOME: sourceHome } },
+        reason: "reload",
+      });
+
+      expect(readFileSync(targetRolloutPath, "utf8")).toBe(targetContent);
+      expect(prepared.metadata?.codexSessionClone).toEqual(
+        expect.objectContaining({
+          kind: "rollout-file-copy",
+          threadId,
+          alreadyPresent: true,
+          targetAlreadyAhead: true,
+        }),
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects divergent selected account rollouts before resuming", async () => {
+    const rootDir = await mkdtemp(path.join(tmpdir(), "codex-rollout-divergent-"));
+    try {
+      const threadId = "019e1375-6e62-7f30-8abe-8c2537b3adab";
+      const sourceHome = path.join(rootDir, "source-home");
+      const targetHome = path.join(rootDir, "target-home");
+      const rolloutRelativePath = path.join(
+        "2026",
+        "05",
+        "10",
+        `rollout-2026-05-10T21-55-23-${threadId}.jsonl`,
+      );
+      const sourceRolloutPath = path.join(sourceHome, "sessions", rolloutRelativePath);
+      const targetRolloutPath = path.join(targetHome, "sessions", rolloutRelativePath);
+      mkdirSync(path.dirname(sourceRolloutPath), { recursive: true });
+      mkdirSync(path.dirname(targetRolloutPath), { recursive: true });
+      writeFileSync(sourceRolloutPath, `${JSON.stringify({ turn: "source-only" })}\n`);
+      writeFileSync(targetRolloutPath, `${JSON.stringify({ turn: "target-only" })}\n`);
+
+      const provider = new CodexAppServerAgentClient(createTestLogger());
+      await expect(
+        provider.preparePersistedSessionForResume({
+          handle: {
+            provider: "codex",
+            sessionId: threadId,
+            nativeHandle: threadId,
+            metadata: {},
+          },
+          config: createConfig({
+            providerHomeRef: {
+              kind: "managed-profile",
+              provider: "codex",
+              profileKey: "target-account",
+            },
+          }),
+          launchContext: { env: { CODEX_HOME: targetHome } },
+          sourceProviderHomeRef: {
+            kind: "managed-profile",
+            provider: "codex",
+            profileKey: "source-account",
+          },
+          sourceLaunchContext: { env: { CODEX_HOME: sourceHome } },
+          reason: "reload",
+        }),
+      ).rejects.toThrow("divergent rollout");
+
+      expect(readFileSync(targetRolloutPath, "utf8")).toBe(
+        `${JSON.stringify({ turn: "target-only" })}\n`,
+      );
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   test("listPersistedAgents returns only sessions whose cwd matches the requested cwd", async () => {
     const allThreads = [
       {
