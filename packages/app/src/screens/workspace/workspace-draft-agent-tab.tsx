@@ -47,7 +47,7 @@ interface AutoSubmitConfig {
   provider: string;
   modeId: string | null;
   model: string | null;
-  authProfileKey: string | null;
+  accountKey: string | null;
   runtimeProfileId: string | null;
   thinkingOptionId: string | null;
   featureValues: Record<string, unknown>;
@@ -58,7 +58,7 @@ function resolveAutoSubmitConfig(
     provider: string;
     modeId?: string | null;
     model?: string | null;
-    authProfileKey?: string | null;
+    accountKey?: string | null;
     runtimeProfileId?: string | null;
     thinkingOptionId?: string | null;
     featureValues?: Record<string, unknown>;
@@ -69,7 +69,7 @@ function resolveAutoSubmitConfig(
     provider: pending.provider,
     modeId: pending.modeId ?? null,
     model: pending.model ?? null,
-    authProfileKey: pending.authProfileKey ?? null,
+    accountKey: pending.accountKey ?? null,
     runtimeProfileId: pending.runtimeProfileId ?? null,
     thinkingOptionId: pending.thinkingOptionId ?? null,
     featureValues: pending.featureValues ?? {},
@@ -170,7 +170,7 @@ function buildSubmitDraftAgentConfig(input: {
     selectedMode: string;
     modeOptions: unknown[];
     effectiveModelId: string | null;
-    effectiveAuthProfileKey: string | null;
+    effectiveAccountKey: string | null;
     effectiveRuntimeProfileId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
@@ -186,8 +186,7 @@ function buildSubmitDraftAgentConfig(input: {
       selectedMode: composerState.selectedMode,
     }),
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
-    authProfileKey:
-      autoSubmitConfig?.authProfileKey ?? (composerState.effectiveAuthProfileKey || undefined),
+    accountKey: autoSubmitConfig?.accountKey ?? (composerState.effectiveAccountKey || undefined),
     runtimeProfileId:
       autoSubmitConfig?.runtimeProfileId ?? (composerState.effectiveRuntimeProfileId || undefined),
     thinkingOptionId:
@@ -210,7 +209,7 @@ async function submitDraftCreateRequest(input: {
     selectedMode: string;
     modeOptions: unknown[];
     effectiveModelId: string | null;
-    effectiveAuthProfileKey: string | null;
+    effectiveAccountKey: string | null;
     effectiveRuntimeProfileId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
@@ -291,7 +290,7 @@ function buildDraftAgentSnapshot(input: {
   autoSubmitConfig: AutoSubmitConfig | null;
   composerState: {
     effectiveModelId: string | null;
-    effectiveAuthProfileKey: string | null;
+    effectiveAccountKey: string | null;
     effectiveRuntimeProfileId: string | null;
     effectiveThinkingOptionId: string | null;
     modeOptions: unknown[];
@@ -304,8 +303,7 @@ function buildDraftAgentSnapshot(input: {
   invariant(workspaceDirectory, "Workspace directory is required");
   const now = attempt.timestamp;
   const model = autoSubmitConfig?.model ?? (composerState.effectiveModelId || null);
-  const authProfileKey =
-    autoSubmitConfig?.authProfileKey ?? (composerState.effectiveAuthProfileKey || null);
+  const accountKey = autoSubmitConfig?.accountKey ?? (composerState.effectiveAccountKey || null);
   const runtimeProfileId =
     autoSubmitConfig?.runtimeProfileId ?? (composerState.effectiveRuntimeProfileId || null);
   const thinkingOptionId =
@@ -319,8 +317,8 @@ function buildDraftAgentSnapshot(input: {
   if (!provider) {
     throw new Error("Select a model");
   }
-  const providerHomeRef = authProfileKey
-    ? { kind: "managed-profile" as const, provider, profileKey: authProfileKey }
+  const providerHomeRef = accountKey
+    ? { kind: "managed-profile" as const, provider, profileKey: accountKey }
     : null;
   return {
     serverId,
@@ -341,13 +339,13 @@ function buildDraftAgentSnapshot(input: {
     cwd: workspaceDirectory,
     model,
     providerHomeRef,
-    authProfileKey,
+    accountKey,
     profileSnapshot: runtimeProfileId
       ? {
           sourceProfileId: runtimeProfileId,
           provider,
           providerHomeRef,
-          accountKey: authProfileKey,
+          accountKey: accountKey,
           model,
           modeId,
           thinkingOptionId,

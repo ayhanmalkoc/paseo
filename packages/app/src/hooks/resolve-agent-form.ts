@@ -16,7 +16,7 @@ export interface FormInitialValues {
   provider?: AgentProvider;
   modeId?: string | null;
   model?: string | null;
-  authProfileKey?: string | null;
+  accountKey?: string | null;
   runtimeProfileId?: string | null;
   thinkingOptionId?: string | null;
   workingDir?: string;
@@ -27,7 +27,7 @@ export interface FormState {
   provider: AgentProvider | null;
   modeId: string;
   model: string;
-  authProfileKey: string;
+  accountKey: string;
   runtimeProfileId: string;
   thinkingOptionId: string;
   workingDir: string;
@@ -38,7 +38,7 @@ export interface UserModifiedFields {
   provider: boolean;
   modeId: boolean;
   model: boolean;
-  authProfileKey: boolean;
+  accountKey: boolean;
   runtimeProfileId: boolean;
   thinkingOptionId: boolean;
   workingDir: boolean;
@@ -54,7 +54,7 @@ export const INITIAL_USER_MODIFIED: UserModifiedFields = {
   provider: false,
   modeId: false,
   model: false,
-  authProfileKey: false,
+  accountKey: false,
   runtimeProfileId: false,
   thinkingOptionId: false,
   workingDir: false,
@@ -99,7 +99,7 @@ export type AgentFormAction =
       modelId: string;
       availableModels: AgentModelDefinition[] | null;
     }
-  | { type: "SET_AUTH_PROFILE_FROM_USER"; authProfileKey: string }
+  | { type: "SET_ACCOUNT_FROM_USER"; accountKey: string }
   | { type: "SET_RUNTIME_PROFILE_FROM_USER"; runtimeProfileId: string }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
   | { type: "SET_WORKING_DIR"; value: string }
@@ -195,7 +195,7 @@ export function hasFormStateChanged(prev: FormState, next: FormState): boolean {
     prev.provider !== next.provider ||
     prev.modeId !== next.modeId ||
     prev.model !== next.model ||
-    prev.authProfileKey !== next.authProfileKey ||
+    prev.accountKey !== next.accountKey ||
     prev.runtimeProfileId !== next.runtimeProfileId ||
     prev.thinkingOptionId !== next.thinkingOptionId ||
     prev.workingDir !== next.workingDir
@@ -336,14 +336,14 @@ function resolveThinkingOption(input: {
   return "";
 }
 
-function normalizeAuthProfileKey(value: string | null | undefined): string {
+function normalizeAccountKey(value: string | null | undefined): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function resolveAuthProfileKey(input: {
+function resolveAccountKey(input: {
   provider: AgentProvider | null;
   userModified: boolean;
-  currentAuthProfileKey: string;
+  currentAccountKey: string;
   initialValues: FormInitialValues | undefined;
   providerPrefs: ProviderPrefs | undefined;
   availableAuthProfiles: ProviderAuthProfile[] | undefined;
@@ -351,26 +351,26 @@ function resolveAuthProfileKey(input: {
   const {
     provider,
     userModified,
-    currentAuthProfileKey,
+    currentAccountKey,
     initialValues,
     providerPrefs,
     availableAuthProfiles,
   } = input;
   if (!provider) return "";
-  const normalizedCurrent = normalizeAuthProfileKey(currentAuthProfileKey);
+  const normalizedCurrent = normalizeAccountKey(currentAccountKey);
 
   if (availableAuthProfiles === undefined) {
     if (userModified) return normalizedCurrent;
     return (
-      normalizeAuthProfileKey(initialValues?.authProfileKey) ||
-      normalizeAuthProfileKey(providerPrefs?.authProfileKey) ||
+      normalizeAccountKey(initialValues?.accountKey) ||
+      normalizeAccountKey(providerPrefs?.accountKey) ||
       normalizedCurrent
     );
   }
 
   const validKeys = new Set(availableAuthProfiles.map((profile) => profile.key));
   const normalizeValid = (value: string | null | undefined) => {
-    const key = normalizeAuthProfileKey(value);
+    const key = normalizeAccountKey(value);
     return key && validKeys.has(key) ? key : "";
   };
 
@@ -379,9 +379,7 @@ function resolveAuthProfileKey(input: {
   }
 
   return (
-    normalizeValid(initialValues?.authProfileKey) ||
-    normalizeValid(providerPrefs?.authProfileKey) ||
-    ""
+    normalizeValid(initialValues?.accountKey) || normalizeValid(providerPrefs?.accountKey) || ""
   );
 }
 
@@ -427,16 +425,16 @@ export function resolveFormState(
     availableModels,
   });
 
-  result.authProfileKey = resolveAuthProfileKey({
+  result.accountKey = resolveAccountKey({
     provider: result.provider,
-    userModified: userModified.authProfileKey,
-    currentAuthProfileKey: result.authProfileKey,
+    userModified: userModified.accountKey,
+    currentAccountKey: result.accountKey,
     initialValues,
     providerPrefs,
     availableAuthProfiles,
   });
   if (!userModified.runtimeProfileId) {
-    result.runtimeProfileId = normalizeAuthProfileKey(initialValues?.runtimeProfileId);
+    result.runtimeProfileId = normalizeAccountKey(initialValues?.runtimeProfileId);
   }
 
   result.thinkingOptionId = resolveThinkingOption({
@@ -509,7 +507,7 @@ function pickNextThinkingOptionForProvider(input: {
   });
 }
 
-type AgentFormBaseAction = Exclude<AgentFormAction, { type: "SET_AUTH_PROFILE_FROM_USER" }>;
+type AgentFormBaseAction = Exclude<AgentFormAction, { type: "SET_ACCOUNT_FROM_USER" }>;
 
 function resolveAgentFormBase(
   state: AgentFormReducerState,
@@ -559,14 +557,14 @@ function resolveAgentFormBase(
           provider: action.provider,
           modeId: nextModeId,
           model: nextModelId,
-          authProfileKey: "",
+          accountKey: "",
           runtimeProfileId: "",
           thinkingOptionId: nextThinkingOptionId,
         },
         userModified: {
           ...state.userModified,
           provider: true,
-          authProfileKey: false,
+          accountKey: false,
           runtimeProfileId: false,
         },
       };
@@ -586,7 +584,7 @@ function resolveAgentFormBase(
           provider: action.provider,
           model: nextModelId,
           modeId: action.providerDef?.defaultModeId ?? "",
-          authProfileKey: "",
+          accountKey: "",
           runtimeProfileId: "",
           thinkingOptionId: nextThinkingOptionId,
         },
@@ -594,7 +592,7 @@ function resolveAgentFormBase(
           ...state.userModified,
           provider: true,
           model: true,
-          authProfileKey: false,
+          accountKey: false,
           runtimeProfileId: false,
         },
       };
@@ -656,15 +654,15 @@ export function resolveAgentForm(
   state: AgentFormReducerState,
   action: AgentFormAction,
 ): AgentFormReducerState {
-  if (action.type === "SET_AUTH_PROFILE_FROM_USER") {
+  if (action.type === "SET_ACCOUNT_FROM_USER") {
     return {
-      form: { ...state.form, authProfileKey: normalizeAuthProfileKey(action.authProfileKey) },
-      userModified: { ...state.userModified, authProfileKey: true },
+      form: { ...state.form, accountKey: normalizeAccountKey(action.accountKey) },
+      userModified: { ...state.userModified, accountKey: true },
     };
   }
   if (action.type === "SET_RUNTIME_PROFILE_FROM_USER") {
     return {
-      form: { ...state.form, runtimeProfileId: normalizeAuthProfileKey(action.runtimeProfileId) },
+      form: { ...state.form, runtimeProfileId: normalizeAccountKey(action.runtimeProfileId) },
       userModified: { ...state.userModified, runtimeProfileId: true },
     };
   }

@@ -153,7 +153,7 @@ export async function runImportCommand(
 
   const provider = parseImportProvider(options.provider);
   const cwd = resolveImportCwd(options.cwd, process.cwd());
-  const authProfileKey = options.account?.trim();
+  const accountKey = options.account?.trim();
   const sessionBehavior = parseSessionBehavior(options.sessionBehavior);
 
   const labels = parseImportLabels(options.label);
@@ -164,12 +164,12 @@ export async function runImportCommand(
       provider,
       sessionId,
       cwd,
-      ...(authProfileKey
+      ...(accountKey
         ? {
             providerHomeRef: {
               kind: "managed-profile" as const,
               provider,
-              profileKey: authProfileKey,
+              profileKey: accountKey,
             },
           }
         : {}),

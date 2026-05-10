@@ -367,9 +367,7 @@ function submitWorkspaceDraft(input: SubmitDraftInput): void {
       ? { modeId: composerState.selectedMode }
       : {}),
     ...(composerState.effectiveModelId ? { model: composerState.effectiveModelId } : {}),
-    ...(composerState.effectiveAuthProfileKey
-      ? { authProfileKey: composerState.effectiveAuthProfileKey }
-      : {}),
+    ...(composerState.effectiveAccountKey ? { accountKey: composerState.effectiveAccountKey } : {}),
     ...(composerState.effectiveRuntimeProfileId
       ? { runtimeProfileId: composerState.effectiveRuntimeProfileId }
       : {}),

@@ -845,7 +845,11 @@ test("createAgent applies selected provider auth profile to config and launch en
   const snapshot = await manager.createAgent({
     provider: "codex",
     cwd: workdir,
-    authProfileKey: "profile-a",
+    providerHomeRef: {
+      kind: "managed-profile",
+      provider: "codex",
+      profileKey: "profile-a",
+    },
   });
 
   expect(client.lastConfig?.providerHomeRef).toEqual({
@@ -858,7 +862,6 @@ test("createAgent applies selected provider auth profile to config and launch en
     provider: "codex",
     profileKey: "profile-a",
   });
-  expect(snapshot.config.authProfileKey).toBeUndefined();
   expect(client.lastLaunchContext).toEqual({
     env: {
       PASEO_AGENT_ID: snapshot.id,
@@ -965,7 +968,6 @@ test("createAgent syncs current provider auth without selecting a managed profil
     kind: "native-default",
     provider: "codex",
   });
-  expect(snapshot.config.authProfileKey).toBeUndefined();
   expect(client.lastLaunchContext).toEqual({
     env: {
       PASEO_AGENT_ID: snapshot.id,
@@ -1092,9 +1094,19 @@ test("restartAgentWithAuthProfile creates a fresh provider session with the sele
   const snapshot = await manager.createAgent({
     provider: "codex",
     cwd: workdir,
-    authProfileKey: "profile-a",
+    providerHomeRef: {
+      kind: "managed-profile",
+      provider: "codex",
+      profileKey: "profile-a",
+    },
   });
-  const restarted = await manager.restartAgentWithAuthProfile(snapshot.id, "profile-b");
+  const restarted = await manager.restartAgentWithProviderHome(snapshot.id, {
+    providerHomeRef: {
+      kind: "managed-profile",
+      provider: "codex",
+      profileKey: "profile-b",
+    },
+  });
 
   expect(restarted.id).toBe(snapshot.id);
   expect(client.createSessionCalls).toBe(1);
@@ -1110,7 +1122,6 @@ test("restartAgentWithAuthProfile creates a fresh provider session with the sele
     provider: "codex",
     profileKey: "profile-b",
   });
-  expect(restarted.config.authProfileKey).toBeUndefined();
   expect(client.lastLaunchContext).toEqual({
     env: {
       PASEO_AGENT_ID: snapshot.id,

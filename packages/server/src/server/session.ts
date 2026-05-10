@@ -1941,7 +1941,7 @@ export class Session {
       case "set_agent_thinking_request":
         return this.handleSetAgentThinkingRequest(msg.agentId, msg.thinkingOptionId, msg.requestId);
       case "restart_agent_with_auth_profile_request":
-        return this.handleRestartAgentWithAuthProfileRequest(
+        return this.handleRestartAgentWithProviderHomeRequest(
           msg.agentId,
           msg.providerHomeRef,
           msg.authProfileKey ?? null,
@@ -3346,7 +3346,7 @@ export class Session {
       providerHandleId,
       cwd,
       providerHomeRef,
-      authProfileKey,
+      sourceAuthProfileKey,
       sessionBehavior,
       labels,
       requestId,
@@ -3359,7 +3359,7 @@ export class Session {
     try {
       const descriptor = await this.agentManager.findPersistedAgent(provider, providerHandleId, {
         sourceProviderHomeRef: providerHomeRef,
-        sourceAuthProfileKey: authProfileKey,
+        sourceAuthProfileKey,
       });
       if (!descriptor && provider === "opencode" && !cwd) {
         throw new Error(
@@ -3373,8 +3373,6 @@ export class Session {
       const importOverrides = {
         ...(cwd ? { cwd } : {}),
         ...(providerHomeRef ? { providerHomeRef } : {}),
-        // COMPAT(providerHomeRef): old clients may select a managed source by authProfileKey.
-        ...(authProfileKey !== undefined && !providerHomeRef ? { authProfileKey } : {}),
       } satisfies Partial<AgentSessionConfig>;
       const overrides = Object.keys(importOverrides).length > 0 ? importOverrides : undefined;
 
@@ -4807,9 +4805,10 @@ export class Session {
     }
   }
 
-  private async handleRestartAgentWithAuthProfileRequest(
+  private async handleRestartAgentWithProviderHomeRequest(
     agentId: string,
     providerHomeRef: AgentSessionConfig["providerHomeRef"] | undefined,
+    // COMPAT(providerHomeRef): old clients send authProfileKey on this wire message.
     authProfileKey: string | null,
     sessionBehavior: AgentSessionConfig["sessionBehavior"] | undefined,
     requestId: string,
@@ -4820,8 +4819,9 @@ export class Session {
     );
 
     try {
-      await this.agentManager.restartAgentWithAuthProfile(agentId, authProfileKey, {
+      await this.agentManager.restartAgentWithProviderHome(agentId, {
         providerHomeRef,
+        legacyAccountKey: authProfileKey,
         sessionBehavior,
       });
       this.sessionLogger.info(

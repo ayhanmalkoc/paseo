@@ -2008,7 +2008,11 @@ describe("Codex persisted sessions", () => {
 
     const source = {
       kind: "auth-profile" as const,
-      authProfileKey: "profile-a",
+      providerHomeRef: {
+        kind: "managed-profile" as const,
+        provider: "codex" as const,
+        profileKey: "profile-a",
+      },
       label: "profile-a@example.com",
     };
     const descriptors = await provider.listPersistedAgents({

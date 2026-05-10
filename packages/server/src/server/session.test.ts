@@ -1095,13 +1095,28 @@ describe("session agent import", () => {
     expect(agentManager.findPersistedAgent).toHaveBeenCalledWith(
       "custom-codex",
       "provider-thread-imported",
+      {
+        sourceProviderHomeRef: {
+          kind: "managed-profile",
+          provider: "custom-codex",
+          profileKey: "codex-work",
+        },
+        sourceAuthProfileKey: "codex-work",
+      },
     );
     expect(agentManager.resumeAgentFromPersistence).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "custom-codex",
         sessionId: "thread-imported",
       }),
-      expect.objectContaining({ cwd, authProfileKey: "codex-work" }),
+      expect.objectContaining({
+        cwd,
+        providerHomeRef: {
+          kind: "managed-profile",
+          provider: "custom-codex",
+          profileKey: "codex-work",
+        },
+      }),
       undefined,
       expect.objectContaining({ labels: undefined, sessionBehavior: "continue" }),
     );

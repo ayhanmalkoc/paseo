@@ -26,8 +26,8 @@ export interface NormalizedImportAgentRequest {
   providerHandleId: string;
   cwd?: string;
   providerHomeRef?: ProviderHomeRef | null;
-  /** @deprecated COMPAT(providerHomeRef): accepted from old clients only. */
-  authProfileKey?: string | null;
+  // COMPAT(providerHomeRef): old clients can still select a managed source by authProfileKey.
+  sourceAuthProfileKey?: string | null;
   sessionBehavior?: RuntimeProfileSessionBehavior;
   labels?: Record<string, string>;
   requestId: string;
@@ -68,15 +68,22 @@ export function normalizeImportAgentRequest(
   if (!provider || !providerHandleId) {
     return { error: "Import requires providerId and providerHandleId" };
   }
+  const legacyAccountKey =
+    typeof msg.authProfileKey === "string" ? msg.authProfileKey.trim() || null : msg.authProfileKey;
   return {
     provider,
     providerHandleId,
     cwd: msg.cwd,
-    providerHomeRef: msg.providerHomeRef,
-    authProfileKey:
-      typeof msg.authProfileKey === "string"
-        ? msg.authProfileKey.trim() || null
-        : msg.authProfileKey,
+    providerHomeRef:
+      msg.providerHomeRef ??
+      (legacyAccountKey
+        ? {
+            kind: "managed-profile",
+            provider: provider as AgentProvider,
+            profileKey: legacyAccountKey,
+          }
+        : undefined),
+    sourceAuthProfileKey: legacyAccountKey,
     sessionBehavior: normalizeSessionBehavior(msg.sessionBehavior),
     labels: msg.labels,
     requestId: msg.requestId,

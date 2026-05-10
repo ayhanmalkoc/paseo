@@ -5,6 +5,7 @@ import type {
   AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
+import { normalizeProviderHomeRef } from "./agent/provider-home-ref.js";
 import { buildProviderRegistry } from "./agent/provider-registry.js";
 
 interface LoggerLike {
@@ -83,7 +84,10 @@ function applyStoredConfigOverrides(
   }
   target.model = config.model ?? undefined;
   target.thinkingOptionId = config.thinkingOptionId ?? undefined;
-  target.authProfileKey = config.authProfileKey ?? undefined;
+  target.providerHomeRef = normalizeProviderHomeRef(
+    config.providerHomeRef as AgentSessionConfig["providerHomeRef"],
+    target.provider,
+  );
   target.runtimeProfileId = config.runtimeProfileId ?? undefined;
   target.profileOverrides = config.profileOverrides ?? undefined;
   target.profileSnapshot = config.profileSnapshot ?? undefined;
@@ -104,13 +108,22 @@ export function buildSessionConfig(
     return null;
   }
   const overrides = buildConfigOverrides(record);
+  const providerHomeRef =
+    overrides.providerHomeRef ??
+    (record.config?.authProfileKey
+      ? {
+          kind: "managed-profile" as const,
+          provider: record.provider,
+          profileKey: record.config.authProfileKey,
+        }
+      : undefined);
   return {
     provider: record.provider,
     cwd: record.cwd,
     modeId: overrides.modeId,
     model: overrides.model,
     thinkingOptionId: overrides.thinkingOptionId,
-    authProfileKey: overrides.authProfileKey,
+    providerHomeRef,
     runtimeProfileId: overrides.runtimeProfileId,
     profileOverrides: overrides.profileOverrides,
     profileSnapshot: overrides.profileSnapshot,

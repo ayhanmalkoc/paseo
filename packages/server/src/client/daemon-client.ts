@@ -160,8 +160,6 @@ const perfNow: () => number =
 interface ImportAgentInputBase {
   cwd?: string;
   providerHomeRef?: AgentSessionConfig["providerHomeRef"] | null;
-  /** @deprecated COMPAT(providerHomeRef): old callers may still pass authProfileKey. */
-  authProfileKey?: string | null;
   sessionBehavior?: RuntimeProfileSessionBehavior;
   labels?: Record<string, string>;
 }
@@ -2017,7 +2015,6 @@ export class DaemonClient {
         : { provider: input.provider, sessionId: input.sessionId }),
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.providerHomeRef !== undefined ? { providerHomeRef: input.providerHomeRef } : {}),
-      ...(input.authProfileKey !== undefined ? { authProfileKey: input.authProfileKey } : {}),
       ...(input.sessionBehavior !== undefined ? { sessionBehavior: input.sessionBehavior } : {}),
       ...(input.labels && Object.keys(input.labels).length > 0 ? { labels: input.labels } : {}),
     });
@@ -2296,6 +2293,40 @@ export class DaemonClient {
     }
   }
 
+  async restartAgentWithProviderHome(
+    agentId: string,
+    providerHomeRef: AgentSessionConfig["providerHomeRef"] | null,
+    options?: { sessionBehavior?: RuntimeProfileSessionBehavior },
+  ): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "restart_agent_with_auth_profile_request",
+      agentId,
+      providerHomeRef,
+      ...(options?.sessionBehavior ? { sessionBehavior: options.sessionBehavior } : {}),
+      requestId,
+    });
+    const payload = await this.sendRequest({
+      requestId,
+      message,
+      timeout: 15000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "restart_agent_with_auth_profile_response") {
+          return null;
+        }
+        if (msg.payload.requestId !== requestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "restartAgentWithAuthProfile rejected");
+    }
+  }
+
+  /** @deprecated COMPAT(providerHomeRef): old callers may still pass authProfileKey. */
   async restartAgentWithAuthProfile(
     agentId: string,
     authProfileKey: string | null,
@@ -2304,14 +2335,17 @@ export class DaemonClient {
       sessionBehavior?: RuntimeProfileSessionBehavior;
     },
   ): Promise<void> {
+    const providerHomeRef = options?.providerHomeRef ?? null;
+    if (providerHomeRef) {
+      return this.restartAgentWithProviderHome(agentId, providerHomeRef, {
+        sessionBehavior: options?.sessionBehavior,
+      });
+    }
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "restart_agent_with_auth_profile_request",
       agentId,
-      ...(options?.providerHomeRef !== undefined
-        ? { providerHomeRef: options.providerHomeRef }
-        : {}),
-      ...(authProfileKey !== undefined ? { authProfileKey } : {}),
+      authProfileKey,
       ...(options?.sessionBehavior ? { sessionBehavior: options.sessionBehavior } : {}),
       requestId,
     });

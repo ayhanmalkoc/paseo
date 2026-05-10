@@ -29,8 +29,6 @@ export interface ProviderAuthImportRequest {
 export interface ProviderAuthLaunchSelection {
   provider: AgentProvider;
   providerHomeRef?: ProviderHomeRef | null;
-  /** @deprecated COMPAT(providerHomeRef): accepted from old clients only. */
-  authProfileKey?: string | null;
 }
 
 export interface ProviderAuthLaunchContext {
@@ -298,10 +296,7 @@ export class ProviderAuthService {
       selection.provider,
     );
     if (!adapter) {
-      if (
-        requestedHomeRef?.kind === "managed-profile" ||
-        normalizeProfileKey(selection.authProfileKey)
-      ) {
+      if (requestedHomeRef?.kind === "managed-profile") {
         throw new Error(`Provider '${selection.provider}' does not support auth profiles`);
       }
       return {
@@ -324,9 +319,7 @@ export class ProviderAuthService {
     const registry = await this.load();
     const state = this.getOrCreateProviderState(registry, selection.provider);
     const requestedProfileKey =
-      requestedHomeRef?.kind === "managed-profile"
-        ? requestedHomeRef.profileKey
-        : selection.authProfileKey;
+      requestedHomeRef?.kind === "managed-profile" ? requestedHomeRef.profileKey : null;
     if (!normalizeProfileKey(requestedProfileKey)) {
       return {
         profileKey: null,

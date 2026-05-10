@@ -48,7 +48,7 @@ export function buildDraftComposerCommandConfig(input: {
   modeOptions: DraftAgentStatusBarProps["modeOptions"];
   selectedMode: string;
   effectiveModelId: string;
-  authProfileKey?: string;
+  accountKey?: string;
   runtimeProfileId?: string;
   effectiveThinkingOptionId: string;
   featureValues?: Record<string, unknown>;
@@ -65,7 +65,7 @@ export function buildDraftComposerCommandConfig(input: {
       ? { modeId: input.selectedMode }
       : {}),
     ...(input.effectiveModelId ? { model: input.effectiveModelId } : {}),
-    ...(input.authProfileKey ? { authProfileKey: input.authProfileKey } : {}),
+    ...(input.accountKey ? { accountKey: input.accountKey } : {}),
     ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
     ...(input.effectiveThinkingOptionId
       ? { thinkingOptionId: input.effectiveThinkingOptionId }
@@ -92,8 +92,8 @@ export function buildDraftStatusControls(input: {
     selectedModel: formState.selectedModel,
     onSelectModel: formState.setModelFromUser,
     authProfiles: formState.authProfiles,
-    selectedAuthProfileKey: formState.selectedAuthProfileKey,
-    onSelectAuthProfile: formState.setAuthProfileFromUser,
+    selectedAccountKey: formState.selectedAccountKey,
+    onSelectAuthProfile: formState.setAccountFromUser,
     isAuthProfilesLoading: formState.isAuthProfilesLoading,
     runtimeProfiles: formState.runtimeProfiles,
     selectedRuntimeProfileId: formState.selectedRuntimeProfileId,

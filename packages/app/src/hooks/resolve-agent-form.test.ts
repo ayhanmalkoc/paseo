@@ -101,7 +101,7 @@ function makeState(
       provider: null,
       modeId: "",
       model: "",
-      authProfileKey: "",
+      accountKey: "",
       runtimeProfileId: "",
       thinkingOptionId: "",
       workingDir: "",
@@ -442,7 +442,7 @@ describe("resolveFormState", () => {
       undefined,
       {
         provider: "codex",
-        providerPreferences: { codex: { authProfileKey: "profile-work" } },
+        providerPreferences: { codex: { accountKey: "profile-work" } },
       },
       CODEX_MODELS,
       INITIAL_USER_MODIFIED,
@@ -452,7 +452,7 @@ describe("resolveFormState", () => {
     );
 
     expect(resolved.provider).toBe("codex");
-    expect(resolved.authProfileKey).toBe("profile-work");
+    expect(resolved.accountKey).toBe("profile-work");
   });
 
   it("keeps native provider default when the saved auth profile key is missing", () => {
@@ -460,7 +460,7 @@ describe("resolveFormState", () => {
       undefined,
       {
         provider: "codex",
-        providerPreferences: { codex: { authProfileKey: "missing-profile" } },
+        providerPreferences: { codex: { accountKey: "missing-profile" } },
       },
       CODEX_MODELS,
       INITIAL_USER_MODIFIED,
@@ -469,7 +469,7 @@ describe("resolveFormState", () => {
       CODEX_AUTH_PROFILES,
     );
 
-    expect(resolved.authProfileKey).toBe("");
+    expect(resolved.accountKey).toBe("");
   });
 
   it("falls back to the first thinking option when model exposes options without a provider default", () => {
@@ -552,7 +552,7 @@ describe("resolveFormState", () => {
         provider: true,
         modeId: true,
         model: true,
-        authProfileKey: false,
+        accountKey: false,
         runtimeProfileId: false,
         thinkingOptionId: true,
         workingDir: false,
@@ -907,16 +907,16 @@ describe("resolveAgentForm", () => {
     });
   });
 
-  describe("SET_AUTH_PROFILE_FROM_USER", () => {
+  describe("SET_ACCOUNT_FROM_USER", () => {
     it("updates auth profile key and marks it modified", () => {
-      const state = makeState({ authProfileKey: "profile-default" });
+      const state = makeState({ accountKey: "profile-default" });
       const next = resolveAgentForm(state, {
-        type: "SET_AUTH_PROFILE_FROM_USER",
-        authProfileKey: " profile-work ",
+        type: "SET_ACCOUNT_FROM_USER",
+        accountKey: " profile-work ",
       });
 
-      expect(next.form.authProfileKey).toBe("profile-work");
-      expect(next.userModified.authProfileKey).toBe(true);
+      expect(next.form.accountKey).toBe("profile-work");
+      expect(next.userModified.accountKey).toBe(true);
     });
   });
 

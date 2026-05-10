@@ -391,8 +391,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       };
     }
     return {
-      ...(callerAgent.config.authProfileKey
-        ? { authProfileKey: callerAgent.config.authProfileKey }
+      ...(callerAgent.config.providerHomeRef
+        ? { providerHomeRef: callerAgent.config.providerHomeRef }
         : {}),
       ...(callerAgent.config.featureValues
         ? { featureValues: callerAgent.config.featureValues }
@@ -658,7 +658,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     normalizedTitle: string | null;
     model: string | undefined;
     thinking: string | undefined;
-    authProfileKey: string | null | undefined;
+    providerHomeRef: AgentSessionConfig["providerHomeRef"] | undefined;
     runtimeProfileId: string | null | undefined;
     profileOverrides: AgentSessionConfig["profileOverrides"];
     featureValues: AgentSessionConfig["featureValues"];
@@ -732,7 +732,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       normalizedTitle: callerArgs.title.trim(),
       model: resolvedProviderModel.model,
       thinking: callerArgs.thinking,
-      authProfileKey: inheritedProfileConfig.authProfileKey,
+      providerHomeRef: inheritedProfileConfig.providerHomeRef,
       runtimeProfileId: inheritedProfileConfig.runtimeProfileId,
       profileOverrides: inheritedProfileConfig.profileOverrides,
       featureValues: inheritedProfileConfig.featureValues,
@@ -809,7 +809,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       normalizedTitle: topLevelArgs.title.trim(),
       model: resolvedProviderModel.model,
       thinking: topLevelArgs.thinking,
-      authProfileKey: undefined,
+      providerHomeRef: undefined,
       runtimeProfileId: undefined,
       profileOverrides: undefined,
       featureValues: undefined,
@@ -856,7 +856,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         normalizedTitle,
         model,
         thinking,
-        authProfileKey,
+        providerHomeRef,
         runtimeProfileId,
         profileOverrides,
         featureValues,
@@ -881,7 +881,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           title: normalizedTitle ?? undefined,
           model,
           thinkingOptionId: thinking,
-          authProfileKey,
+          providerHomeRef,
           runtimeProfileId,
           profileOverrides,
           featureValues,
