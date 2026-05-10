@@ -24,6 +24,25 @@ export function accountLoginMethodsQueryKey(
   return ["accountLoginMethods", serverId, provider ?? "__none__"] as const;
 }
 
+export function isProviderAccountOnboardingSupported(
+  features:
+    | {
+        providerAccountOnboarding?: boolean;
+        providerAccountOnboardingProviders?: readonly AgentProvider[];
+      }
+    | null
+    | undefined,
+  provider?: AgentProvider | null,
+): boolean {
+  if (features?.providerAccountOnboarding !== true) {
+    return false;
+  }
+  if (!provider || !features.providerAccountOnboardingProviders) {
+    return true;
+  }
+  return features.providerAccountOnboardingProviders.includes(provider);
+}
+
 export function useAccountLogin(serverId: string | null, provider?: AgentProvider | null) {
   const client = useHostRuntimeClient(serverId ?? "");
   const queryClient = useQueryClient();
@@ -31,9 +50,12 @@ export function useAccountLogin(serverId: string | null, provider?: AgentProvide
     useCallback(
       (state) =>
         serverId
-          ? state.sessions[serverId]?.serverInfo?.features?.providerAccountOnboarding === true
+          ? isProviderAccountOnboardingSupported(
+              state.sessions[serverId]?.serverInfo?.features,
+              provider,
+            )
           : false,
-      [serverId],
+      [provider, serverId],
     ),
   );
   const sessionsKey = useMemo(

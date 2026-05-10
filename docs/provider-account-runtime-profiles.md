@@ -114,18 +114,19 @@ Active agent:
 
 ## Provider Support Boundaries
 
-Codex:
+| Provider | Account surfaces                                                                           | Native import                                                                         | Cross-account continuity                                                                                                                                             |
+| -------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex    | Enabled. Listing/import/default/remove and ChatGPT device-code onboarding are implemented. | Reads Codex native sessions from the selected source provider home.                   | Implemented by copying/fast-forwarding the target rollout file before resume.                                                                                        |
+| Claude   | Disabled. No managed account adapter exists yet.                                           | Reads native Claude project sessions from the native default Claude config directory. | Not enabled. Claude session files are tied to the native Claude config/project layout and need provider-specific design before managed account switching is exposed. |
+| OpenCode | Disabled. No managed account adapter exists yet.                                           | Reads OpenCode sessions from the OpenCode storage root used by the provider wrapper.  | Not enabled. OpenCode storage is provider-managed and the account boundary is not represented by Paseo yet.                                                          |
 
-- Account listing/import/default/remove: implemented.
-- Device-code onboarding: implemented.
-- Cross-account rollout copy/fast-forward: implemented.
+Server capability payloads expose provider-specific support lists:
 
-Claude/OpenCode:
+- `providerAuthProfileProviders`
+- `providerAccountOnboardingProviders`
 
-- Base provider support exists in Paseo.
-- Provider-neutral account/profile architecture can represent them.
-- Native session/account continuity behavior must be designed per provider
-  before enabling Codex-like account surfaces.
+Current value is Codex-only. Old daemons that only send the global boolean are
+still accepted by the client for protocol compatibility.
 
 Unsupported providers should not pretend to support managed account continuity.
 They should either use native default provider homes or surface a clear
@@ -156,10 +157,12 @@ compat or a compat test.
 
 Provider-specific follow-up:
 
-- Design Claude account/session continuity.
-- Design OpenCode account/session continuity.
-- Decide whether each provider can safely clone/resume native sessions across
-  accounts.
+- Add a Claude managed-account adapter only after deciding the native home
+  boundary and resume/clone safety.
+- Add an OpenCode managed-account adapter only after deciding how OpenCode
+  storage maps to accounts.
+- Add provider-specific continuity tests before enabling either provider in
+  `providerAuthProfileProviders`.
 
 UI follow-up:
 

@@ -63,6 +63,10 @@ export class AccountOnboardingService {
     return provider === CODEX_PROVIDER ? ["chatgpt-device-code"] : [];
   }
 
+  getSupportedProviders(): AgentProvider[] {
+    return [CODEX_PROVIDER];
+  }
+
   listSessions(provider?: AgentProvider): AccountLoginSession[] {
     return Array.from(this.sessions.values())
       .filter((session) => !provider || session.provider === provider)

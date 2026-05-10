@@ -32,6 +32,25 @@ export interface UseProviderAuthProfilesResult {
   refreshProfile: (profileKey: string) => Promise<ProviderAuthProfile>;
 }
 
+export function isProviderAuthProfileSupported(
+  features:
+    | {
+        providerAuthProfiles?: boolean;
+        providerAuthProfileProviders?: readonly AgentProvider[];
+      }
+    | null
+    | undefined,
+  provider?: AgentProvider | null,
+): boolean {
+  if (features?.providerAuthProfiles !== true) {
+    return false;
+  }
+  if (!provider || !features.providerAuthProfileProviders) {
+    return true;
+  }
+  return features.providerAuthProfileProviders.includes(provider);
+}
+
 export function useProviderAuthProfiles(
   serverId: string | null,
   provider?: AgentProvider | null,
@@ -42,9 +61,9 @@ export function useProviderAuthProfiles(
     useCallback(
       (state) =>
         serverId
-          ? state.sessions[serverId]?.serverInfo?.features?.providerAuthProfiles === true
+          ? isProviderAuthProfileSupported(state.sessions[serverId]?.serverInfo?.features, provider)
           : false,
-      [serverId],
+      [provider, serverId],
     ),
   );
   const queryKey = useMemo(

@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  isProviderAuthProfileSupported,
   providerAuthProfilesQueryKey,
   providerAuthProfilesServerQueryKey,
 } from "./use-provider-auth-profiles";
@@ -32,5 +33,22 @@ describe("provider auth profile query keys", () => {
     expect(queryClient.getQueryState(codexKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(allProvidersKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherServerKey)?.isInvalidated).toBe(false);
+  });
+});
+
+describe("provider auth profile support", () => {
+  it("keeps old global feature behavior when daemon does not send provider list", () => {
+    expect(isProviderAuthProfileSupported({ providerAuthProfiles: true }, "claude")).toBe(true);
+  });
+
+  it("uses provider list when daemon sends one", () => {
+    const features = {
+      providerAuthProfiles: true,
+      providerAuthProfileProviders: ["codex"] as const,
+    };
+
+    expect(isProviderAuthProfileSupported(features, "codex")).toBe(true);
+    expect(isProviderAuthProfileSupported(features, "claude")).toBe(false);
+    expect(isProviderAuthProfileSupported(features, null)).toBe(true);
   });
 });
