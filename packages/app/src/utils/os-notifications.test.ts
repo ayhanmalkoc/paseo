@@ -20,6 +20,7 @@ interface GlobalSnapshot {
   dispatchEvent: unknown;
   focus: unknown;
   location: unknown;
+  navigator: unknown;
 }
 
 const originalGlobals: GlobalSnapshot = {
@@ -28,6 +29,7 @@ const originalGlobals: GlobalSnapshot = {
   dispatchEvent: (globalThis as { dispatchEvent?: unknown }).dispatchEvent,
   focus: (globalThis as { focus?: unknown }).focus,
   location: (globalThis as { location?: unknown }).location,
+  navigator: (globalThis as { navigator?: unknown }).navigator,
 };
 
 async function loadModuleForPlatform(
@@ -65,6 +67,11 @@ function restoreGlobals(): void {
   (globalThis as { dispatchEvent?: unknown }).dispatchEvent = originalGlobals.dispatchEvent;
   (globalThis as { focus?: unknown }).focus = originalGlobals.focus;
   (globalThis as { location?: unknown }).location = originalGlobals.location;
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: originalGlobals.navigator,
+    writable: true,
+  });
 }
 
 describe("sendOsNotification", () => {
@@ -208,6 +215,71 @@ describe("sendOsNotification", () => {
 
   it("returns false when the Notification API is unavailable", async () => {
     (globalThis as { Notification?: unknown }).Notification = undefined;
+    const { sendOsNotification } = await loadModuleForPlatform("web");
+    const sent = await sendOsNotification({
+      title: "Agent finished",
+      body: "Done",
+      data: { serverId: "srv-1", agentId: "agent-1" },
+    });
+
+    expect(sent).toBe(false);
+  });
+
+  it("falls back to service worker notifications when the browser rejects direct construction", async () => {
+    class MockNotification {
+      static permission = "granted";
+      static requestPermission = vi.fn(async () => "granted");
+
+      constructor() {
+        throw new TypeError("Illegal constructor");
+      }
+    }
+
+    const showNotification = vi.fn(async () => undefined);
+
+    (globalThis as { Notification?: unknown }).Notification = MockNotification;
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {
+        serviceWorker: {
+          getRegistration: vi.fn(async () => ({ showNotification })),
+        },
+      },
+      writable: true,
+    });
+
+    const { sendOsNotification } = await loadModuleForPlatform("web");
+    const sent = await sendOsNotification({
+      title: "Agent finished",
+      body: "Done",
+      data: { serverId: "srv-1", agentId: "agent-1" },
+    });
+
+    expect(sent).toBe(true);
+    expect(showNotification).toHaveBeenCalledWith("Agent finished", {
+      body: "Done",
+      data: { serverId: "srv-1", agentId: "agent-1" },
+      icon: undefined,
+    });
+  });
+
+  it("returns false instead of throwing when direct construction is rejected without service worker support", async () => {
+    class MockNotification {
+      static permission = "granted";
+      static requestPermission = vi.fn(async () => "granted");
+
+      constructor() {
+        throw new TypeError("Illegal constructor");
+      }
+    }
+
+    (globalThis as { Notification?: unknown }).Notification = MockNotification;
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: {},
+      writable: true,
+    });
+
     const { sendOsNotification } = await loadModuleForPlatform("web");
     const sent = await sendOsNotification({
       title: "Agent finished",

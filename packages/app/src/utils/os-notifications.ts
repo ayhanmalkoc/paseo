@@ -17,6 +17,26 @@ interface WebNotificationInstance {
   addEventListener: (type: "click", listener: (event: Event) => void) => void;
 }
 
+interface WebNotificationOptions {
+  body?: string;
+  data?: Record<string, unknown>;
+  icon?: string;
+}
+
+interface WebNotificationConstructor {
+  permission: string;
+  requestPermission?: () => Promise<string>;
+  new (title: string, options?: WebNotificationOptions): unknown;
+}
+
+interface WebServiceWorkerRegistration {
+  showNotification?: (title: string, options?: WebNotificationOptions) => Promise<void>;
+}
+
+interface WebServiceWorkerContainer {
+  getRegistration?: () => Promise<WebServiceWorkerRegistration | undefined>;
+}
+
 export const WEB_NOTIFICATION_CLICK_EVENT = "paseo:web-notification-click";
 
 let permissionRequest: Promise<boolean> | null = null;
@@ -39,31 +59,33 @@ function getDesktopNotificationSender():
     : null;
 }
 
-function getWebNotificationConstructor(): {
-  permission: string;
-  requestPermission?: () => Promise<string>;
-  new (
-    title: string,
-    options?: {
-      body?: string;
-      data?: Record<string, unknown>;
-      icon?: string;
-    },
-  ): unknown;
-} | null {
+function getWebNotificationConstructor(): WebNotificationConstructor | null {
   const NotificationConstructor = (
     globalThis as {
-      Notification?: {
-        permission: string;
-        requestPermission?: () => Promise<string>;
-        new (
-          title: string,
-          options?: { body?: string; data?: Record<string, unknown>; icon?: string },
-        ): unknown;
-      };
+      Notification?: WebNotificationConstructor;
     }
   ).Notification;
   return NotificationConstructor ?? null;
+}
+
+async function getServiceWorkerNotificationRegistration(): Promise<WebServiceWorkerRegistration | null> {
+  const serviceWorker = (
+    globalThis as {
+      navigator?: {
+        serviceWorker?: WebServiceWorkerContainer;
+      };
+    }
+  ).navigator?.serviceWorker;
+  if (!serviceWorker || typeof serviceWorker.getRegistration !== "function") {
+    return null;
+  }
+
+  try {
+    const registration = await serviceWorker.getRegistration();
+    return typeof registration?.showNotification === "function" ? registration : null;
+  } catch {
+    return null;
+  }
 }
 
 async function ensureNotificationPermission(): Promise<boolean> {
@@ -163,6 +185,22 @@ function attachWebClickHandler(
   });
 }
 
+async function sendServiceWorkerNotification(
+  title: string,
+  options: WebNotificationOptions,
+): Promise<boolean> {
+  const registration = await getServiceWorkerNotificationRegistration();
+  if (!registration?.showNotification) {
+    return false;
+  }
+  try {
+    await registration.showNotification(title, options);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function sendOsNotification(payload: OsNotificationPayload): Promise<boolean> {
   // Mobile/native notifications should be remote push only.
   if (isNative) {
@@ -178,15 +216,23 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
   if (NotificationConstructor) {
     const granted = await ensureNotificationPermission();
     if (granted) {
-      const notification = new NotificationConstructor(payload.title, {
+      const options = {
         body: payload.body,
         data: payload.data,
         icon: getWebNotificationIconUrl(),
-      }) as WebNotificationInstance;
-      if (hasNotificationClickTarget(payload.data)) {
-        attachWebClickHandler(notification, payload.data);
+      };
+      try {
+        const notification = new NotificationConstructor(
+          payload.title,
+          options,
+        ) as WebNotificationInstance;
+        if (hasNotificationClickTarget(payload.data)) {
+          attachWebClickHandler(notification, payload.data);
+        }
+        return true;
+      } catch {
+        return await sendServiceWorkerNotification(payload.title, options);
       }
-      return true;
     }
   }
 
