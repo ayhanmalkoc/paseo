@@ -656,6 +656,12 @@ Acceptance:
 - If clone is required, no clone happens automatically.
 - If direct resume works, resolver records that capability.
 
+Follow-up decision:
+
+- Codex imported CLI rollouts were classified as clone-required when the target
+  account uses a different `CODEX_HOME`. See
+  [Codex Cross-Account Session Clone Decision](codex-cross-account-session-clone-plan.md).
+
 ### Phase 5: Cleanup and UI Simplification
 
 Deliverables:
