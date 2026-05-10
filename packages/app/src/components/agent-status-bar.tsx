@@ -1,7 +1,6 @@
 import {
   memo,
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -2567,11 +2566,6 @@ function useActiveRuntimeProfileRestartController(options: {
     phase: "idle",
     label: "",
   });
-  const [expectedSnapshot, setExpectedSnapshot] = useState<{
-    id: string | null;
-    version?: number;
-    label: string;
-  } | null>(null);
 
   const requestRestart = useCallback(
     (runtimeProfileId: string) => {
@@ -2619,7 +2613,6 @@ function useActiveRuntimeProfileRestartController(options: {
       const nextId = pending.id;
       const nextLabel = pending.label;
       const sessionBehavior = pending.sessionBehavior;
-      const latestProfile = runtimeProfiles.find((profile) => profile.id === nextId);
       setIsRestarting(true);
       setProgress({ phase: "restarting", label: nextLabel });
       void (async () => {
@@ -2629,12 +2622,8 @@ function useActiveRuntimeProfileRestartController(options: {
             sessionBehavior,
           });
           setPending(null);
-          setExpectedSnapshot({
-            id: nextId,
-            version: latestProfile?.version,
-            label: nextLabel,
-          });
-          setProgress({ phase: "waiting", label: nextLabel });
+          setProgress({ phase: "idle", label: "" });
+          toast.show(`Agent restarted with ${nextLabel}`, { variant: "success" });
         } catch (error) {
           const warnings = getRuntimeLaunchWarnings(error);
           if (warnings && warnings.length > 0 && !acceptRuntimeWarnings) {
@@ -2650,34 +2639,8 @@ function useActiveRuntimeProfileRestartController(options: {
         }
       })();
     },
-    [agentId, client, pending, runtimeProfiles, toast],
+    [agentId, client, pending, toast],
   );
-
-  useEffect(() => {
-    if (!expectedSnapshot || progress.phase !== "waiting") {
-      return;
-    }
-    const expectedId = normalizeRuntimeProfileSelection(expectedSnapshot.id);
-    const currentId = normalizeRuntimeProfileSelection(selectedRuntimeProfileId);
-    if (expectedId !== currentId) {
-      return;
-    }
-    if (
-      expectedSnapshot.version !== undefined &&
-      expectedSnapshot.version !== selectedRuntimeProfileVersion
-    ) {
-      return;
-    }
-    toast.show(`Agent restarted with ${expectedSnapshot.label}`, { variant: "success" });
-    setExpectedSnapshot(null);
-    setProgress({ phase: "idle", label: "" });
-  }, [
-    expectedSnapshot,
-    progress.phase,
-    selectedRuntimeProfileId,
-    selectedRuntimeProfileVersion,
-    toast,
-  ]);
 
   return {
     pending,
