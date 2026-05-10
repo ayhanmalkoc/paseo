@@ -17,6 +17,8 @@ The Codex MVP is implemented behind a provider-neutral auth profile service:
 - provider settings expose account import/default/refresh/remove actions;
 - composer Preferences expose a separate Account row while leaving
   provider/model selection unchanged;
+- Import session can route resumed provider sessions through the selected
+  account via optional `authProfileKey`, while older clients keep working;
 - local Codex rollout usage scanning and default/auto-ready selection are
   implemented server-side;
 - automatic current-auth sync imports or updates the current global Codex login

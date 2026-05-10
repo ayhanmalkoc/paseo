@@ -1087,12 +1087,22 @@ describe("session agent import", () => {
       providerId: "custom-codex",
       providerHandleId: "provider-thread-imported",
       cwd,
+      authProfileKey: "codex-work",
       requestId: "import-thread",
     });
 
     expect(agentManager.findPersistedAgent).toHaveBeenCalledWith(
       "custom-codex",
       "provider-thread-imported",
+    );
+    expect(agentManager.resumeAgentFromPersistence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "custom-codex",
+        sessionId: "thread-imported",
+      }),
+      expect.objectContaining({ cwd, authProfileKey: "codex-work" }),
+      undefined,
+      expect.objectContaining({ labels: undefined }),
     );
     expect(agentManager.hydrateTimelineFromProvider).toHaveBeenCalledWith(snapshot.id);
     expect(agentManager.setTitle).toHaveBeenCalledWith(
