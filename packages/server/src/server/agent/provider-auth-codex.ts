@@ -3,7 +3,10 @@ import { promises as fs, type Dirent } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import type { ProviderAuthUsageSnapshot } from "./agent-sdk-types.js";
+import type {
+  ProviderAuthUsageRefreshError,
+  ProviderAuthUsageSnapshot,
+} from "./agent-sdk-types.js";
 import type {
   ProviderAuthAdapter,
   ProviderAuthAdapterContext,
@@ -11,11 +14,24 @@ import type {
   StoredProviderAuthProfile,
 } from "./provider-auth-service.js";
 import { createManagedProviderHomeRef } from "./provider-home-ref.js";
+import {
+  readCodexAppServerUsage,
+  type ReadCodexAppServerUsageOptions,
+} from "./providers/codex-app-server-usage.js";
 
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_AUTH_FILENAME = "auth.json";
 const CODEX_CONFIG_FILENAME = "config.toml";
 const MAX_USAGE_SCAN_FILES = 40;
+
+type CodexUsageReader = (
+  options: ReadCodexAppServerUsageOptions,
+) => Promise<ProviderAuthUsageSnapshot | undefined>;
+
+interface CodexUsageReadResult {
+  usage?: ProviderAuthUsageSnapshot;
+  usageRefreshError?: ProviderAuthUsageRefreshError;
+}
 
 export interface ParsedCodexAuth {
   key: string;
@@ -31,6 +47,12 @@ export interface ParsedCodexAuth {
 export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
   readonly provider = CODEX_PROVIDER;
   readonly supportsCurrentAuthSync = true;
+
+  private readonly usageReader: CodexUsageReader;
+
+  constructor(options: { usageReader?: CodexUsageReader } = {}) {
+    this.usageReader = options.usageReader ?? readCodexAppServerUsage;
+  }
 
   async importCurrent(
     context: ProviderAuthAdapterContext,
@@ -59,9 +81,8 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
     await copySensitiveFile(resolvedAuthPath, path.join(profileCodexHome, CODEX_AUTH_FILENAME));
     await copyOptionalCodexConfig(path.dirname(resolvedAuthPath), profileCodexHome);
 
-    const usage = await scanLatestUsage(profileCodexHome).catch((error) => {
-      context.logger.debug({ err: error, profileKey: parsed.key }, "Failed to scan Codex usage");
-      return undefined;
+    const usageResult = await this.readUsage(profileCodexHome, context, parsed.key, {
+      preferProviderApi: false,
     });
 
     return {
@@ -78,7 +99,7 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
       updatedAt: now,
       lastRefresh: parsed.lastRefresh,
       providerHomePath: profileCodexHome,
-      usage,
+      usage: usageResult.usage,
       metadata: {
         authFileHash,
       },
@@ -92,9 +113,9 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
     const authPath = path.join(profile.providerHomePath, CODEX_AUTH_FILENAME);
     const data = await fs.readFile(authPath, "utf8");
     const parsed = parseCodexAuthJson(data);
-    const usage = await scanLatestUsage(profile.providerHomePath).catch((error) => {
-      context.logger.debug({ err: error, profileKey: profile.key }, "Failed to scan Codex usage");
-      return undefined;
+    const usageResult = await this.readUsage(profile.providerHomePath, context, profile.key, {
+      preferProviderApi: true,
+      ...(profile.usage ? { previousUsage: profile.usage } : {}),
     });
     return {
       ...profile,
@@ -106,7 +127,8 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
       plan: parsed.plan,
       status: "ready",
       lastRefresh: parsed.lastRefresh,
-      usage,
+      usage: usageResult.usage,
+      usageRefreshError: usageResult.usageRefreshError,
       metadata: {
         ...profile.metadata,
         authFileHash: stableHash(data),
@@ -132,6 +154,91 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
       },
     };
   }
+
+  private async readUsage(
+    codexHome: string,
+    context: ProviderAuthAdapterContext,
+    profileKey: string,
+    options: { preferProviderApi: boolean; previousUsage?: ProviderAuthUsageSnapshot },
+  ): Promise<CodexUsageReadResult> {
+    let usageRefreshError: ProviderAuthUsageRefreshError | undefined;
+    if (options.preferProviderApi) {
+      const providerUsage = await this.usageReader({
+        codexHome,
+        logger: context.logger,
+        now: context.now,
+        ...(context.runtimeSettings ? { runtimeSettings: context.runtimeSettings } : {}),
+      }).catch((error) => {
+        usageRefreshError = toUsageRefreshError(error, context.now().toISOString());
+        context.logger.debug(
+          { err: error, profileKey },
+          "Failed to refresh Codex usage from app-server",
+        );
+        return undefined;
+      });
+      if (providerUsage) {
+        return { usage: providerUsage };
+      }
+    }
+
+    const localUsage = await scanLatestUsage(codexHome).catch((error) => {
+      context.logger.debug({ err: error, profileKey }, "Failed to scan Codex usage");
+      return undefined;
+    });
+    return {
+      usage: chooseNewestUsage(localUsage, options.previousUsage),
+      ...(usageRefreshError ? { usageRefreshError } : {}),
+    };
+  }
+}
+
+function toUsageRefreshError(error: unknown, occurredAt: string): ProviderAuthUsageRefreshError {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const code = classifyUsageRefreshError(rawMessage);
+  return {
+    source: "provider-api",
+    code,
+    message: normalizeUsageRefreshMessage(code, rawMessage),
+    occurredAt,
+  };
+}
+
+function classifyUsageRefreshError(message: string): ProviderAuthUsageRefreshError["code"] {
+  if (/token.*invalidated|401\\s+Unauthorized|Unauthorized/i.test(message)) {
+    return "auth-invalid";
+  }
+  if (/timed out|ECONN|ENOTFOUND|fetch failed|network/i.test(message)) {
+    return "provider-unavailable";
+  }
+  return "unknown";
+}
+
+function normalizeUsageRefreshMessage(
+  code: ProviderAuthUsageRefreshError["code"],
+  message: string,
+): string {
+  if (code === "auth-invalid") {
+    return "Codex account needs sign-in again.";
+  }
+  if (code === "provider-unavailable") {
+    return "Codex usage service is temporarily unavailable.";
+  }
+  return message || "Codex usage refresh failed.";
+}
+
+function chooseNewestUsage(
+  candidate: ProviderAuthUsageSnapshot | undefined,
+  previous: ProviderAuthUsageSnapshot | undefined,
+): ProviderAuthUsageSnapshot | undefined {
+  if (!candidate || !previous) {
+    return candidate ?? previous;
+  }
+  const candidateTime = Date.parse(candidate.refreshedAt);
+  const previousTime = Date.parse(previous.refreshedAt);
+  if (!Number.isFinite(candidateTime) || !Number.isFinite(previousTime)) {
+    return candidate;
+  }
+  return candidateTime >= previousTime ? candidate : previous;
 }
 
 export function parseCodexAuthJson(data: string): ParsedCodexAuth {
@@ -256,11 +363,16 @@ async function copyOptionalCodexConfig(sourceDir: string, targetDir: string): Pr
   });
 }
 
+interface CodexUsageFileCandidate {
+  path: string;
+  mtimeMs: number;
+}
+
 async function scanLatestUsage(codexHome: string): Promise<ProviderAuthUsageSnapshot | undefined> {
   const sessionsDir = path.join(codexHome, "sessions");
   const files = await collectJsonlFiles(sessionsDir);
-  for (const filePath of files) {
-    const snapshot = await scanUsageFile(filePath);
+  for (const file of files) {
+    const snapshot = await scanUsageFile(file.path, new Date(file.mtimeMs));
     if (snapshot) {
       return snapshot;
     }
@@ -268,18 +380,17 @@ async function scanLatestUsage(codexHome: string): Promise<ProviderAuthUsageSnap
   return undefined;
 }
 
-async function collectJsonlFiles(root: string): Promise<string[]> {
-  const entries: Array<{ path: string; mtimeMs: number }> = [];
+async function collectJsonlFiles(root: string): Promise<CodexUsageFileCandidate[]> {
+  const entries: CodexUsageFileCandidate[] = [];
   await collectJsonlFilesInto(root, entries);
   return [...entries]
     .sort((left, right) => right.mtimeMs - left.mtimeMs)
-    .slice(0, MAX_USAGE_SCAN_FILES)
-    .map((entry) => entry.path);
+    .slice(0, MAX_USAGE_SCAN_FILES);
 }
 
 async function collectJsonlFilesInto(
   dirPath: string,
-  entries: Array<{ path: string; mtimeMs: number }>,
+  entries: CodexUsageFileCandidate[],
 ): Promise<void> {
   let dirents: Dirent[];
   try {
@@ -307,7 +418,10 @@ async function collectJsonlFilesInto(
   );
 }
 
-async function scanUsageFile(filePath: string): Promise<ProviderAuthUsageSnapshot | undefined> {
+async function scanUsageFile(
+  filePath: string,
+  observedAt: Date,
+): Promise<ProviderAuthUsageSnapshot | undefined> {
   const text = await fs.readFile(filePath, "utf8");
   const lines = text.split(/\r?\n/);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -315,7 +429,7 @@ async function scanUsageFile(filePath: string): Promise<ProviderAuthUsageSnapsho
     if (!line.includes("rate_limits") && !line.includes("rateLimits")) {
       continue;
     }
-    const snapshot = parseUsageLine(line);
+    const snapshot = parseUsageLine(line, observedAt);
     if (snapshot) {
       return snapshot;
     }
@@ -323,7 +437,7 @@ async function scanUsageFile(filePath: string): Promise<ProviderAuthUsageSnapsho
   return undefined;
 }
 
-function parseUsageLine(line: string): ProviderAuthUsageSnapshot | undefined {
+function parseUsageLine(line: string, observedAt: Date): ProviderAuthUsageSnapshot | undefined {
   try {
     const parsed = JSON.parse(line) as Record<string, unknown>;
     const payload = readRecord(parsed.payload);
@@ -346,7 +460,7 @@ function parseUsageLine(line: string): ProviderAuthUsageSnapshot | undefined {
       secondaryResetsAt: secondaryUsage.resetsAt,
       creditsRemaining: readUsageNumber(credits?.remaining),
       limitState: resolveLimitState(primaryUsage.usedPercent, secondaryUsage.usedPercent),
-      refreshedAt: new Date().toISOString(),
+      refreshedAt: observedAt.toISOString(),
     };
     return hasUsageFields(snapshot) ? snapshot : undefined;
   } catch {

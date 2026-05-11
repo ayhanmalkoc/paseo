@@ -101,6 +101,13 @@ export interface ProviderAuthUsageSnapshot {
   refreshedAt: string;
 }
 
+export interface ProviderAuthUsageRefreshError {
+  source: "provider-api";
+  code: "auth-invalid" | "provider-unavailable" | "unknown";
+  message: string;
+  occurredAt: string;
+}
+
 export interface ProviderAuthProfile {
   provider: AgentProvider;
   key: string;
@@ -117,6 +124,7 @@ export interface ProviderAuthProfile {
   updatedAt: string;
   lastUsedAt?: string;
   usage?: ProviderAuthUsageSnapshot;
+  usageRefreshError?: ProviderAuthUsageRefreshError;
   providerHomeRef?: ProviderHomeRef;
 }
 

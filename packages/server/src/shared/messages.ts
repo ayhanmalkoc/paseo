@@ -238,6 +238,13 @@ const ProviderAuthUsageSnapshotSchema = z.object({
   refreshedAt: z.string(),
 });
 
+const ProviderAuthUsageRefreshErrorSchema = z.object({
+  source: z.literal("provider-api"),
+  code: z.enum(["auth-invalid", "provider-unavailable", "unknown"]),
+  message: z.string(),
+  occurredAt: z.string(),
+});
+
 const ProviderHomeRefSchema: z.ZodType<ProviderHomeRef> = z.object({
   kind: z.enum(["native-default", "managed-profile"]),
   provider: AgentProviderSchema,
@@ -263,6 +270,7 @@ export const ProviderAuthProfileSchema: z.ZodType<ProviderAuthProfile> = z.objec
   updatedAt: z.string(),
   lastUsedAt: z.string().optional(),
   usage: ProviderAuthUsageSnapshotSchema.optional(),
+  usageRefreshError: ProviderAuthUsageRefreshErrorSchema.optional(),
   providerHomeRef: ProviderHomeRefSchema.optional(),
 });
 

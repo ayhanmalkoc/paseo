@@ -15,6 +15,10 @@ import {
   createNativeDefaultProviderHomeRef,
   normalizeProviderHomeRef,
 } from "./provider-home-ref.js";
+import type {
+  AgentProviderRuntimeSettingsMap,
+  ProviderRuntimeSettings,
+} from "./provider-launch-config.js";
 
 export type ProviderAuthImportSource = "current" | "file";
 
@@ -74,6 +78,7 @@ export interface StoredProviderAuthProfile {
   lastRefresh?: string;
   providerHomePath: string;
   usage?: ProviderAuthUsageSnapshot;
+  usageRefreshError?: ProviderAuthProfile["usageRefreshError"];
   metadata?: Record<string, unknown>;
 }
 
@@ -81,6 +86,7 @@ export interface ProviderAuthAdapterContext {
   providerBaseDir: string;
   now: () => Date;
   logger: Logger;
+  runtimeSettings?: ProviderRuntimeSettings;
 }
 
 export interface ProviderAuthAdapter {
@@ -121,6 +127,7 @@ export class ProviderAuthService {
   private readonly registryPath: string;
   private readonly baseDir: string;
   private readonly adapters: Map<AgentProvider, ProviderAuthAdapter>;
+  private readonly runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private registry: StoredProviderAuthRegistry | null = null;
   private loadPromise: Promise<StoredProviderAuthRegistry> | null = null;
   private pendingWrite: Promise<void> = Promise.resolve();
@@ -129,6 +136,7 @@ export class ProviderAuthService {
     paseoHome: string;
     logger: Logger;
     adapters: ProviderAuthAdapter[];
+    runtimeSettings?: AgentProviderRuntimeSettingsMap;
     now?: () => Date;
   }) {
     this.baseDir = path.join(options.paseoHome, "provider-auth");
@@ -136,6 +144,7 @@ export class ProviderAuthService {
     this.logger = options.logger.child({ module: "provider-auth" });
     this.now = options.now ?? (() => new Date());
     this.adapters = new Map(options.adapters.map((adapter) => [adapter.provider, adapter]));
+    this.runtimeSettings = options.runtimeSettings;
   }
 
   private readonly logger: Logger;
@@ -404,15 +413,18 @@ export class ProviderAuthService {
       updatedAt: profile.updatedAt,
       lastUsedAt: profile.lastUsedAt,
       usage: profile.usage,
+      usageRefreshError: profile.usageRefreshError,
       providerHomeRef,
     };
   }
 
   private createAdapterContext(provider: AgentProvider): ProviderAuthAdapterContext {
+    const runtimeSettings = this.runtimeSettings?.[provider];
     return {
       providerBaseDir: path.join(this.baseDir, provider),
       now: this.now,
       logger: this.logger.child({ provider }),
+      ...(runtimeSettings ? { runtimeSettings } : {}),
     };
   }
 
@@ -621,6 +633,7 @@ function toComparableProfile(profile: StoredProviderAuthProfile) {
     lastRefresh: profile.lastRefresh,
     providerHomePath: profile.providerHomePath,
     usage: profile.usage ? toComparableUsage(profile.usage) : undefined,
+    usageRefreshError: profile.usageRefreshError,
     metadata: profile.metadata,
   };
 }

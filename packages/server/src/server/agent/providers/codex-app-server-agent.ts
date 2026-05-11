@@ -61,6 +61,7 @@ import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
 import { CodexAppServerJsonRpcClient } from "./codex-app-server-json-rpc.js";
+import { buildCodexAppServerInitializeParams } from "./codex-app-server-protocol.js";
 import {
   renderProviderImageOutputAsAssistantMarkdown,
   type ProviderImageOutput,
@@ -2918,22 +2919,6 @@ function buildCodexAppServerEnv(
     runtimeSettings,
     overlays: [launchEnv],
   });
-}
-
-function buildCodexAppServerInitializeParams(): {
-  clientInfo: { name: string; title: string; version: string };
-  capabilities: { experimentalApi: true };
-} {
-  return {
-    clientInfo: {
-      name: "paseo",
-      title: "Paseo",
-      version: "0.0.0",
-    },
-    capabilities: {
-      experimentalApi: true,
-    },
-  };
 }
 
 interface CodexSubAgentCallState {

@@ -60,6 +60,14 @@ describe("parseCodexAuthJson", () => {
 });
 
 describe("CodexProviderAuthAdapter", () => {
+  function createContext(providerBaseDir: string) {
+    return {
+      providerBaseDir,
+      now: () => new Date("2026-05-06T12:00:00.000Z"),
+      logger: createTestLogger(),
+    };
+  }
+
   it("imports auth into an isolated Codex home", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-"));
     try {
@@ -74,11 +82,10 @@ describe("CodexProviderAuthAdapter", () => {
       await fs.writeFile(path.join(sourceHome, "config.toml"), 'model = "gpt-5.4"\n', "utf8");
 
       const adapter = new CodexProviderAuthAdapter();
-      const profile = await adapter.importAuthFile(path.join(sourceHome, "auth.json"), {
-        providerBaseDir,
-        now: () => new Date("2026-05-06T12:00:00.000Z"),
-        logger: createTestLogger(),
-      });
+      const profile = await adapter.importAuthFile(
+        path.join(sourceHome, "auth.json"),
+        createContext(providerBaseDir),
+      );
 
       expect(profile.providerHomePath).toContain(path.join("profiles", profile.key, "codex-home"));
       await expect(
@@ -122,12 +129,11 @@ describe("CodexProviderAuthAdapter", () => {
         "utf8",
       );
 
-      const adapter = new CodexProviderAuthAdapter();
-      const profile = await adapter.importAuthFile(path.join(sourceHome, "auth.json"), {
-        providerBaseDir,
-        now: () => new Date("2026-05-06T12:00:00.000Z"),
-        logger: createTestLogger(),
-      });
+      const adapter = new CodexProviderAuthAdapter({ usageReader: async () => undefined });
+      const profile = await adapter.importAuthFile(
+        path.join(sourceHome, "auth.json"),
+        createContext(providerBaseDir),
+      );
       const rolloutPath = path.join(
         profile.providerHomePath,
         "sessions",
@@ -160,8 +166,10 @@ describe("CodexProviderAuthAdapter", () => {
         })}\n`,
         "utf8",
       );
+      const observedAt = new Date("2026-05-11T13:45:00.000Z");
+      await fs.utimes(rolloutPath, observedAt, observedAt);
 
-      const refreshed = await adapter.refreshProfile(profile);
+      const refreshed = await adapter.refreshProfile(profile, createContext(providerBaseDir));
 
       expect(refreshed.usage).toMatchObject({
         source: "local-rollout",
@@ -173,6 +181,7 @@ describe("CodexProviderAuthAdapter", () => {
         secondaryResetsAt: new Date(1_778_942_355 * 1000).toISOString(),
         creditsRemaining: 12,
         limitState: "near-limit",
+        refreshedAt: "2026-05-11T13:45:00.000Z",
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -191,12 +200,11 @@ describe("CodexProviderAuthAdapter", () => {
         "utf8",
       );
 
-      const adapter = new CodexProviderAuthAdapter();
-      const profile = await adapter.importAuthFile(path.join(sourceHome, "auth.json"), {
-        providerBaseDir,
-        now: () => new Date("2026-05-06T12:00:00.000Z"),
-        logger: createTestLogger(),
-      });
+      const adapter = new CodexProviderAuthAdapter({ usageReader: async () => undefined });
+      const profile = await adapter.importAuthFile(
+        path.join(sourceHome, "auth.json"),
+        createContext(providerBaseDir),
+      );
       const rolloutPath = path.join(profile.providerHomePath, "sessions", "rollout.jsonl");
       await fs.mkdir(path.dirname(rolloutPath), { recursive: true });
       await fs.writeFile(
@@ -215,7 +223,7 @@ describe("CodexProviderAuthAdapter", () => {
         "utf8",
       );
 
-      const refreshed = await adapter.refreshProfile(profile);
+      const refreshed = await adapter.refreshProfile(profile, createContext(providerBaseDir));
 
       expect(refreshed.usage).toMatchObject({
         source: "local-rollout",
@@ -223,6 +231,101 @@ describe("CodexProviderAuthAdapter", () => {
         primaryWindowMinutes: 300,
         primaryResetsAt: "2026-05-11T00:21:00.000Z",
         limitState: "limited",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers live Codex app-server usage on manual refresh", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-"));
+    try {
+      const sourceHome = path.join(root, "source-codex");
+      const providerBaseDir = path.join(root, "provider-auth", "codex");
+      await fs.mkdir(sourceHome, { recursive: true });
+      await fs.writeFile(
+        path.join(sourceHome, "auth.json"),
+        JSON.stringify({ OPENAI_API_KEY: "sk-test-secret" }),
+        "utf8",
+      );
+
+      let requestedCodexHome: string | undefined;
+      const adapter = new CodexProviderAuthAdapter({
+        usageReader: async (options) => {
+          requestedCodexHome = options.codexHome;
+          return {
+            source: "provider-api",
+            primaryUsedPercent: 12,
+            primaryWindowMinutes: 300,
+            primaryResetsAt: "2026-05-11T12:21:00.000Z",
+            secondaryUsedPercent: 64,
+            secondaryWindowMinutes: 10_080,
+            secondaryResetsAt: "2026-05-14T16:59:00.000Z",
+            limitState: "ok",
+            refreshedAt: options.now().toISOString(),
+          };
+        },
+      });
+      const context = createContext(providerBaseDir);
+      const profile = await adapter.importAuthFile(path.join(sourceHome, "auth.json"), context);
+
+      const refreshed = await adapter.refreshProfile(profile, context);
+
+      expect(requestedCodexHome).toBe(profile.providerHomePath);
+      expect(refreshed.usage).toMatchObject({
+        source: "provider-api",
+        primaryUsedPercent: 12,
+        secondaryUsedPercent: 64,
+        refreshedAt: "2026-05-06T12:00:00.000Z",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("exposes usage refresh errors without clearing previous usage", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-"));
+    try {
+      const sourceHome = path.join(root, "source-codex");
+      const providerBaseDir = path.join(root, "provider-auth", "codex");
+      await fs.mkdir(sourceHome, { recursive: true });
+      await fs.writeFile(
+        path.join(sourceHome, "auth.json"),
+        JSON.stringify({ OPENAI_API_KEY: "sk-test-secret" }),
+        "utf8",
+      );
+
+      const adapter = new CodexProviderAuthAdapter({
+        usageReader: async () => {
+          throw new Error(
+            "failed to fetch codex rate limits: GET https://chatgpt.com/backend-api/wham/usage failed: 401 Unauthorized; token invalidated",
+          );
+        },
+      });
+      const context = createContext(providerBaseDir);
+      const profile = await adapter.importAuthFile(path.join(sourceHome, "auth.json"), context);
+      const refreshed = await adapter.refreshProfile(
+        {
+          ...profile,
+          usage: {
+            source: "provider-api",
+            primaryUsedPercent: 10,
+            refreshedAt: "2026-05-06T11:00:00.000Z",
+          },
+        },
+        context,
+      );
+
+      expect(refreshed.usage).toMatchObject({
+        source: "provider-api",
+        primaryUsedPercent: 10,
+        refreshedAt: "2026-05-06T11:00:00.000Z",
+      });
+      expect(refreshed.usageRefreshError).toMatchObject({
+        source: "provider-api",
+        code: "auth-invalid",
+        message: "Codex account needs sign-in again.",
+        occurredAt: "2026-05-06T12:00:00.000Z",
       });
     } finally {
       rmSync(root, { recursive: true, force: true });

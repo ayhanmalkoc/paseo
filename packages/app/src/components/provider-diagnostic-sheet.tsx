@@ -1,5 +1,5 @@
 import { AlertCircle, Check, RotateCw, Search, Trash2 } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -219,6 +219,42 @@ function formatAuthProfileSubtitle(profile: ProviderAuthProfile): string {
   return parts.join(" · ");
 }
 
+function formatAuthProfileTimeline(profile: ProviderAuthProfile): string {
+  const parts = [
+    formatTimestampLabel("Last used", profile.lastUsedAt),
+    formatTimestampLabel("Usage updated", profile.usage?.refreshedAt),
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function formatTimestampLabel(label: string, value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return null;
+  }
+  return `${label} ${formatTimeAgo(date)}`;
+}
+
+function shouldAutoRefreshUsage(profile: ProviderAuthProfile): boolean {
+  if (profile.status !== "ready") {
+    return false;
+  }
+  if (!profile.usage) {
+    return true;
+  }
+  if (profile.usage.source !== "provider-api") {
+    return true;
+  }
+  const refreshedAt = Date.parse(profile.usage.refreshedAt);
+  if (!Number.isFinite(refreshedAt)) {
+    return true;
+  }
+  return Date.now() - refreshedAt > AUTO_USAGE_REFRESH_MAX_AGE_MS;
+}
+
 function AuthProfileRow(props: {
   profile: ProviderAuthProfile;
   busy: boolean;
@@ -236,8 +272,10 @@ function AuthProfileRow(props: {
   const handleRemove = useCallback(() => onRemove(profile.key), [onRemove, profile.key]);
   const title = profile.alias || profile.email || "Account";
   const subtitle = formatAuthProfileSubtitle(profile);
+  const timeline = formatAuthProfileTimeline(profile);
   const usageSummary = formatProviderAuthUsageSummary(profile.usage);
   const usageWarning = formatProviderAuthUsageWarning(profile.usage);
+  const usageRefreshError = formatUsageRefreshError(profile.usageRefreshError);
 
   return (
     <View style={profile.isDefault ? AUTH_PROFILE_DEFAULT_ROW_STYLE : AUTH_PROFILE_ROW_STYLE}>
@@ -264,6 +302,10 @@ function AuthProfileRow(props: {
             {usageSummary}
           </Text>
         ) : null}
+        {usageRefreshError ? (
+          <Text style={sheetStyles.usageErrorText}>{usageRefreshError}</Text>
+        ) : null}
+        {timeline ? <Text style={sheetStyles.profileTimelineText}>{timeline}</Text> : null}
       </View>
       <View style={sheetStyles.profileActions}>
         {!profile.isDefault ? (
@@ -308,8 +350,25 @@ function AuthProfileRow(props: {
   );
 }
 
-function ProviderAuthProfilesSection(props: { provider: string; serverId: string }) {
-  const { provider, serverId } = props;
+function formatUsageRefreshError(error: ProviderAuthProfile["usageRefreshError"]): string | null {
+  if (!error) {
+    return null;
+  }
+  const occurredAt = Date.parse(error.occurredAt);
+  const suffix = Number.isFinite(occurredAt) ? ` ${formatTimeAgo(new Date(occurredAt))}` : "";
+  if (error.code === "auth-invalid") {
+    return `Usage refresh failed${suffix}: sign in again.`;
+  }
+  return `Usage refresh failed${suffix}: ${error.message}`;
+}
+
+function ProviderAuthProfilesSection(props: {
+  provider: string;
+  serverId: string;
+  visible: boolean;
+  refreshNonce: number;
+}) {
+  const { provider, serverId, visible, refreshNonce } = props;
   const {
     profiles = [],
     isLoading,
@@ -322,6 +381,9 @@ function ProviderAuthProfilesSection(props: { provider: string; serverId: string
   } = useProviderAuthProfiles(serverId, provider as AgentProvider);
   const [error, setError] = useState<string | null>(null);
   const [loginSessionId, setLoginSessionId] = useState<string | null>(null);
+  const autoRefreshedKeysRef = useRef<Set<string>>(new Set());
+  const autoRefreshInFlightRef = useRef(false);
+  const lastForcedRefreshNonceRef = useRef(0);
   const accountLogin = useAccountLogin(serverId, provider as AgentProvider);
   const loginSession = useMemo(
     () => accountLogin.sessions.find((session) => session.id === loginSessionId) ?? null,
@@ -373,6 +435,69 @@ function ProviderAuthProfilesSection(props: { provider: string; serverId: string
     },
     [remove, runAuthAction],
   );
+
+  const refreshProfiles = useCallback(
+    async (
+      profilesToRefresh: ReadonlyArray<ProviderAuthProfile>,
+      options: { automatic: boolean },
+    ) => {
+      const failures: string[] = [];
+      for (const profile of profilesToRefresh) {
+        try {
+          await refreshProfile(profile.key);
+        } catch (err) {
+          if (options.automatic) {
+            autoRefreshedKeysRef.current.delete(profile.key);
+            continue;
+          }
+          failures.push(err instanceof Error ? err.message : profile.alias);
+        }
+      }
+      if (failures.length > 0) {
+        throw new Error(failures[0] ?? "Account refresh failed");
+      }
+    },
+    [refreshProfile],
+  );
+
+  useEffect(() => {
+    if (!visible) {
+      autoRefreshedKeysRef.current.clear();
+      autoRefreshInFlightRef.current = false;
+      return;
+    }
+    if (autoRefreshInFlightRef.current || isLoading || isRefreshing || profiles.length === 0) {
+      return;
+    }
+    const staleProfiles = profiles.filter(
+      (profile) =>
+        shouldAutoRefreshUsage(profile) && !autoRefreshedKeysRef.current.has(profile.key),
+    );
+    if (staleProfiles.length === 0) {
+      return;
+    }
+    autoRefreshInFlightRef.current = true;
+    for (const profile of staleProfiles) {
+      autoRefreshedKeysRef.current.add(profile.key);
+    }
+    void refreshProfiles(staleProfiles, { automatic: true }).finally(() => {
+      autoRefreshInFlightRef.current = false;
+    });
+  }, [isLoading, isRefreshing, profiles, refreshProfiles, visible]);
+
+  useEffect(() => {
+    if (
+      !visible ||
+      refreshNonce === 0 ||
+      refreshNonce === lastForcedRefreshNonceRef.current ||
+      isLoading ||
+      profiles.length === 0
+    ) {
+      return;
+    }
+    lastForcedRefreshNonceRef.current = refreshNonce;
+    void runAuthAction(() => refreshProfiles(profiles, { automatic: false }));
+  }, [isLoading, profiles, refreshNonce, refreshProfiles, runAuthAction, visible]);
   const importCurrentAction = useMemo(
     () => (
       <View style={sheetStyles.trailingActions}>
@@ -604,6 +729,7 @@ export function ProviderDiagnosticSheet({
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  const [accountRefreshNonce, setAccountRefreshNonce] = useState(0);
 
   const providerLabel = resolveProviderLabel(provider, snapshotEntries);
   const providerEntry = useMemo(
@@ -667,6 +793,7 @@ export function ProviderDiagnosticSheet({
     if (!provider) {
       return;
     }
+    setAccountRefreshNonce((value) => value + 1);
     void Promise.all([refresh([provider]), fetchDiagnostic()]).catch((err) => {
       setDiagnostic(err instanceof Error ? err.message : "Failed to refresh provider");
     });
@@ -784,7 +911,12 @@ export function ProviderDiagnosticSheet({
 
       <CustomModelsSection provider={provider} serverId={serverId} refresh={refresh} />
 
-      <ProviderAuthProfilesSection provider={provider} serverId={serverId} />
+      <ProviderAuthProfilesSection
+        provider={provider}
+        serverId={serverId}
+        visible={visible}
+        refreshNonce={accountRefreshNonce}
+      />
 
       <View>
         <View style={sheetStyles.modelsHeader}>
@@ -840,6 +972,17 @@ const sheetStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.destructive,
     lineHeight: theme.fontSize.sm * 1.35,
+    marginTop: theme.spacing[1],
+  },
+  usageErrorText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.destructive,
+    lineHeight: theme.fontSize.xs * 1.35,
+    marginTop: theme.spacing[1],
+  },
+  profileTimelineText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[1],
   },
   errorText: {
@@ -992,6 +1135,7 @@ const sheetStyles = StyleSheet.create((theme) => ({
 
 const DIAGNOSTIC_SHEET_SNAP_POINTS = ["50%", "85%"];
 const ACCOUNT_LOGIN_SNAP_POINTS = ["45%", "70%"];
+const AUTO_USAGE_REFRESH_MAX_AGE_MS = 5 * 60_000;
 const EMPTY_PROVIDER_MODELS: AgentModelDefinition[] = [];
 const DIAGNOSTIC_SEARCH_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
 const DIAGNOSTIC_INLINE_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];

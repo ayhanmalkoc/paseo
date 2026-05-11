@@ -464,6 +464,7 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     logger,
     adapters: [new CodexProviderAuthAdapter()],
+    ...(config.agentProviderSettings ? { runtimeSettings: config.agentProviderSettings } : {}),
   });
   const runtimeProfileService = new RuntimeProfileService({
     paseoHome: config.paseoHome,
