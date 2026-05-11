@@ -186,8 +186,8 @@ export function RuntimeProfilesSection({ serverId }: { serverId: string }) {
         {!runtimeProfiles.isLoading && runtimeProfiles.profiles.length === 0 ? (
           <View style={styles.emptyRow}>
             <Text style={styles.mutedText}>
-              No profiles yet. Create one to bind provider, account, model, tools, and runtime
-              defaults.
+              No runtime profiles yet. Create one to save a provider, account, model, and runtime
+              preset.
             </Text>
           </View>
         ) : null}
@@ -448,12 +448,13 @@ function RuntimeProfileEditorSheet({
             disabled={saving || providerOptions.length === 0}
           />
           <SelectField
-            label="Account"
+            label="Account for this profile"
             value={resolveOptionLabel(accountOptions, draft.accountKey)}
             options={accountOptions}
             selectedId={draft.accountKey}
             onSelect={(value) => setField("accountKey", value)}
             disabled={saving || authProfiles.isLoading}
+            hint="Default/native account follows the provider account that is active at launch time."
           />
         </View>
       </SettingsSection>
@@ -547,6 +548,7 @@ function RuntimeProfileEditorSheet({
             editable={!saving}
             multiline
             monospace
+            hint="Applied to the provider process. CODEX_HOME and PASEO_AGENT_ID are reserved."
           />
           <LabeledInput
             label="MCP servers JSON"
@@ -556,6 +558,7 @@ function RuntimeProfileEditorSheet({
             editable={!saving}
             multiline
             monospace
+            hint="Canonical MCP server map. Supports stdio, http, and sse entries."
           />
         </View>
       </SettingsSection>
@@ -598,6 +601,7 @@ function LabeledInput({
   editable,
   multiline,
   monospace,
+  hint,
 }: {
   label: string;
   value: string;
@@ -606,6 +610,7 @@ function LabeledInput({
   editable: boolean;
   multiline?: boolean;
   monospace?: boolean;
+  hint?: string;
 }) {
   const { theme } = useUnistyles();
   const inputStyle = useMemo(
@@ -631,6 +636,7 @@ function LabeledInput({
         multiline={multiline}
         style={inputStyle}
       />
+      {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
     </View>
   );
 }
@@ -863,8 +869,8 @@ function buildAccountOptions(accounts: ProviderAuthProfile[]): SelectOption[] {
   return [
     {
       id: "",
-      label: "Provider default",
-      description: "Use the provider's current/default account",
+      label: "Default/native account",
+      description: "Use the provider's native or default account at launch time",
     },
     ...accounts.map((account) => ({
       id: account.key,
@@ -981,7 +987,12 @@ function parseObjectJson(label: string, value: string): Record<string, unknown> 
   if (!trimmed) {
     return {};
   }
-  const parsed = JSON.parse(trimmed) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed) as unknown;
+  } catch {
+    throw new Error(`${label} must be valid JSON`);
+  }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error(`${label} must be a JSON object`);
   }

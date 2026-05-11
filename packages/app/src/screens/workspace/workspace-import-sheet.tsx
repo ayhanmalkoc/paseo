@@ -237,7 +237,9 @@ function SheetStatusMessages({
         </Text>
       ) : null}
       {importErrored ? (
-        <Text style={styles.statusText}>Could not import selected session.</Text>
+        <Text style={styles.statusText}>
+          Could not import the selected session. Try another account or source session.
+        </Text>
       ) : null}
       {showEmptyState ? (
         <Text style={styles.statusText}>
@@ -668,7 +670,7 @@ export function WorkspaceImportSheet({
         <View style={styles.accountSection}>
           <Text style={styles.accountLabel}>Continue with account</Text>
           <Text style={styles.accountHint}>
-            Source account resumes the session from the native account that created it.
+            Source account keeps the native provider session in the account that created it.
           </Text>
           <ExplicitAccountImportHint hint={explicitAccountImportHint} />
           <ScrollView
