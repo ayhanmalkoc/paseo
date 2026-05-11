@@ -16,7 +16,7 @@ describe("provider auth usage formatting", () => {
         secondaryWindowMinutes: 10_080,
         refreshedAt: "2026-05-11T00:00:00.000Z",
       }),
-    ).toBe("76% 5h / 56% weekly");
+    ).toBe("24% 5h left / 44% weekly left");
   });
 
   it("surfaces near-limit state with the dominant window", () => {
@@ -30,7 +30,7 @@ describe("provider auth usage formatting", () => {
         limitState: "near-limit",
         refreshedAt: "2026-05-11T00:00:00.000Z",
       }),
-    ).toBe("Near limit: 94% weekly");
+    ).toBe("Near limit: 6% weekly left");
   });
 
   it("returns a warning only when the account is constrained", () => {
@@ -42,7 +42,7 @@ describe("provider auth usage formatting", () => {
         limitState: "limited",
         refreshedAt: "2026-05-11T00:00:00.000Z",
       }),
-    ).toBe("This account appears to be at its usage limit");
+    ).toBe("This account appears to be at its usage limit: 0% 5h left");
 
     expect(
       formatProviderAuthUsageWarning({

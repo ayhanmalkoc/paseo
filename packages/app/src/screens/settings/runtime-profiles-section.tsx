@@ -456,6 +456,7 @@ function RuntimeProfileEditorSheet({
             onSelect={(value) => setField("accountKey", value)}
             disabled={saving || authProfiles.isLoading}
             hint="Default/native account follows the provider account that is active at launch time."
+            showSelectedDescription
           />
         </View>
       </SettingsSection>
@@ -650,6 +651,7 @@ function SelectField({
   onSelect,
   disabled,
   hint,
+  showSelectedDescription = false,
 }: {
   label: string;
   value: string;
@@ -658,8 +660,12 @@ function SelectField({
   onSelect: (id: string) => void;
   disabled: boolean;
   hint?: string;
+  showSelectedDescription?: boolean;
 }) {
   const { theme } = useUnistyles();
+  const selectedDescription = showSelectedDescription
+    ? options.find((option) => option.id === selectedId)?.description
+    : null;
   const triggerStyle = useCallback(
     ({
       pressed,
@@ -700,6 +706,9 @@ function SelectField({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+      {selectedDescription ? (
+        <Text style={styles.selectedDescription}>{selectedDescription}</Text>
+      ) : null}
       {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
     </View>
   );
@@ -877,9 +886,9 @@ function buildAccountOptions(accounts: ProviderAuthProfile[]): SelectOption[] {
       id: account.key,
       label: account.alias || account.email || account.accountName || account.key,
       description: [
+        formatProviderAuthUsageSummary(account.usage),
         account.email,
         account.plan,
-        formatProviderAuthUsageSummary(account.usage),
         account.status !== "ready" ? account.status : null,
       ]
         .filter(Boolean)
@@ -1112,6 +1121,11 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     flex: 1,
     fontSize: theme.fontSize.sm,
+  },
+  selectedDescription: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.35,
   },
   disabled: {
     opacity: theme.opacity[50],

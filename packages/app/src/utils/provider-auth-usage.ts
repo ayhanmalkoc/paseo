@@ -40,8 +40,11 @@ export function formatProviderAuthUsageWarning(
     limitState === "limited"
       ? "This account appears to be at its usage limit"
       : "This account is near its usage limit";
+  const summary = formatProviderAuthUsageSummary(usage)?.replace(/^(Limited|Near limit):\s*/, "");
   const resetTime = formatDominantResetTime(usage);
-  return resetTime ? `${base}; resets around ${resetTime}` : base;
+  return [summary ? `${base}: ${summary}` : base, resetTime ? `resets around ${resetTime}` : null]
+    .filter(Boolean)
+    .join("; ");
 }
 
 function inferLimitState(usage: ProviderAuthUsageSnapshot): ProviderAuthLimitState | undefined {
@@ -126,8 +129,11 @@ function formatUsageWindow(
   if (typeof usedPercent !== "number") {
     return null;
   }
+  const remainingPercent = Math.max(0, 100 - usedPercent);
   const windowLabel = formatWindowMinutes(windowMinutes);
-  return windowLabel ? `${formatPercent(usedPercent)} ${windowLabel}` : formatPercent(usedPercent);
+  return windowLabel
+    ? `${formatPercent(remainingPercent)} ${windowLabel} left`
+    : `${formatPercent(remainingPercent)} left`;
 }
 
 function formatWindowMinutes(windowMinutes: number | undefined): string | null {

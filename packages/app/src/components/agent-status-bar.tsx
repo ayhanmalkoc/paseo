@@ -80,7 +80,10 @@ import { isWeb as platformIsWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { buildSettingsHostRoute } from "@/utils/host-routes";
-import { formatProviderAuthUsageWarning } from "@/utils/provider-auth-usage";
+import {
+  formatProviderAuthUsageSummary,
+  formatProviderAuthUsageWarning,
+} from "@/utils/provider-auth-usage";
 
 interface StatusOption {
   id: string;
@@ -91,6 +94,7 @@ interface PendingAuthProfileRestart {
   key: string | null;
   label: string;
   sessionBehavior: RuntimeProfileSessionBehavior;
+  usageSummary?: string | null;
   usageWarning?: string | null;
 }
 
@@ -2079,15 +2083,30 @@ function RuntimeProfileDetailsSection({
 }) {
   const { theme } = useUnistyles();
   const isStale = launchedVersion !== undefined && launchedVersion < profile.version;
+  const selectedAuthProfile = profile.accountKey
+    ? authProfiles.find((candidate) => candidate.key === profile.accountKey)
+    : null;
+  const usageSummary = formatProviderAuthUsageSummary(selectedAuthProfile?.usage);
+  const usageWarning = formatProviderAuthUsageWarning(selectedAuthProfile?.usage);
+  const usageRow = usageSummary
+    ? {
+        label: "Usage",
+        value: usageWarning ?? usageSummary,
+        warning: Boolean(usageWarning),
+      }
+    : null;
   const featureValues = profile.featureValues ?? {};
-  const featureRows = Object.entries(featureValues).map(([featureId, value]) => {
-    const featureLabel = features?.find((feature) => feature.id === featureId)?.label ?? featureId;
-    return {
-      label: featureLabel,
-      value: formatRuntimeProfileValue(value),
-    };
-  });
-  const rows = [
+  const featureRows: ProfileDetailsRow[] = Object.entries(featureValues).map(
+    ([featureId, value]) => {
+      const featureLabel =
+        features?.find((feature) => feature.id === featureId)?.label ?? featureId;
+      return {
+        label: featureLabel,
+        value: formatRuntimeProfileValue(value),
+      };
+    },
+  );
+  const rows: ProfileDetailsRow[] = [
     {
       label: "Provider",
       value: resolveProviderLabelFromDefinitions(profile.provider, providerDefinitions),
@@ -2096,6 +2115,7 @@ function RuntimeProfileDetailsSection({
       label: "Account",
       value: resolveAuthProfileDisplayByKey(authProfiles, profile.accountKey),
     },
+    ...(usageRow ? [usageRow] : []),
     {
       label: "Model",
       value: formatRuntimeProfileValue(profile.model),
@@ -2148,7 +2168,10 @@ function RuntimeProfileDetailsSection({
       {rows.map((row) => (
         <View key={row.label} style={styles.profileDetailsRow}>
           <Text style={styles.profileDetailsLabel}>{row.label}</Text>
-          <Text style={styles.profileDetailsValue} numberOfLines={1}>
+          <Text
+            style={row.warning ? styles.profileDetailsWarningValue : styles.profileDetailsValue}
+            numberOfLines={2}
+          >
             {row.value}
           </Text>
         </View>
@@ -2173,6 +2196,12 @@ function RuntimeProfileDetailsSection({
       ) : null}
     </View>
   );
+}
+
+interface ProfileDetailsRow {
+  label: string;
+  value: string;
+  warning?: boolean;
 }
 
 // eslint-disable-next-line complexity
@@ -2506,6 +2535,7 @@ function useActiveAuthProfileRestartController(options: {
         key: normalizedNextKey,
         label: resolveAuthProfileRestartLabel(authProfiles, normalizedNextKey),
         sessionBehavior: DEFAULT_SESSION_BEHAVIOR,
+        usageSummary: formatProviderAuthUsageSummary(selectedProfile?.usage),
         usageWarning: formatProviderAuthUsageWarning(selectedProfile?.usage),
       });
     },
@@ -2703,6 +2733,12 @@ function AuthProfileRestartConfirmationSheet({
     ],
     [isRestarting],
   );
+  let usageStatus: ReactElement | null = null;
+  if (pending?.usageWarning) {
+    usageStatus = <Text style={styles.restartUsageWarningText}>{pending.usageWarning}</Text>;
+  } else if (pending?.usageSummary) {
+    usageStatus = <Text style={styles.restartUsageText}>{`Usage: ${pending.usageSummary}`}</Text>;
+  }
 
   return (
     <AdaptiveModalSheet
@@ -2719,9 +2755,7 @@ function AuthProfileRestartConfirmationSheet({
             ? `Switch this agent to ${restartTargetLabel} and start a fresh provider session. Any running turn will stop.`
             : `Switch this agent to ${restartTargetLabel} and continue this conversation. Any running turn will stop and Paseo will resume the same provider session when possible.`}
         </Text>
-        {pending?.usageWarning ? (
-          <Text style={styles.restartWarningText}>{pending.usageWarning}</Text>
-        ) : null}
+        {usageStatus}
         <View style={styles.restartConfirmActions}>
           <Pressable
             accessibilityRole="button"
@@ -3414,6 +3448,14 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
     textAlign: "right",
   },
+  profileDetailsWarningValue: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    textAlign: "right",
+  },
   profileUpdateCallout: {
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
@@ -3468,6 +3510,16 @@ const styles = StyleSheet.create((theme) => ({
   },
   restartWarningText: {
     color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
+  },
+  restartUsageText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
+  },
+  restartUsageWarningText: {
+    color: theme.colors.destructive,
     fontSize: theme.fontSize.sm,
     lineHeight: theme.fontSize.sm * 1.4,
   },

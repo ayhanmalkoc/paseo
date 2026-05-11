@@ -17,7 +17,10 @@ import { formatTimeAgo } from "@/utils/time";
 import { isWeb } from "@/constants/platform";
 import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { formatProviderAuthUsageWarning } from "@/utils/provider-auth-usage";
+import {
+  formatProviderAuthUsageSummary,
+  formatProviderAuthUsageWarning,
+} from "@/utils/provider-auth-usage";
 
 const IMPORTABLE_PROVIDER_IDS: Set<string> = new Set(IMPORTABLE_PROVIDERS);
 const PER_PROVIDER_LIMIT = 15;
@@ -346,6 +349,24 @@ function ExplicitAccountImportHint({ hint }: { hint: string | null }) {
   return <Text style={styles.accountHint}>{hint}</Text>;
 }
 
+function SelectedAccountUsageStatus({ profile }: { profile: ProviderAuthProfile | null }) {
+  if (!profile) {
+    return null;
+  }
+  const usageSummary = formatProviderAuthUsageSummary(profile.usage);
+  if (!usageSummary) {
+    return null;
+  }
+  const label = formatAuthProfileLabel(profile);
+  const usageWarning = formatProviderAuthUsageWarning(profile.usage);
+  return (
+    <>
+      <Text style={styles.accountUsage}>{`Selected: ${label} · ${usageSummary}`}</Text>
+      {usageWarning ? <Text style={styles.accountWarning}>{usageWarning}</Text> : null}
+    </>
+  );
+}
+
 function findSelectedAccountProfile(input: {
   provider: string | null;
   selectedAccountValue: string;
@@ -584,7 +605,6 @@ export function WorkspaceImportSheet({
       }),
     [accountSelectorProvider, authProfilesByProvider, selectedAccountValue],
   );
-  const selectedAccountUsageWarning = formatProviderAuthUsageWarning(selectedAccountProfile?.usage);
   const showAccountSelector = shouldShowAccountSelector({
     isSupported: providerAuthProfiles.isSupported,
     accountSelectorProvider,
@@ -698,9 +718,6 @@ export function WorkspaceImportSheet({
             Source account keeps the native provider session in the account that created it.
           </Text>
           <ExplicitAccountImportHint hint={explicitAccountImportHint} />
-          {selectedAccountUsageWarning ? (
-            <Text style={styles.accountWarning}>{selectedAccountUsageWarning}</Text>
-          ) : null}
           <ScrollView
             horizontal
             style={styles.horizontalScroller}
@@ -716,6 +733,7 @@ export function WorkspaceImportSheet({
               onValueChange={handleAccountSelect}
             />
           </ScrollView>
+          <SelectedAccountUsageStatus profile={selectedAccountProfile} />
         </View>
       ) : null}
       <SheetStatusMessages
@@ -777,10 +795,15 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     lineHeight: 16,
   },
+  accountUsage: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.35,
+  },
   accountWarning: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: 16,
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.35,
   },
   accountOptionsRow: {
     flexDirection: "row",

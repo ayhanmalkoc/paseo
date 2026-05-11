@@ -622,7 +622,12 @@ describe("WorkspaceImportSheet", () => {
         "This Codex session will be copied into the selected account before opening.",
       ),
     ).toBeTruthy();
-    expect(await screen.findByText("This account is near its usage limit")).toBeTruthy();
+    expect(
+      await screen.findByText("Selected: personal-codex@example.com · Near limit: 6% 5h left"),
+    ).toBeTruthy();
+    expect(
+      await screen.findByText("This account is near its usage limit: 6% 5h left"),
+    ).toBeTruthy();
   });
 
   it("uses the native source account instead of the saved provider default", async () => {

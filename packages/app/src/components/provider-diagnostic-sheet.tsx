@@ -23,7 +23,10 @@ import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
-import { formatProviderAuthUsageSummary } from "@/utils/provider-auth-usage";
+import {
+  formatProviderAuthUsageSummary,
+  formatProviderAuthUsageWarning,
+} from "@/utils/provider-auth-usage";
 import { formatTimeAgo } from "@/utils/time";
 import type {
   AgentModelDefinition,
@@ -210,7 +213,6 @@ function formatAuthProfileSubtitle(profile: ProviderAuthProfile): string {
   const parts = [
     profile.email,
     profile.plan,
-    formatProviderAuthUsageSummary(profile.usage),
     profile.authMode === "api-key" ? "API key" : profile.authMode,
     profile.status !== "ready" ? profile.status : null,
   ].filter(Boolean);
@@ -233,6 +235,8 @@ function AuthProfileRow(props: {
   const handleRemove = useCallback(() => onRemove(profile.key), [onRemove, profile.key]);
   const title = profile.alias || profile.email || "Account";
   const subtitle = formatAuthProfileSubtitle(profile);
+  const usageSummary = formatProviderAuthUsageSummary(profile.usage);
+  const usageWarning = formatProviderAuthUsageWarning(profile.usage);
 
   return (
     <View style={MODEL_ROW_STYLE}>
@@ -243,6 +247,14 @@ function AuthProfileRow(props: {
         {subtitle ? (
           <Text style={sheetStyles.monoHint} numberOfLines={1}>
             {subtitle}
+          </Text>
+        ) : null}
+        {usageSummary ? (
+          <Text
+            style={usageWarning ? sheetStyles.usageWarningText : sheetStyles.usageText}
+            numberOfLines={2}
+          >
+            {usageWarning ?? `Usage: ${usageSummary}`}
           </Text>
         ) : null}
       </View>
@@ -803,6 +815,18 @@ const sheetStyles = StyleSheet.create((theme) => ({
     fontFamily: Fonts.mono,
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
+    marginTop: theme.spacing[1],
+  },
+  usageText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foreground,
+    lineHeight: theme.fontSize.sm * 1.35,
+    marginTop: theme.spacing[1],
+  },
+  usageWarningText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.destructive,
+    lineHeight: theme.fontSize.sm * 1.35,
     marginTop: theme.spacing[1],
   },
   errorText: {
