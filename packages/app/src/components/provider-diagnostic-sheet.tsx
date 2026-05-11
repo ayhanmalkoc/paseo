@@ -1,4 +1,4 @@
-import { AlertCircle, RotateCw, Search, Trash2 } from "lucide-react-native";
+import { AlertCircle, Check, RotateCw, Search, Trash2 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -226,6 +226,7 @@ function AuthProfileRow(props: {
   onSetDefault: (profileKey: string) => void;
   onRemove: (profileKey: string) => void;
 }) {
+  const { theme } = useUnistyles();
   const { profile, busy, onRefresh, onSetDefault, onRemove } = props;
   const handleRefresh = useCallback(() => onRefresh(profile.key), [onRefresh, profile.key]);
   const handleSetDefault = useCallback(
@@ -239,22 +240,28 @@ function AuthProfileRow(props: {
   const usageWarning = formatProviderAuthUsageWarning(profile.usage);
 
   return (
-    <View style={MODEL_ROW_STYLE}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-          {title}
-        </Text>
+    <View style={profile.isDefault ? AUTH_PROFILE_DEFAULT_ROW_STYLE : AUTH_PROFILE_ROW_STYLE}>
+      <View style={AUTH_PROFILE_CONTENT_STYLE}>
+        <View style={sheetStyles.profileTitleRow}>
+          <Text style={AUTH_PROFILE_TITLE_STYLE}>{title}</Text>
+          {profile.isDefault ? (
+            <View
+              style={sheetStyles.defaultTitleBadge}
+              accessibilityRole="image"
+              accessibilityLabel="Default account"
+            >
+              <Check size={theme.iconSize.sm} color={theme.colors.accent} />
+            </View>
+          ) : null}
+        </View>
         {subtitle ? (
-          <Text style={sheetStyles.monoHint} numberOfLines={1}>
+          <Text style={sheetStyles.monoHint} selectable>
             {subtitle}
           </Text>
         ) : null}
         {usageSummary ? (
-          <Text
-            style={usageWarning ? sheetStyles.usageWarningText : sheetStyles.usageText}
-            numberOfLines={2}
-          >
-            {usageWarning ?? `Usage: ${usageSummary}`}
+          <Text style={usageWarning ? sheetStyles.usageWarningText : sheetStyles.usageText}>
+            {usageSummary}
           </Text>
         ) : null}
       </View>
@@ -263,6 +270,8 @@ function AuthProfileRow(props: {
           <Button
             variant="ghost"
             size="xs"
+            style={sheetStyles.profileActionButton}
+            textStyle={sheetStyles.profileActionButtonText}
             onPress={handleSetDefault}
             disabled={busy}
             accessibilityLabel={`Use ${title} by default`}
@@ -275,6 +284,8 @@ function AuthProfileRow(props: {
         <Button
           variant="ghost"
           size="xs"
+          style={sheetStyles.profileActionButton}
+          textStyle={sheetStyles.profileActionButtonText}
           onPress={handleRefresh}
           disabled={busy}
           accessibilityLabel={`Refresh ${title}`}
@@ -284,6 +295,8 @@ function AuthProfileRow(props: {
         <Button
           variant="ghost"
           size="xs"
+          style={sheetStyles.profileActionButton}
+          textStyle={sheetStyles.profileActionButtonText}
           onPress={handleRemove}
           disabled={busy}
           accessibilityLabel={`Remove ${title}`}
@@ -898,17 +911,56 @@ const sheetStyles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
   },
-  profileActions: {
+  authProfileRow: {
+    alignItems: "flex-start",
+    gap: theme.spacing[3],
+  },
+  defaultAuthProfileRow: {
+    backgroundColor: theme.colors.surface2,
+    borderLeftWidth: 2,
+    borderLeftColor: theme.colors.accent,
+  },
+  profileContent: {
+    minWidth: 0,
+    marginRight: 0,
+  },
+  profileTitleRow: {
     flexDirection: "row",
     alignItems: "center",
     flexWrap: "wrap",
+    gap: theme.spacing[2],
+  },
+  profileTitle: {
+    flexShrink: 1,
+  },
+  defaultTitleBadge: {
+    alignItems: "center",
+    height: 22,
+    justifyContent: "center",
+    width: 22,
+  },
+  profileActions: {
+    flexDirection: "column",
+    alignItems: "stretch",
     gap: theme.spacing[1],
     flexShrink: 0,
+    width: 96,
+  },
+  profileActionButton: {
+    alignSelf: "stretch",
+    justifyContent: "flex-end",
+    minHeight: 24,
+    paddingHorizontal: 0,
+  },
+  profileActionButtonText: {
+    textAlign: "right",
   },
   defaultBadge: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
-    paddingHorizontal: theme.spacing[2],
+    minHeight: 24,
+    paddingHorizontal: 0,
+    textAlign: "right",
   },
   loginSheetContent: {
     gap: theme.spacing[4],
@@ -944,4 +996,17 @@ const EMPTY_PROVIDER_MODELS: AgentModelDefinition[] = [];
 const DIAGNOSTIC_SEARCH_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
 const DIAGNOSTIC_INLINE_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
 const MODEL_ROW_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
+const AUTH_PROFILE_ROW_STYLE = [
+  settingsStyles.row,
+  settingsStyles.rowBorder,
+  sheetStyles.authProfileRow,
+];
+const AUTH_PROFILE_DEFAULT_ROW_STYLE = [
+  settingsStyles.row,
+  settingsStyles.rowBorder,
+  sheetStyles.authProfileRow,
+  sheetStyles.defaultAuthProfileRow,
+];
+const AUTH_PROFILE_CONTENT_STYLE = [settingsStyles.rowContent, sheetStyles.profileContent];
+const AUTH_PROFILE_TITLE_STYLE = [settingsStyles.rowTitle, sheetStyles.profileTitle];
 const INLINE_ROW_STYLE = [settingsStyles.row, sheetStyles.inlineRow];

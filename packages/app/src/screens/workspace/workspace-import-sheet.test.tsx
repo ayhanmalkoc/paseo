@@ -623,7 +623,7 @@ describe("WorkspaceImportSheet", () => {
       ),
     ).toBeTruthy();
     expect(
-      await screen.findByText("Selected: personal-codex@example.com · Near limit: 6% 5h left"),
+      await screen.findByText("Selected: personal-codex@example.com · 6% 5h left"),
     ).toBeTruthy();
     expect(
       await screen.findByText("This account is near its usage limit: 6% 5h left"),

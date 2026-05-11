@@ -9,20 +9,18 @@ export function formatProviderAuthUsageSummary(
   if (!usage) {
     return null;
   }
-  const limitState = usage.limitState ?? inferLimitState(usage);
-  if (limitState === "limited" || limitState === "near-limit") {
-    const dominantUsage = formatDominantUsage(usage);
-    const label = limitState === "limited" ? "Limited" : "Near limit";
-    return dominantUsage ? `${label}: ${dominantUsage}` : label;
-  }
 
   const parts = [
-    formatUsageWindow(usage.primaryUsedPercent, usage.primaryWindowMinutes),
-    formatUsageWindow(usage.secondaryUsedPercent, usage.secondaryWindowMinutes),
+    formatUsageWindow(usage.primaryUsedPercent, usage.primaryWindowMinutes, usage.primaryResetsAt),
+    formatUsageWindow(
+      usage.secondaryUsedPercent,
+      usage.secondaryWindowMinutes,
+      usage.secondaryResetsAt,
+    ),
     formatCredits(usage.creditsRemaining),
   ].filter((part): part is string => Boolean(part));
 
-  return parts.length > 0 ? parts.join(" / ") : null;
+  return parts.length > 0 ? parts.join("\n") : null;
 }
 
 export function formatProviderAuthUsageWarning(
@@ -40,11 +38,8 @@ export function formatProviderAuthUsageWarning(
     limitState === "limited"
       ? "This account appears to be at its usage limit"
       : "This account is near its usage limit";
-  const summary = formatProviderAuthUsageSummary(usage)?.replace(/^(Limited|Near limit):\s*/, "");
-  const resetTime = formatDominantResetTime(usage);
-  return [summary ? `${base}: ${summary}` : base, resetTime ? `resets around ${resetTime}` : null]
-    .filter(Boolean)
-    .join("; ");
+  const summary = formatDominantUsage(usage);
+  return summary ? `${base}: ${summary}` : base;
 }
 
 function inferLimitState(usage: ProviderAuthUsageSnapshot): ProviderAuthLimitState | undefined {
@@ -65,29 +60,20 @@ function inferLimitState(usage: ProviderAuthUsageSnapshot): ProviderAuthLimitSta
 }
 
 function formatDominantUsage(usage: ProviderAuthUsageSnapshot): string | null {
-  const primary = buildUsageEntry(usage.primaryUsedPercent, usage.primaryWindowMinutes);
-  const secondary = buildUsageEntry(usage.secondaryUsedPercent, usage.secondaryWindowMinutes);
+  const primary = buildUsageEntry(
+    usage.primaryUsedPercent,
+    usage.primaryWindowMinutes,
+    usage.primaryResetsAt,
+  );
+  const secondary = buildUsageEntry(
+    usage.secondaryUsedPercent,
+    usage.secondaryWindowMinutes,
+    usage.secondaryResetsAt,
+  );
   const dominant = [primary, secondary]
     .filter((entry): entry is UsageEntry => entry !== null)
     .sort((left, right) => right.percent - left.percent)[0];
   return dominant?.label ?? null;
-}
-
-function formatDominantResetTime(usage: ProviderAuthUsageSnapshot): string | null {
-  const primary = buildResetEntry(
-    usage.primaryUsedPercent,
-    usage.primaryResetsAt,
-    usage.primaryWindowMinutes,
-  );
-  const secondary = buildResetEntry(
-    usage.secondaryUsedPercent,
-    usage.secondaryResetsAt,
-    usage.secondaryWindowMinutes,
-  );
-  const dominant = [primary, secondary]
-    .filter((entry): entry is ResetEntry => entry !== null)
-    .sort((left, right) => right.percent - left.percent)[0];
-  return dominant ? formatTimeOfDay(dominant.resetsAt) : null;
 }
 
 interface UsageEntry {
@@ -95,45 +81,30 @@ interface UsageEntry {
   label: string;
 }
 
-interface ResetEntry {
-  percent: number;
-  resetsAt: string;
-}
-
 function buildUsageEntry(
   usedPercent: number | undefined,
   windowMinutes: number | undefined,
-): UsageEntry | null {
-  const label = formatUsageWindow(usedPercent, windowMinutes);
-  return typeof usedPercent === "number" && label ? { percent: usedPercent, label } : null;
-}
-
-function buildResetEntry(
-  usedPercent: number | undefined,
   resetsAt: string | undefined,
-  windowMinutes: number | undefined,
-): ResetEntry | null {
-  if (!resetsAt) {
-    return null;
-  }
-  return {
-    percent: typeof usedPercent === "number" ? usedPercent : (windowMinutes ?? 0),
-    resetsAt,
-  };
+): UsageEntry | null {
+  const label = formatUsageWindow(usedPercent, windowMinutes, resetsAt);
+  return typeof usedPercent === "number" && label ? { percent: usedPercent, label } : null;
 }
 
 function formatUsageWindow(
   usedPercent: number | undefined,
   windowMinutes: number | undefined,
+  resetsAt: string | undefined,
 ): string | null {
   if (typeof usedPercent !== "number") {
     return null;
   }
   const remainingPercent = Math.max(0, 100 - usedPercent);
   const windowLabel = formatWindowMinutes(windowMinutes);
-  return windowLabel
+  const usageLabel = windowLabel
     ? `${formatPercent(remainingPercent)} ${windowLabel} left`
     : `${formatPercent(remainingPercent)} left`;
+  const resetLabel = formatResetTime(resetsAt, windowMinutes);
+  return resetLabel ? `${usageLabel} · resets ${resetLabel}` : usageLabel;
 }
 
 function formatWindowMinutes(windowMinutes: number | undefined): string | null {
@@ -160,13 +131,29 @@ function formatPercent(value: number): string {
   return Number.isInteger(value) ? `${value}%` : `${value.toFixed(1)}%`;
 }
 
-function formatTimeOfDay(value: string): string | null {
+function formatResetTime(
+  value: string | undefined,
+  windowMinutes: number | undefined,
+): string | null {
+  if (!value) {
+    return null;
+  }
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) {
     return null;
   }
+  if (windowMinutes === 10_080 || (typeof windowMinutes === "number" && windowMinutes > 1440)) {
+    return new Date(timestamp).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
   return new Date(timestamp).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   });
 }

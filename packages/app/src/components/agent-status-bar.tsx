@@ -2091,7 +2091,7 @@ function RuntimeProfileDetailsSection({
   const usageRow = usageSummary
     ? {
         label: "Usage",
-        value: usageWarning ?? usageSummary,
+        value: usageSummary,
         warning: Boolean(usageWarning),
       }
     : null;

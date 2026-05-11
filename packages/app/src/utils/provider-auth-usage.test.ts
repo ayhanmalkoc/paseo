@@ -7,19 +7,38 @@ import {
 
 describe("provider auth usage formatting", () => {
   it("summarizes primary and secondary windows", () => {
+    const primaryResetsAt = "2026-05-11T12:21:00.000Z";
+    const secondaryResetsAt = "2026-05-13T14:59:00.000Z";
+    const primaryResetLabel = new Date(primaryResetsAt).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const secondaryResetLabel = new Date(secondaryResetsAt).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
     expect(
       formatProviderAuthUsageSummary({
         source: "local-rollout",
         primaryUsedPercent: 76,
         primaryWindowMinutes: 300,
+        primaryResetsAt,
         secondaryUsedPercent: 56,
         secondaryWindowMinutes: 10_080,
+        secondaryResetsAt,
         refreshedAt: "2026-05-11T00:00:00.000Z",
       }),
-    ).toBe("24% 5h left / 44% weekly left");
+    ).toBe(
+      `24% 5h left · resets ${primaryResetLabel}\n44% weekly left · resets ${secondaryResetLabel}`,
+    );
   });
 
-  it("surfaces near-limit state with the dominant window", () => {
+  it("summarizes near-limit usage without changing the display format", () => {
     expect(
       formatProviderAuthUsageSummary({
         source: "local-rollout",
@@ -30,7 +49,7 @@ describe("provider auth usage formatting", () => {
         limitState: "near-limit",
         refreshedAt: "2026-05-11T00:00:00.000Z",
       }),
-    ).toBe("Near limit: 6% weekly left");
+    ).toBe("6% weekly left\n80% 5h left");
   });
 
   it("returns a warning only when the account is constrained", () => {
