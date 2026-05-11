@@ -602,6 +602,13 @@ describe("WorkspaceImportSheet", () => {
             alias: "Personal Codex",
             email: "personal-codex@example.com",
             isDefault: false,
+            usage: {
+              source: "local-rollout",
+              primaryUsedPercent: 94,
+              primaryWindowMinutes: 300,
+              limitState: "near-limit",
+              refreshedAt: "2026-05-11T00:00:00.000Z",
+            },
           }),
         ],
       },
@@ -615,6 +622,7 @@ describe("WorkspaceImportSheet", () => {
         "This Codex session will be copied into the selected account before opening.",
       ),
     ).toBeTruthy();
+    expect(await screen.findByText("This account is near its usage limit")).toBeTruthy();
   });
 
   it("uses the native source account instead of the saved provider default", async () => {

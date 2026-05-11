@@ -66,6 +66,9 @@ class FakeAuthAdapter implements ProviderAuthAdapter {
       usage: {
         source: "provider-api",
         primaryUsedPercent: 12,
+        primaryWindowMinutes: 300,
+        primaryResetsAt: "2026-05-06T13:30:00.000Z",
+        limitState: "ok",
         refreshedAt: "2026-05-06T12:30:00.000Z",
       },
     };
@@ -156,6 +159,9 @@ describe("ProviderAuthService", () => {
     const refreshed = await service.refreshProfile("codex", "profile-a");
     expect(refreshed.plan).toBe("plus");
     expect(refreshed.usage?.primaryUsedPercent).toBe(12);
+    expect(refreshed.usage?.primaryWindowMinutes).toBe(300);
+    expect(refreshed.usage?.primaryResetsAt).toBe("2026-05-06T13:30:00.000Z");
+    expect(refreshed.usage?.limitState).toBe("ok");
 
     const launchContext = await service.resolveLaunchContext({
       provider: "codex",

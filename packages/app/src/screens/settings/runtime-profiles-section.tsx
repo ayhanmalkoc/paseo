@@ -22,6 +22,7 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
+import { formatProviderAuthUsageSummary } from "@/utils/provider-auth-usage";
 import type {
   AgentFeature,
   AgentMode,
@@ -875,7 +876,12 @@ function buildAccountOptions(accounts: ProviderAuthProfile[]): SelectOption[] {
     ...accounts.map((account) => ({
       id: account.key,
       label: account.alias || account.email || account.accountName || account.key,
-      description: [account.email, account.plan, account.status !== "ready" ? account.status : null]
+      description: [
+        account.email,
+        account.plan,
+        formatProviderAuthUsageSummary(account.usage),
+        account.status !== "ready" ? account.status : null,
+      ]
         .filter(Boolean)
         .join(" / "),
     })),

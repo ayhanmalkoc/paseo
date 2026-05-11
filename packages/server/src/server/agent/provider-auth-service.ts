@@ -629,8 +629,13 @@ function toComparableUsage(usage: ProviderAuthUsageSnapshot) {
   return {
     source: usage.source,
     primaryUsedPercent: usage.primaryUsedPercent,
+    primaryWindowMinutes: usage.primaryWindowMinutes,
+    primaryResetsAt: usage.primaryResetsAt,
     secondaryUsedPercent: usage.secondaryUsedPercent,
+    secondaryWindowMinutes: usage.secondaryWindowMinutes,
+    secondaryResetsAt: usage.secondaryResetsAt,
     creditsRemaining: usage.creditsRemaining,
+    limitState: usage.limitState,
   };
 }
 

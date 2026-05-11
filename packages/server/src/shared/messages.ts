@@ -228,8 +228,13 @@ export const ProviderSnapshotEntrySchema = z.object({
 const ProviderAuthUsageSnapshotSchema = z.object({
   source: z.enum(["local-rollout", "provider-api"]),
   primaryUsedPercent: z.number().optional(),
+  primaryWindowMinutes: z.number().optional(),
+  primaryResetsAt: z.string().optional(),
   secondaryUsedPercent: z.number().optional(),
+  secondaryWindowMinutes: z.number().optional(),
+  secondaryResetsAt: z.string().optional(),
   creditsRemaining: z.number().optional(),
+  limitState: z.enum(["unknown", "ok", "near-limit", "limited"]).optional(),
   refreshedAt: z.string(),
 });
 

@@ -80,6 +80,7 @@ import { isWeb as platformIsWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { buildSettingsHostRoute } from "@/utils/host-routes";
+import { formatProviderAuthUsageWarning } from "@/utils/provider-auth-usage";
 
 interface StatusOption {
   id: string;
@@ -90,6 +91,7 @@ interface PendingAuthProfileRestart {
   key: string | null;
   label: string;
   sessionBehavior: RuntimeProfileSessionBehavior;
+  usageWarning?: string | null;
 }
 
 interface PendingRuntimeProfileRestart {
@@ -2497,10 +2499,14 @@ function useActiveAuthProfileRestartController(options: {
       if (normalizedNextKey === normalizedCurrentKey) {
         return;
       }
+      const selectedProfile = normalizedNextKey
+        ? authProfiles.find((profile) => profile.key === normalizedNextKey)
+        : undefined;
       setPending({
         key: normalizedNextKey,
         label: resolveAuthProfileRestartLabel(authProfiles, normalizedNextKey),
         sessionBehavior: DEFAULT_SESSION_BEHAVIOR,
+        usageWarning: formatProviderAuthUsageWarning(selectedProfile?.usage),
       });
     },
     [authProfiles, client, selectedAccountKey],
@@ -2713,6 +2719,9 @@ function AuthProfileRestartConfirmationSheet({
             ? `Switch this agent to ${restartTargetLabel} and start a fresh provider session. Any running turn will stop.`
             : `Switch this agent to ${restartTargetLabel} and continue this conversation. Any running turn will stop and Paseo will resume the same provider session when possible.`}
         </Text>
+        {pending?.usageWarning ? (
+          <Text style={styles.restartWarningText}>{pending.usageWarning}</Text>
+        ) : null}
         <View style={styles.restartConfirmActions}>
           <Pressable
             accessibilityRole="button"
