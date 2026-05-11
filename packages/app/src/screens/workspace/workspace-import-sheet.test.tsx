@@ -725,7 +725,9 @@ describe("WorkspaceImportSheet", () => {
 
     fireEvent.click(await screen.findByTestId("workspace-import-session-claude-provider-thread-1"));
 
-    await screen.findByText("Could not import selected session.");
+    await screen.findByText(
+      "Could not import the selected session. Try another account or source session.",
+    );
     expect(importAgent).toHaveBeenCalledWith({
       providerId: "claude",
       providerHandleId: "provider-thread-1",

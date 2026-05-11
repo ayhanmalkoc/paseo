@@ -253,7 +253,7 @@ function AuthProfileRow(props: {
             disabled={busy}
             accessibilityLabel={`Use ${title} by default`}
           >
-            Default
+            Set default
           </Button>
         ) : (
           <Text style={sheetStyles.defaultBadge}>Default</Text>
@@ -368,7 +368,7 @@ function ProviderAuthProfilesSection(props: { provider: string; serverId: string
           loading={isRefreshing && profiles.length === 0}
           accessibilityLabel="Import current provider account"
         >
-          Import current
+          Import current account
         </Button>
       </View>
     ),
@@ -398,7 +398,9 @@ function ProviderAuthProfilesSection(props: { provider: string; serverId: string
           ) : null}
           {!isLoading && profiles.length === 0 ? (
             <View style={sheetStyles.emptyRow}>
-              <Text style={sheetStyles.mutedText}>No accounts imported</Text>
+              <Text style={sheetStyles.mutedText}>
+                No accounts yet. Add an account or import the current provider account.
+              </Text>
             </View>
           ) : null}
           {profiles.map((profile) => (
@@ -443,56 +445,89 @@ function AccountLoginSheet(props: {
       snapPoints={ACCOUNT_LOGIN_SNAP_POINTS}
     >
       <View style={sheetStyles.loginSheetContent}>
-        {!session || session.status === "starting" ? (
-          <View style={sheetStyles.emptyRow}>
-            <ActivityIndicator size="small" />
-            <Text style={sheetStyles.mutedText}>Starting login…</Text>
-          </View>
-        ) : null}
-        {session?.status === "pending-user" ? (
-          <>
-            <Text style={settingsStyles.rowTitle}>Device code</Text>
-            <Text style={sheetStyles.deviceCode} selectable>
-              {session.userCode}
-            </Text>
-            {session.verificationUrl ? (
-              <Button variant="default" onPress={openVerificationUrl}>
-                Open login page
-              </Button>
-            ) : null}
-            <Text style={sheetStyles.monoHint} selectable>
-              {session.verificationUrl}
-            </Text>
-          </>
-        ) : null}
-        {session?.status === "importing" ? (
-          <View style={sheetStyles.emptyRow}>
-            <ActivityIndicator size="small" />
-            <Text style={sheetStyles.mutedText}>Importing account…</Text>
-          </View>
-        ) : null}
-        {session?.status === "completed" ? (
-          <>
-            <Text style={settingsStyles.rowTitle}>Account added</Text>
-            <Text style={sheetStyles.mutedText}>
-              {session.account?.alias || session.account?.email || "Codex account"}
-            </Text>
-            <Button variant="default" onPress={onClose}>
-              Done
-            </Button>
-          </>
-        ) : null}
-        {session?.status === "failed" ? (
-          <>
-            <Text style={sheetStyles.errorText}>{session.error ?? "Account login failed"}</Text>
-            <Button variant="default" onPress={onClose}>
-              Close
-            </Button>
-          </>
-        ) : null}
+        <AccountLoginSheetContent
+          session={session}
+          onClose={onClose}
+          onOpenVerificationUrl={openVerificationUrl}
+        />
       </View>
     </AdaptiveModalSheet>
   );
+}
+
+function AccountLoginSheetContent(props: {
+  session: ReturnType<typeof useAccountLogin>["sessions"][number] | null;
+  onClose: () => void;
+  onOpenVerificationUrl: () => void;
+}) {
+  const { session, onClose, onOpenVerificationUrl } = props;
+  switch (session?.status) {
+    case "pending-user":
+      return (
+        <>
+          <Text style={settingsStyles.rowTitle}>Device code</Text>
+          <Text style={sheetStyles.mutedText}>Open the login page and enter this code.</Text>
+          <Text style={sheetStyles.deviceCode} selectable>
+            {session.userCode}
+          </Text>
+          {session.verificationUrl ? (
+            <Button variant="default" onPress={onOpenVerificationUrl}>
+              Open login page
+            </Button>
+          ) : null}
+          <Text style={sheetStyles.monoHint} selectable>
+            {session.verificationUrl}
+          </Text>
+        </>
+      );
+    case "importing":
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <ActivityIndicator size="small" />
+          <Text style={sheetStyles.mutedText}>Importing account…</Text>
+        </View>
+      );
+    case "completed":
+      return (
+        <>
+          <Text style={settingsStyles.rowTitle}>Account added</Text>
+          <Text style={sheetStyles.mutedText}>
+            {session.account?.alias || session.account?.email || "Codex account"}
+          </Text>
+          <Button variant="default" onPress={onClose}>
+            Done
+          </Button>
+        </>
+      );
+    case "failed":
+      return (
+        <>
+          <Text style={sheetStyles.errorText}>{session.error ?? "Account login failed"}</Text>
+          <Button variant="default" onPress={onClose}>
+            Close
+          </Button>
+        </>
+      );
+    case "cancelled":
+    case "expired":
+      return (
+        <>
+          <Text style={settingsStyles.rowTitle}>
+            {session.status === "expired" ? "Login expired" : "Login cancelled"}
+          </Text>
+          <Button variant="default" onPress={onClose}>
+            Close
+          </Button>
+        </>
+      );
+    default:
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <ActivityIndicator size="small" />
+          <Text style={sheetStyles.mutedText}>Starting login…</Text>
+        </View>
+      );
+  }
 }
 
 function DiagnosticCodeBlock(props: {

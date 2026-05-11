@@ -172,9 +172,14 @@ UI follow-up:
 - Keep feature values structured and provider-defined.
 - Keep environment and MCP server settings as JSON unless a future provider
   exposes a narrower schema.
-- Keep Add provider, Add account, and Runtime profile copy visually distinct.
+- Keep Add provider, Add account, and Runtime profile copy visually distinct:
+  provider installs/enables a tool, account authenticates that provider, runtime
+  profile saves a reusable launch preset.
+- Keep import-session account copy explicit. `Source account` keeps the native
+  provider account; an explicit account means Paseo may copy provider session
+  state before opening.
 
-Testing follow-up:
+Testing:
 
 - Add provider-specific continuity tests before enabling account surfaces beyond
   Codex.
