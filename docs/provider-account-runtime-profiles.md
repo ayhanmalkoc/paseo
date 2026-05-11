@@ -58,6 +58,9 @@ Implemented surfaces:
 - Runtime profile settings can create/edit/delete profiles with provider,
   account, model, mode, thinking, concurrency, session behavior, instructions,
   feature values, environment, and MCP server settings.
+- Feature values use provider-defined structured controls. Environment and MCP
+  server settings stay as JSON because they are open-ended power-user
+  configuration.
 - Active agents can switch account/runtime profile through an explicit restart
   confirmation.
 - Import session sheet can import native provider sessions with source account
@@ -166,10 +169,9 @@ Provider-specific follow-up:
 
 UI follow-up:
 
-- Replace advanced JSON fields with structured controls where the setting is
-  common enough: environment, MCP servers, feature values.
-- Keep advanced JSON fields available for power users until structured controls
-  exist.
+- Keep feature values structured and provider-defined.
+- Keep environment and MCP server settings as JSON unless a future provider
+  exposes a narrower schema.
 - Keep Add provider, Add account, and Runtime profile copy visually distinct.
 
 Testing follow-up:
