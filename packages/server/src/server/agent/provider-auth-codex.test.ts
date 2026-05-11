@@ -109,4 +109,123 @@ describe("CodexProviderAuthAdapter", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("refreshes usage from Codex rollout rate limits", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-"));
+    try {
+      const sourceHome = path.join(root, "source-codex");
+      const providerBaseDir = path.join(root, "provider-auth", "codex");
+      await fs.mkdir(sourceHome, { recursive: true });
+      await fs.writeFile(
+        path.join(sourceHome, "auth.json"),
+        JSON.stringify({ OPENAI_API_KEY: "sk-test-secret" }),
+        "utf8",
+      );
+
+      const adapter = new CodexProviderAuthAdapter();
+      const profile = await adapter.importAuthFile(path.join(sourceHome, "auth.json"), {
+        providerBaseDir,
+        now: () => new Date("2026-05-06T12:00:00.000Z"),
+        logger: createTestLogger(),
+      });
+      const rolloutPath = path.join(
+        profile.providerHomePath,
+        "sessions",
+        "2026",
+        "05",
+        "11",
+        "rollout.jsonl",
+      );
+      await fs.mkdir(path.dirname(rolloutPath), { recursive: true });
+      await fs.writeFile(
+        rolloutPath,
+        `${JSON.stringify({
+          payload: {
+            rate_limits: {
+              primary: {
+                used_percent: 86,
+                window_minutes: 300,
+                resets_at: 1_778_494_841,
+              },
+              secondary: {
+                used_percent: 44,
+                window_minutes: 10_080,
+                resets_at: 1_778_942_355,
+              },
+              credits: {
+                remaining: 12,
+              },
+            },
+          },
+        })}\n`,
+        "utf8",
+      );
+
+      const refreshed = await adapter.refreshProfile(profile);
+
+      expect(refreshed.usage).toMatchObject({
+        source: "local-rollout",
+        primaryUsedPercent: 86,
+        primaryWindowMinutes: 300,
+        primaryResetsAt: new Date(1_778_494_841 * 1000).toISOString(),
+        secondaryUsedPercent: 44,
+        secondaryWindowMinutes: 10_080,
+        secondaryResetsAt: new Date(1_778_942_355 * 1000).toISOString(),
+        creditsRemaining: 12,
+        limitState: "near-limit",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshes usage from camelCase Codex rollout rate limits", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-"));
+    try {
+      const sourceHome = path.join(root, "source-codex");
+      const providerBaseDir = path.join(root, "provider-auth", "codex");
+      await fs.mkdir(sourceHome, { recursive: true });
+      await fs.writeFile(
+        path.join(sourceHome, "auth.json"),
+        JSON.stringify({ OPENAI_API_KEY: "sk-test-secret" }),
+        "utf8",
+      );
+
+      const adapter = new CodexProviderAuthAdapter();
+      const profile = await adapter.importAuthFile(path.join(sourceHome, "auth.json"), {
+        providerBaseDir,
+        now: () => new Date("2026-05-06T12:00:00.000Z"),
+        logger: createTestLogger(),
+      });
+      const rolloutPath = path.join(profile.providerHomePath, "sessions", "rollout.jsonl");
+      await fs.mkdir(path.dirname(rolloutPath), { recursive: true });
+      await fs.writeFile(
+        rolloutPath,
+        `${JSON.stringify({
+          payload: {
+            rateLimits: {
+              primary: {
+                usedPercent: 100,
+                windowMinutes: 300,
+                resetsAt: "2026-05-11T00:21:00.000Z",
+              },
+            },
+          },
+        })}\n`,
+        "utf8",
+      );
+
+      const refreshed = await adapter.refreshProfile(profile);
+
+      expect(refreshed.usage).toMatchObject({
+        source: "local-rollout",
+        primaryUsedPercent: 100,
+        primaryWindowMinutes: 300,
+        primaryResetsAt: "2026-05-11T00:21:00.000Z",
+        limitState: "limited",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

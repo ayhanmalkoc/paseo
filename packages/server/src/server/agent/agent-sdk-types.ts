@@ -86,12 +86,18 @@ export interface ProviderSnapshotEntry {
 
 export type ProviderAuthStatus = "ready" | "needs-login" | "invalid" | "refreshing";
 export type ProviderAuthMode = "chatgpt" | "api-key" | "oauth" | "external" | "unknown";
+export type ProviderAuthLimitState = "unknown" | "ok" | "near-limit" | "limited";
 
 export interface ProviderAuthUsageSnapshot {
   source: "local-rollout" | "provider-api";
   primaryUsedPercent?: number;
+  primaryWindowMinutes?: number;
+  primaryResetsAt?: string;
   secondaryUsedPercent?: number;
+  secondaryWindowMinutes?: number;
+  secondaryResetsAt?: string;
   creditsRemaining?: number;
+  limitState?: ProviderAuthLimitState;
   refreshedAt: string;
 }
 

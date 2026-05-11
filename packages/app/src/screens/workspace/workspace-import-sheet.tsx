@@ -17,6 +17,7 @@ import { formatTimeAgo } from "@/utils/time";
 import { isWeb } from "@/constants/platform";
 import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { formatProviderAuthUsageWarning } from "@/utils/provider-auth-usage";
 
 const IMPORTABLE_PROVIDER_IDS: Set<string> = new Set(IMPORTABLE_PROVIDERS);
 const PER_PROVIDER_LIMIT = 15;
@@ -345,6 +346,21 @@ function ExplicitAccountImportHint({ hint }: { hint: string | null }) {
   return <Text style={styles.accountHint}>{hint}</Text>;
 }
 
+function findSelectedAccountProfile(input: {
+  provider: string | null;
+  selectedAccountValue: string;
+  authProfilesByProvider: ReadonlyMap<string, ProviderAuthProfile[]>;
+}): ProviderAuthProfile | null {
+  if (!input.provider || input.selectedAccountValue === SOURCE_ACCOUNT_VALUE) {
+    return null;
+  }
+  return (
+    input.authProfilesByProvider
+      .get(input.provider)
+      ?.find((profile) => profile.key === input.selectedAccountValue) ?? null
+  );
+}
+
 function resolveImportProviderHomeRef(input: {
   entry: FetchRecentProviderSessionEntry;
   selectedAccountByProvider: Readonly<Record<string, string>>;
@@ -559,6 +575,16 @@ export function WorkspaceImportSheet({
     isExplicitAccountSelection,
     accountSelectorProvider,
   });
+  const selectedAccountProfile = useMemo(
+    () =>
+      findSelectedAccountProfile({
+        provider: accountSelectorProvider,
+        selectedAccountValue,
+        authProfilesByProvider,
+      }),
+    [accountSelectorProvider, authProfilesByProvider, selectedAccountValue],
+  );
+  const selectedAccountUsageWarning = formatProviderAuthUsageWarning(selectedAccountProfile?.usage);
   const showAccountSelector = shouldShowAccountSelector({
     isSupported: providerAuthProfiles.isSupported,
     accountSelectorProvider,
@@ -672,6 +698,9 @@ export function WorkspaceImportSheet({
             Source account keeps the native provider session in the account that created it.
           </Text>
           <ExplicitAccountImportHint hint={explicitAccountImportHint} />
+          {selectedAccountUsageWarning ? (
+            <Text style={styles.accountWarning}>{selectedAccountUsageWarning}</Text>
+          ) : null}
           <ScrollView
             horizontal
             style={styles.horizontalScroller}
@@ -744,6 +773,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
   },
   accountHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+  },
+  accountWarning: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
     lineHeight: 16,

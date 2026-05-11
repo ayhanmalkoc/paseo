@@ -312,7 +312,7 @@ async function scanUsageFile(filePath: string): Promise<ProviderAuthUsageSnapsho
   const lines = text.split(/\r?\n/);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index];
-    if (!line.includes("rate_limits")) {
+    if (!line.includes("rate_limits") && !line.includes("rateLimits")) {
       continue;
     }
     const snapshot = parseUsageLine(line);
@@ -334,14 +334,21 @@ function parseUsageLine(line: string): ProviderAuthUsageSnapshot | undefined {
     const primary = readRecord(rateLimits.primary);
     const secondary = readRecord(rateLimits.secondary);
     const credits = readRecord(rateLimits.credits);
-    return {
+    const primaryUsage = readUsageBucket(primary);
+    const secondaryUsage = readUsageBucket(secondary);
+    const snapshot: ProviderAuthUsageSnapshot = {
       source: "local-rollout",
-      primaryUsedPercent: readNumber(primary?.used_percent) ?? readNumber(primary?.usedPercent),
-      secondaryUsedPercent:
-        readNumber(secondary?.used_percent) ?? readNumber(secondary?.usedPercent),
-      creditsRemaining: readNumber(credits?.remaining),
+      primaryUsedPercent: primaryUsage.usedPercent,
+      primaryWindowMinutes: primaryUsage.windowMinutes,
+      primaryResetsAt: primaryUsage.resetsAt,
+      secondaryUsedPercent: secondaryUsage.usedPercent,
+      secondaryWindowMinutes: secondaryUsage.windowMinutes,
+      secondaryResetsAt: secondaryUsage.resetsAt,
+      creditsRemaining: readUsageNumber(credits?.remaining),
+      limitState: resolveLimitState(primaryUsage.usedPercent, secondaryUsage.usedPercent),
       refreshedAt: new Date().toISOString(),
     };
+    return hasUsageFields(snapshot) ? snapshot : undefined;
   } catch {
     return undefined;
   }
@@ -349,4 +356,90 @@ function parseUsageLine(line: string): ProviderAuthUsageSnapshot | undefined {
 
 function readNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+interface UsageBucket {
+  usedPercent?: number;
+  windowMinutes?: number;
+  resetsAt?: string;
+}
+
+function readUsageBucket(record: Record<string, unknown> | null | undefined): UsageBucket {
+  return {
+    usedPercent: readUsageNumberField(record, "used_percent", "usedPercent"),
+    windowMinutes: readUsageNumberField(record, "window_minutes", "windowMinutes"),
+    resetsAt: readResetTimestampField(record, "resets_at", "resetsAt"),
+  };
+}
+
+function readUsageNumberField(
+  record: Record<string, unknown> | null | undefined,
+  snakeKey: string,
+  camelKey: string,
+): number | undefined {
+  return readUsageNumber(record?.[snakeKey]) ?? readUsageNumber(record?.[camelKey]);
+}
+
+function readUsageNumber(value: unknown): number | undefined {
+  const number = readNumber(value);
+  return number !== undefined && number >= 0 ? number : undefined;
+}
+
+function readResetTimestampField(
+  record: Record<string, unknown> | null | undefined,
+  snakeKey: string,
+  camelKey: string,
+): string | undefined {
+  return readResetTimestamp(record?.[snakeKey]) ?? readResetTimestamp(record?.[camelKey]);
+}
+
+function readResetTimestamp(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue)) {
+      return epochTimestampToIso(numericValue);
+    }
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+  }
+  const number = readNumber(value);
+  return number !== undefined && number > 0 ? epochTimestampToIso(number) : undefined;
+}
+
+function epochTimestampToIso(value: number): string | undefined {
+  const timestamp = value > 1_000_000_000_000 ? value : value * 1000;
+  const date = new Date(timestamp);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
+function resolveLimitState(
+  primaryUsedPercent: number | undefined,
+  secondaryUsedPercent: number | undefined,
+): ProviderAuthUsageSnapshot["limitState"] | undefined {
+  const usedPercents = [primaryUsedPercent, secondaryUsedPercent].filter(
+    (value): value is number => typeof value === "number",
+  );
+  if (usedPercents.length === 0) {
+    return undefined;
+  }
+  const usedPercent = Math.max(...usedPercents);
+  if (usedPercent >= 100) {
+    return "limited";
+  }
+  if (usedPercent >= 85) {
+    return "near-limit";
+  }
+  return "ok";
+}
+
+function hasUsageFields(snapshot: ProviderAuthUsageSnapshot): boolean {
+  return (
+    snapshot.primaryUsedPercent !== undefined ||
+    snapshot.primaryWindowMinutes !== undefined ||
+    snapshot.primaryResetsAt !== undefined ||
+    snapshot.secondaryUsedPercent !== undefined ||
+    snapshot.secondaryWindowMinutes !== undefined ||
+    snapshot.secondaryResetsAt !== undefined ||
+    snapshot.creditsRemaining !== undefined
+  );
 }

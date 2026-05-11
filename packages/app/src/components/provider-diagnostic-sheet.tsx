@@ -23,6 +23,7 @@ import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
+import { formatProviderAuthUsageSummary } from "@/utils/provider-auth-usage";
 import { formatTimeAgo } from "@/utils/time";
 import type {
   AgentModelDefinition,
@@ -209,6 +210,7 @@ function formatAuthProfileSubtitle(profile: ProviderAuthProfile): string {
   const parts = [
     profile.email,
     profile.plan,
+    formatProviderAuthUsageSummary(profile.usage),
     profile.authMode === "api-key" ? "API key" : profile.authMode,
     profile.status !== "ready" ? profile.status : null,
   ].filter(Boolean);
