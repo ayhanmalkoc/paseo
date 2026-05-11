@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
-import { createReadStream, unlinkSync, existsSync } from "fs";
-import { stat } from "fs/promises";
+import { constants, existsSync, unlinkSync } from "fs";
+import { open } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
@@ -123,6 +123,7 @@ import { createConfiguredTerminalManager } from "../terminal/terminal-manager-fa
 import { createConnectionOfferV2, encodeOfferToFragmentUrl } from "./connection-offer.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
 import { startRelayTransport, type RelayTransportController } from "./relay-transport.js";
+import type { PushNotificationSender } from "./push/notifications.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
@@ -148,6 +149,11 @@ import {
 
 type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
+const MAX_MCP_DEBUG_BATCH_ITEMS = 10;
+const REDACTED_LOG_VALUE = "[redacted]";
+const DOWNLOAD_OPEN_FLAGS =
+  process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
+
 function formatHostForHttpUrl(host: string): string {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
@@ -160,6 +166,38 @@ function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null
     "/mcp/agents",
     `http://${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`,
   ).toString();
+}
+
+function summarizeAgentMcpDebugMessage(body: unknown): Record<string, unknown> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return {
+      type: body === null ? "null" : typeof body,
+    };
+  }
+
+  const record = body as Record<string, unknown>;
+  const method = typeof record.method === "string" ? record.method : undefined;
+  return {
+    type: "object",
+    ...(typeof record.jsonrpc === "string" ? { jsonrpc: record.jsonrpc } : {}),
+    ...(method ? { method } : {}),
+    hasId: Object.prototype.hasOwnProperty.call(record, "id"),
+    hasParams: Object.prototype.hasOwnProperty.call(record, "params"),
+  };
+}
+
+function summarizeAgentMcpDebugBody(body: unknown): Record<string, unknown> {
+  if (!Array.isArray(body)) {
+    return summarizeAgentMcpDebugMessage(body);
+  }
+
+  const messages = body.slice(0, MAX_MCP_DEBUG_BATCH_ITEMS).map(summarizeAgentMcpDebugMessage);
+  return {
+    type: "batch",
+    count: body.length,
+    messages,
+    ...(body.length > messages.length ? { omitted: body.length - messages.length } : {}),
+  };
 }
 
 export type PaseoOpenAIConfig = OpenAiSpeechProviderConfig;
@@ -213,6 +251,7 @@ export interface PaseoDaemonConfig {
   providerOverrides?: Record<string, ProviderOverride>;
   log?: PersistedConfig["log"];
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
+  pushNotificationSender?: PushNotificationSender;
 }
 
 export interface PaseoDaemon {
@@ -386,8 +425,10 @@ export async function createPaseoDaemon(
       return;
     }
 
+    let fileHandle: Awaited<ReturnType<typeof open>> | null = null;
     try {
-      const fileStats = await stat(entry.absolutePath);
+      fileHandle = await open(entry.absolutePath, DOWNLOAD_OPEN_FLAGS);
+      const fileStats = await fileHandle.stat();
       if (!fileStats.isFile()) {
         res.status(404).json({ error: "File not found" });
         return;
@@ -396,9 +437,10 @@ export async function createPaseoDaemon(
       const safeFileName = entry.fileName.replace(/["\r\n]/g, "_");
       res.setHeader("Content-Type", entry.mimeType);
       res.setHeader("Content-Disposition", `attachment; filename="${safeFileName}"`);
-      res.setHeader("Content-Length", entry.size.toString());
+      res.setHeader("Content-Length", fileStats.size.toString());
 
-      const stream = createReadStream(entry.absolutePath);
+      const stream = fileHandle.createReadStream();
+      fileHandle = null;
       stream.on("error", (err) => {
         logger.error({ err }, "Failed to stream download");
         if (!res.headersSent) {
@@ -413,6 +455,8 @@ export async function createPaseoDaemon(
       if (!res.headersSent) {
         res.status(404).json({ error: "File not found" });
       }
+    } finally {
+      await fileHandle?.close().catch(() => undefined);
     }
   };
 
@@ -702,8 +746,8 @@ export async function createPaseoDaemon(
             method: req.method,
             url: req.originalUrl,
             sessionId: req.header("mcp-session-id"),
-            authorization: req.header("authorization"),
-            body: req.body,
+            authorization: req.header("authorization") ? REDACTED_LOG_VALUE : undefined,
+            body: summarizeAgentMcpDebugBody(req.body),
           },
           "Agent MCP request",
         );
@@ -882,6 +926,7 @@ export async function createPaseoDaemon(
             providerAuthService,
             runtimeProfileService,
             accountOnboardingService,
+            config.pushNotificationSender,
           );
 
           if (relayEnabled) {

@@ -2,11 +2,12 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import type { Logger } from "pino";
 
-import { terminateWithTreeKill } from "../../../utils/tree-kill.js";
+import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 
 const DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 const APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const APP_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
+const STDERR_BUFFER_LIMIT = 8192;
 
 interface JsonRpcRequest {
   id: number;
@@ -17,7 +18,7 @@ interface JsonRpcRequest {
 interface JsonRpcResponse {
   id: number;
   result?: unknown;
-  error?: { code?: number; message: string };
+  error?: { message?: string };
 }
 
 interface JsonRpcNotification {
@@ -28,14 +29,32 @@ interface JsonRpcNotification {
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: NodeJS.Timeout;
 }
 
 type RequestHandler = (params: unknown) => unknown;
-
 type NotificationHandler = (method: string, params: unknown) => void;
 
-export class CodexAppServerJsonRpcClient {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isJsonRpcResponse(msg: unknown): msg is JsonRpcResponse {
+  if (!isRecord(msg)) return false;
+  return typeof msg.id === "number";
+}
+
+function isJsonRpcRequest(msg: unknown): msg is JsonRpcRequest {
+  if (!isRecord(msg)) return false;
+  return typeof msg.id === "number" && typeof msg.method === "string";
+}
+
+function isJsonRpcNotification(msg: unknown): msg is JsonRpcNotification {
+  if (!isRecord(msg)) return false;
+  return typeof msg.method === "string" && msg.id === undefined;
+}
+
+export class CodexAppServerClient {
   private readonly rl: readline.Interface;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly requestHandlers = new Map<string, RequestHandler>();
@@ -50,15 +69,15 @@ export class CodexAppServerJsonRpcClient {
   ) {
     this.rl = readline.createInterface({ input: child.stdout });
     this.rl.on("line", (line) => {
-      void this.handleLine(line).catch((err: unknown) => {
-        this.logger.error({ err }, "Failed to handle Codex app-server JSON-RPC line");
+      void this.handleLine(line).catch((error) => {
+        this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
       });
     });
 
     child.stderr.on("data", (chunk) => {
       this.stderrBuffer += chunk.toString();
-      if (this.stderrBuffer.length > 8192) {
-        this.stderrBuffer = this.stderrBuffer.slice(-8192);
+      if (this.stderrBuffer.length > STDERR_BUFFER_LIMIT) {
+        this.stderrBuffer = this.stderrBuffer.slice(-STDERR_BUFFER_LIMIT);
       }
     });
 
@@ -120,17 +139,6 @@ export class CodexAppServerJsonRpcClient {
     this.child.stdin.write(`${JSON.stringify(payload)}\n`);
   }
 
-  private writeJsonRpcResponse(response: JsonRpcResponse): void {
-    if (this.disposed || this.child.stdin.destroyed || !this.child.stdin.writable) {
-      return;
-    }
-    try {
-      this.child.stdin.write(`${JSON.stringify(response)}\n`);
-    } catch (error) {
-      this.logger.debug({ error }, "Failed to write Codex app-server JSON-RPC response");
-    }
-  }
-
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
@@ -158,89 +166,65 @@ export class CodexAppServerJsonRpcClient {
     }
   }
 
-  private async handleLine(line: string): Promise<void> {
-    const trimmedLine = line.trim();
-    if (!trimmedLine) return;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(trimmedLine);
-    } catch {
-      const logLine = truncateLogLine(trimmedLine);
-      if (isWindowsProcessCleanupLine(trimmedLine)) {
-        this.logger.debug(
-          { line: logLine },
-          "Ignoring process cleanup line from Codex app-server stdout",
-        );
-      } else {
-        this.logger.warn({ line: logLine }, "Ignoring non-JSON line from Codex app-server stdout");
-      }
+  private writeJsonRpcResponse(response: JsonRpcResponse): void {
+    if (this.disposed || this.child.stdin.destroyed || !this.child.stdin.writable) {
       return;
     }
+    try {
+      this.child.stdin.write(`${JSON.stringify(response)}\n`);
+    } catch (error) {
+      this.logger.debug({ error }, "Failed to write Codex app-server JSON-RPC response");
+    }
+  }
+
+  private async handleLine(line: string): Promise<void> {
+    if (!line.trim()) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch (error) {
+      this.logger.warn({ error, line }, "Ignoring non-JSON Codex app-server stdout line");
+      return;
+    }
+
     if (!isRecord(raw)) {
       this.logger.warn({ line }, "Parsed JSON is not an object");
       return;
     }
 
     if (isJsonRpcResponse(raw)) {
-      const pending = this.pending.get(raw.id);
-      if (!pending) return;
-      clearTimeout(pending.timer);
-      this.pending.delete(raw.id);
-      if (raw.error) {
-        pending.reject(new Error(raw.error.message ?? "Unknown error"));
-      } else {
-        pending.resolve(raw.result);
+      const id = raw.id;
+      if (raw.result !== undefined || raw.error) {
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        if (raw.error) {
+          pending.reject(new Error(raw.error.message ?? "Unknown error"));
+        } else {
+          pending.resolve(raw.result);
+        }
+        return;
       }
-      return;
-    }
 
-    if (isJsonRpcRequest(raw)) {
-      const handler = this.requestHandlers.get(raw.method);
-      try {
-        const result = handler ? await handler(raw.params) : {};
-        this.writeJsonRpcResponse({ id: raw.id, result });
-      } catch (error) {
-        this.writeJsonRpcResponse({
-          id: raw.id,
-          error: { message: error instanceof Error ? error.message : String(error) },
-        });
+      if (isJsonRpcRequest(raw)) {
+        const request = raw;
+        const handler = this.requestHandlers.get(request.method);
+        try {
+          const result = handler ? await handler(request.params) : {};
+          this.writeJsonRpcResponse({ id: request.id, result });
+        } catch (error) {
+          this.writeJsonRpcResponse({
+            id: request.id,
+            error: { message: error instanceof Error ? error.message : String(error) },
+          });
+        }
+        return;
       }
-      return;
     }
 
     if (isJsonRpcNotification(raw)) {
       this.notificationHandler?.(raw.method, raw.params);
     }
   }
-}
-
-function truncateLogLine(line: string): string {
-  const maxLength = 500;
-  return line.length > maxLength ? `${line.slice(0, maxLength)}...` : line;
-}
-
-function isWindowsProcessCleanupLine(line: string): boolean {
-  return /^SUCCESS: The process with PID \d+(?: \(child process of PID \d+\))? has been terminated\.$/.test(
-    line,
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value != null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isJsonRpcResponse(msg: unknown): msg is JsonRpcResponse {
-  if (!isRecord(msg)) return false;
-  if (typeof msg.id !== "number") return false;
-  return Object.prototype.hasOwnProperty.call(msg, "result") || !!msg.error;
-}
-
-function isJsonRpcRequest(msg: unknown): msg is JsonRpcRequest {
-  if (!isRecord(msg)) return false;
-  return typeof msg.id === "number" && typeof msg.method === "string";
-}
-
-function isJsonRpcNotification(msg: unknown): msg is JsonRpcNotification {
-  if (!isRecord(msg)) return false;
-  return typeof msg.method === "string" && typeof msg.id !== "number";
 }

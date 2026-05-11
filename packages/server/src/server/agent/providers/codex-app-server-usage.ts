@@ -9,8 +9,8 @@ import {
 } from "../provider-launch-config.js";
 import { findExecutable } from "../../../utils/executable.js";
 import { spawnProcess } from "../../../utils/spawn.js";
-import { CodexAppServerJsonRpcClient } from "./codex-app-server-json-rpc.js";
 import { buildCodexAppServerInitializeParams } from "./codex-app-server-protocol.js";
+import { CodexAppServerClient } from "./codex/app-server-transport.js";
 
 const CODEX_APP_SERVER_USAGE_TIMEOUT_MS = 12_000;
 
@@ -38,7 +38,7 @@ export async function readCodexAppServerUsage(
   });
   assertChildWithPipes(child);
 
-  const client = new CodexAppServerJsonRpcClient(
+  const client = new CodexAppServerClient(
     child,
     options.logger.child({ module: "codex-app-server-usage" }),
   );

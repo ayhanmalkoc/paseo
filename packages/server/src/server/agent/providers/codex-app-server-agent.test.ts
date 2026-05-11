@@ -18,6 +18,10 @@ import {
   CodexAppServerAgentClient,
   codexAppServerTurnInputFromPrompt,
 } from "./codex-app-server-agent.js";
+import {
+  createFakeCodexAppServer,
+  waitForNextPermission,
+} from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
 
@@ -182,6 +186,60 @@ describe("Codex app-server provider", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("round-trips server-initiated command approvals through the real app-server transport", async () => {
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({}),
+      "collaborationMode/list": () => ({ data: [] }),
+      "skills/list": () => ({ data: [] }),
+    });
+    const session = new __codexAppServerInternals.CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.connect();
+    appServer.assertNoErrors();
+
+    const permissionRequested = waitForNextPermission(session);
+    appServer.requestCommandApproval({
+      itemId: "exec-approval-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      command: "git restore README.md",
+      cwd: "/workspace/project",
+      reason: "requires escalated permissions",
+    });
+
+    const permissionEvent = await permissionRequested;
+    expect(permissionEvent.request).toMatchObject({
+      id: "permission-exec-approval-1",
+      provider: "codex",
+      name: "CodexBash",
+      kind: "tool",
+      title: "Run command: git restore README.md",
+      description: "requires escalated permissions",
+      input: {
+        command: "git restore README.md",
+        cwd: "/workspace/project",
+      },
+      metadata: {
+        itemId: "exec-approval-1",
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    });
+
+    await session.respondToPermission(permissionEvent.request.id, { behavior: "allow" });
+
+    await expect(appServer.waitForCommandApprovalDecision("exec-approval-1")).resolves.toEqual({
+      decision: "accept",
+    });
+    appServer.assertNoErrors();
+    await session.close();
   });
 
   test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {
@@ -841,6 +899,52 @@ describe("Codex app-server provider", () => {
         description: "Report findings.",
         log: "[Assistant] Found the path.",
         actions: [],
+      },
+    });
+  });
+
+  test("keeps the parent sub-agent running when a child command fails during the child turn", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "call-sub-agent-child-command-failure",
+        tool: "spawnAgent",
+        status: "completed",
+        prompt: "Fix the regression test-first.",
+        receiverThreadIds: ["child-thread-1"],
+        agentsStates: {
+          "child-thread-1": { status: "running", message: null },
+        },
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "child-thread-1",
+      item: {
+        type: "commandExecution",
+        id: "child-failing-command",
+        status: "failed",
+        command: "npx vitest run packages/server/src/server/agent/providers/opencode-agent.test.ts",
+        aggregatedOutput: "expected false to be true",
+        exitCode: 1,
+        error: { message: "Command failed" },
+      },
+    });
+
+    expect(events.at(-1)?.item).toMatchObject({
+      type: "tool_call",
+      callId: "call-sub-agent-child-command-failure",
+      name: "Sub-agent",
+      status: "running",
+      error: null,
+      detail: {
+        type: "sub_agent",
+        subAgentType: "Sub-agent",
+        description: "Fix the regression test-first.",
       },
     });
   });

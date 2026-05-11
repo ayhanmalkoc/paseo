@@ -13,7 +13,7 @@ import {
 } from "./provider-launch-config.js";
 import { findExecutable } from "../../utils/executable.js";
 import { spawnProcess } from "../../utils/spawn.js";
-import { CodexAppServerJsonRpcClient } from "./providers/codex-app-server-json-rpc.js";
+import { CodexAppServerClient } from "./providers/codex/app-server-transport.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
 
 const CODEX_PROVIDER = "codex" as const;
@@ -23,7 +23,7 @@ const LOGIN_START_TIMEOUT_MS = 30_000;
 type LoginSubscriber = (session: AccountLoginSession) => void;
 
 interface ActiveLogin {
-  client: CodexAppServerJsonRpcClient;
+  client: CodexAppServerClient;
   stagingRoot: string;
   loginId: string | null;
 }
@@ -138,7 +138,7 @@ export class AccountOnboardingService {
     await copyOptionalCodexConfig(codexHome);
 
     const child = await this.spawnCodexAppServer({ CODEX_HOME: codexHome });
-    const client = new CodexAppServerJsonRpcClient(child, this.logger);
+    const client = new CodexAppServerClient(child, this.logger);
     let loginId: string | null = null;
     this.activeLogins.set(sessionId, { client, stagingRoot, loginId });
 

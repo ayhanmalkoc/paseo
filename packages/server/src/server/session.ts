@@ -81,6 +81,7 @@ import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-sto
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
 import { getErrorMessage, getErrorMessageOr } from "../shared/error-utils.js";
+import { getAgentStatusPriority } from "../shared/agent-state-bucket.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 
 import { buildProviderRegistry } from "./agent/provider-registry.js";
@@ -99,13 +100,13 @@ import type {
   ManagedAgent,
 } from "./agent/agent-manager.js";
 import { scheduleAgentMetadataGeneration } from "./agent/agent-metadata-generator.js";
+import { resolveCreateAgentTitles } from "./agent/create-agent-title.js";
 import {
   buildStoredAgentPayload,
   resolveEffectiveThinkingOptionId,
   resolveStoredAgentPayloadUpdatedAt,
   toAgentPayload,
 } from "./agent/agent-projections.js";
-import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent/agent-title-limits.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -130,13 +131,13 @@ import type {
   AgentRunOptions,
   AgentSessionConfig,
   AgentStreamEvent,
-  AgentTimelineItem,
   ProviderSnapshotEntry,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
 import {
   ImportSessionsRequestError,
+  importProviderSession,
   listImportableProviderSessions,
   normalizeImportAgentRequest,
 } from "./agent/import-sessions.js";
@@ -241,7 +242,6 @@ import {
 } from "./worktree-session.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
 
-const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
 const WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY = "__removed__";
 
 interface ResolveKnownProjectRootForConfigInput {
@@ -396,53 +396,6 @@ function beginAgentDeleteIfSupported(agentStorage: AgentStorage, agentId: string
   if ("beginDelete" in agentStorage && typeof agentStorage.beginDelete === "function") {
     (agentStorage as DeleteFencedAgentStorage).beginDelete(agentId);
   }
-}
-
-function deriveInitialAgentTitle(prompt: string): string | null {
-  const firstContentLine = prompt
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-  if (!firstContentLine) {
-    return null;
-  }
-  const normalized = firstContentLine.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return null;
-  }
-  const clamped = normalized.slice(0, MAX_INITIAL_AGENT_TITLE_CHARS).trim();
-  return clamped.length > 0 ? clamped : null;
-}
-
-export function resolveCreateAgentTitles(options: {
-  configTitle?: string | null;
-  initialPrompt?: string | null;
-}): { explicitTitle: string | null; provisionalTitle: string | null } {
-  const explicitTitle =
-    typeof options.configTitle === "string" && options.configTitle.trim().length > 0
-      ? options.configTitle.trim()
-      : null;
-  const trimmedPrompt = options.initialPrompt?.trim();
-  const provisionalTitle =
-    explicitTitle ?? (trimmedPrompt ? deriveInitialAgentTitle(trimmedPrompt) : null);
-
-  return {
-    explicitTitle,
-    provisionalTitle,
-  };
-}
-
-function getFirstUserMessageText(timeline: readonly AgentTimelineItem[]): string | null {
-  for (const item of timeline) {
-    if (item.type !== "user_message") {
-      continue;
-    }
-    const text = item.text.trim();
-    if (text) {
-      return text;
-    }
-  }
-  return null;
 }
 
 const FETCH_AGENTS_SORT_KEYS = ["status_priority", "created_at", "updated_at", "title"] as const;
@@ -676,45 +629,6 @@ class VoiceFeatureUnavailableError extends Error {
     this.retryable = context.retryable;
     this.missingModelIds = [...context.missingModelIds];
   }
-}
-
-interface BuildImportPersistenceHandleInput {
-  provider: AgentProvider;
-  providerHandleId: string;
-  cwd?: string;
-}
-
-function buildImportPersistenceHandle(
-  input: BuildImportPersistenceHandleInput,
-): AgentPersistenceHandle {
-  const cwd = input.cwd ?? process.cwd();
-  return {
-    provider: input.provider,
-    sessionId: input.providerHandleId,
-    nativeHandle: input.providerHandleId,
-    metadata: {
-      provider: input.provider,
-      cwd,
-    },
-  };
-}
-
-function applyImportCwdOverride(
-  handle: AgentPersistenceHandle,
-  cwd: string | undefined,
-): AgentPersistenceHandle {
-  if (!cwd) {
-    return handle;
-  }
-
-  return {
-    ...handle,
-    metadata: {
-      ...handle.metadata,
-      provider: handle.provider,
-      cwd,
-    },
-  };
 }
 
 function convertPCMToWavBuffer(
@@ -3341,57 +3255,22 @@ export class Session {
       });
       return;
     }
-    const {
-      provider,
-      providerHandleId,
-      cwd,
-      providerHomeRef,
-      sourceAuthProfileKey,
-      sessionBehavior,
-      labels,
-      requestId,
-    } = normalized;
+    const { provider, providerHandleId, requestId } = normalized;
     this.sessionLogger.info(
       { providerHandleId, provider },
       `Importing agent ${providerHandleId} (${provider})`,
     );
 
     try {
-      const descriptor = await this.agentManager.findPersistedAgent(provider, providerHandleId, {
-        sourceProviderHomeRef: providerHomeRef,
-        sourceAuthProfileKey,
+      const { snapshot, timelineSize } = await importProviderSession({
+        request: normalized,
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        workspaceGitService: this.workspaceGitService,
+        paseoHome: this.paseoHome,
+        logger: this.sessionLogger,
       });
-      if (!descriptor && provider === "opencode" && !cwd) {
-        throw new Error(
-          "OpenCode sessions require --cwd when the session cannot be found in persisted agents",
-        );
-      }
-
-      const handle = descriptor
-        ? applyImportCwdOverride(descriptor.persistence, cwd)
-        : buildImportPersistenceHandle({ provider, providerHandleId, cwd });
-      const importOverrides = {
-        ...(cwd ? { cwd } : {}),
-        ...(providerHomeRef ? { providerHomeRef } : {}),
-      } satisfies Partial<AgentSessionConfig>;
-      const overrides = Object.keys(importOverrides).length > 0 ? importOverrides : undefined;
-
-      await this.unarchiveAgentByHandle(handle);
-      const snapshot = await this.agentManager.resumeAgentFromPersistence(
-        handle,
-        overrides,
-        undefined,
-        {
-          labels,
-          sessionBehavior: sessionBehavior ?? "continue",
-          resumeReason: "import",
-        },
-      );
-      await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
-      await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
-      await this.applyImportedAgentTitle(snapshot);
       await this.forwardAgentUpdate(snapshot);
-      const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
       const agentPayload = await this.buildAgentPayload(snapshot);
       this.emit({
         type: "status",
@@ -3424,32 +3303,6 @@ export class Session {
         },
       });
     }
-  }
-
-  private async applyImportedAgentTitle(snapshot: ManagedAgent): Promise<void> {
-    const initialPrompt = getFirstUserMessageText(this.agentManager.getTimeline(snapshot.id));
-    if (!initialPrompt) {
-      return;
-    }
-
-    const { explicitTitle, provisionalTitle } = resolveCreateAgentTitles({
-      configTitle: snapshot.config.title,
-      initialPrompt,
-    });
-    if (!explicitTitle && provisionalTitle) {
-      await this.agentManager.setTitle(snapshot.id, provisionalTitle);
-    }
-
-    scheduleAgentMetadataGeneration({
-      agentManager: this.agentManager,
-      agentId: snapshot.id,
-      cwd: snapshot.cwd,
-      workspaceGitService: this.workspaceGitService,
-      initialPrompt,
-      explicitTitle,
-      paseoHome: this.paseoHome,
-      logger: this.sessionLogger,
-    });
   }
 
   private async handleRefreshAgentRequest(
@@ -6388,24 +6241,6 @@ export class Session {
     return this.isProviderVisibleToClient(payload.provider) ? payload : null;
   }
 
-  private getStatusPriority(agent: AgentSnapshotPayload): number {
-    const attentionReason = agent.attentionReason ?? null;
-    const hasPendingPermission = (agent.pendingPermissions?.length ?? 0) > 0;
-    if (hasPendingPermission || attentionReason === "permission") {
-      return 0;
-    }
-    if (agent.status === "error" || attentionReason === "error") {
-      return 1;
-    }
-    if (agent.status === "running") {
-      return 2;
-    }
-    if (agent.status === "initializing") {
-      return 3;
-    }
-    return 4;
-  }
-
   private async buildActiveProjectPlacementsByWorkspaceCwd(): Promise<
     Map<string, ProjectPlacementPayload>
   > {
@@ -6569,7 +6404,12 @@ export class Session {
     getSortValue: (agent, key): number | string => {
       switch (key) {
         case "status_priority":
-          return this.getStatusPriority(agent);
+          return getAgentStatusPriority({
+            status: agent.status,
+            pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+            requiresAttention: agent.requiresAttention,
+            attentionReason: agent.attentionReason ?? null,
+          });
         case "created_at":
           return Date.parse(agent.createdAt);
         case "updated_at":

@@ -14,12 +14,9 @@ import type {
   AgentClient,
   AgentMode,
   AgentModelDefinition,
-  AgentTimelineItem,
   ListModesOptions,
   ListModelsOptions,
-  PersistedAgentDescriptor,
 } from "./agent/agent-sdk-types.js";
-import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderDefinition } from "./agent/provider-registry.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
@@ -70,8 +67,6 @@ interface SessionHandlerInternals {
   handleCheckoutPullRequest(params: unknown): Promise<unknown>;
   handleCheckoutPushRequest(params: unknown): Promise<unknown>;
   handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
-  handleFetchRecentProviderSessions(params: unknown): Promise<unknown>;
-  handleImportAgentRequest(params: unknown): Promise<unknown>;
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   handleValidateBranchRequest(params: unknown): Promise<unknown>;
