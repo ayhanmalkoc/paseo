@@ -46,7 +46,7 @@ interface RuntimeProfileDraft {
   sessionBehavior: RuntimeProfileSessionBehavior;
   systemPrompt: string;
   instructionOverlay: string;
-  featureValuesJson: string;
+  featureValues: Record<string, unknown>;
   envOverlayJson: string;
   mcpServersJson: string;
 }
@@ -340,17 +340,13 @@ function RuntimeProfileEditorSheet({
   const modes = providerEntry?.modes ?? EMPTY_MODES;
   const selectedModel = models.find((model) => model.id === draft.model);
   const thinkingOptions = selectedModel?.thinkingOptions;
-  const draftFeatureValues = useMemo(
-    () => parseObjectJsonSafe(draft.featureValuesJson),
-    [draft.featureValuesJson],
-  );
   const draftFeatures = useRuntimeProfileDraftFeatures({
     serverId,
     provider: draft.provider,
     modeId: draft.modeId,
     modelId: draft.model,
     thinkingOptionId: draft.thinkingOptionId,
-    featureValues: draftFeatureValues ?? {},
+    featureValues: draft.featureValues,
   });
 
   const accountOptions = useMemo(
@@ -409,14 +405,13 @@ function RuntimeProfileEditorSheet({
 
   const handleSetFeatureValue = useCallback((featureId: string, value: unknown) => {
     setDraft((current) => {
-      const currentValues = parseObjectJsonSafe(current.featureValuesJson) ?? {};
       const nextValues = {
-        ...currentValues,
+        ...current.featureValues,
         [featureId]: value,
       };
       return {
         ...current,
-        featureValuesJson: formatJson(nextValues),
+        featureValues: nextValues,
       };
     });
   }, []);
@@ -517,7 +512,7 @@ function RuntimeProfileEditorSheet({
         features={draftFeatures.features}
         isLoading={draftFeatures.isLoading}
         error={draftFeatures.error}
-        disabled={saving || draftFeatureValues === null}
+        disabled={saving}
         onSetFeatureValue={handleSetFeatureValue}
       />
 
@@ -544,15 +539,6 @@ function RuntimeProfileEditorSheet({
 
       <SettingsSection title="Advanced">
         <View style={styles.fieldStack}>
-          <LabeledInput
-            label="Feature values JSON"
-            value={draft.featureValuesJson}
-            onChangeText={(value) => setField("featureValuesJson", value)}
-            placeholder='{"fast": true}'
-            editable={!saving}
-            multiline
-            monospace
-          />
           <LabeledInput
             label="Environment JSON"
             value={draft.envOverlayJson}
@@ -947,7 +933,7 @@ function createDraft(
     sessionBehavior: profile?.sessionBehavior ?? "continue",
     systemPrompt: profile?.systemPrompt ?? "",
     instructionOverlay: profile?.instructionOverlay ?? "",
-    featureValuesJson: formatJson(profile?.featureValues),
+    featureValues: profile?.featureValues ?? {},
     envOverlayJson: formatJson(profile?.envOverlay),
     mcpServersJson: formatJson(profile?.mcpServers),
   };
@@ -979,7 +965,7 @@ function buildPatch(
     sessionBehavior: draft.sessionBehavior,
     systemPrompt: normalizeNullableText(draft.systemPrompt),
     instructionOverlay: normalizeNullableText(draft.instructionOverlay),
-    featureValues: parseObjectJson("Feature values JSON", draft.featureValuesJson),
+    featureValues: draft.featureValues,
     envOverlay: parseStringObjectJson("Environment JSON", draft.envOverlayJson),
     mcpServers: parseMcpServersJson(draft.mcpServersJson),
   };
@@ -1000,14 +986,6 @@ function parseObjectJson(label: string, value: string): Record<string, unknown> 
     throw new Error(`${label} must be a JSON object`);
   }
   return parsed as Record<string, unknown>;
-}
-
-function parseObjectJsonSafe(value: string): Record<string, unknown> | null {
-  try {
-    return parseObjectJson("Feature values JSON", value);
-  } catch {
-    return null;
-  }
 }
 
 function parseStringObjectJson(label: string, value: string): Record<string, string> {
