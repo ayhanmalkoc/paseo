@@ -158,7 +158,7 @@ export function RuntimeProfilesSection({ serverId }: { serverId: string }) {
         disabled={!canCreate || runtimeProfiles.isRefreshing}
         testID="runtime-profiles-create"
       >
-        New
+        Add profile
       </Button>
     ),
     [
@@ -423,7 +423,7 @@ function RuntimeProfileEditorSheet({
 
   return (
     <AdaptiveModalSheet
-      title={profile ? "Edit profile" : "New profile"}
+      title={profile ? "Edit profile" : "Add profile"}
       visible={visible}
       onClose={handleClose}
       snapPoints={PROFILE_EDITOR_SNAP_POINTS}

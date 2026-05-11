@@ -647,7 +647,6 @@ export function WorkspaceImportSheet({
       testID="workspace-import-sheet"
       desktopMaxWidth={560}
       snapPoints={IMPORT_SHEET_SNAP_POINTS}
-      enableContentPanningGesture={false}
     >
       {showFilter ? (
         <ScrollView
@@ -728,7 +727,7 @@ const styles = StyleSheet.create((theme) => ({
       ? {
           overflowX: "auto",
           overflowY: "hidden",
-          touchAction: "pan-x",
+          touchAction: "pan-x pan-y",
         }
       : null),
   },
