@@ -5,6 +5,7 @@ import { settingsStyles } from "@/styles/settings";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { AddProviderModal } from "@/components/add-provider-modal";
 import { getProviderIcon } from "@/components/provider-icons";
@@ -12,6 +13,7 @@ import { ProviderDiagnosticSheet } from "@/components/provider-diagnostic-sheet"
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
 import { SettingsSection } from "@/screens/settings/settings-section";
+import type { ProviderAuthProfile } from "@server/server/agent/agent-sdk-types";
 import { ChevronRight, Plus, RotateCw } from "lucide-react-native";
 
 type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
@@ -42,6 +44,7 @@ function getProviderStatus(status: string, enabled: boolean, modelCount: number)
 interface ProviderRowProps {
   def: ProviderDefinition;
   entry: ProviderEntry;
+  accountSummary: ProviderAccountSummary | null;
   enabled: boolean;
   isToggling: boolean;
   isFirst: boolean;
@@ -52,6 +55,7 @@ interface ProviderRowProps {
 function ProviderRow({
   def,
   entry,
+  accountSummary,
   enabled,
   isToggling,
   isFirst,
@@ -118,6 +122,21 @@ function ProviderRow({
                   {providerError}
                 </Text>
               ) : null}
+              {accountSummary ? (
+                <View style={styles.accountSummaryRow}>
+                  <Text style={styles.accountSummaryText} numberOfLines={1}>
+                    {accountSummary.label}
+                  </Text>
+                  {accountSummary.warning ? (
+                    <>
+                      <Text style={styles.separator}>·</Text>
+                      <Text style={styles.accountSummaryWarningText} numberOfLines={1}>
+                        {accountSummary.warning}
+                      </Text>
+                    </>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           </View>
           <Switch
@@ -180,12 +199,17 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const { theme } = useUnistyles();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { entries, isLoading, isRefreshing, refresh } = useProvidersSnapshot(serverId);
+  const { profiles: providerAuthProfiles } = useProviderAuthProfiles(serverId, null);
   const { patchConfig } = useDaemonConfig(serverId);
   const [diagnosticProvider, setDiagnosticProvider] = useState<string | null>(null);
   const [isAddProviderOpen, setIsAddProviderOpen] = useState(false);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
 
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
+  const accountSummaries = useMemo(
+    () => buildProviderAccountSummaries(providerAuthProfiles),
+    [providerAuthProfiles],
+  );
   const providerRefreshInFlight =
     isRefreshing || (entries?.some((entry) => entry.status === "loading") ?? false);
   const hasServer = serverId.length > 0;
@@ -286,6 +310,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                   key={def.id}
                   def={def}
                   entry={entry}
+                  accountSummary={accountSummaries.get(def.id) ?? null}
                   enabled={entry.enabled ?? true}
                   isToggling={pendingProviderId === def.id}
                   isFirst={index === 0}
@@ -378,6 +403,99 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.xs,
     marginTop: theme.spacing[1],
   },
+  accountSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: theme.spacing[1.5],
+    marginTop: theme.spacing[1],
+  },
+  accountSummaryText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  accountSummaryWarningText: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.xs,
+  },
 }));
 
 const EMPTY_CARD_STYLE = [settingsStyles.card, styles.emptyCard];
+
+interface ProviderAccountSummary {
+  label: string;
+  warning: string | null;
+}
+
+function buildProviderAccountSummaries(
+  profiles: readonly ProviderAuthProfile[] | undefined,
+): Map<string, ProviderAccountSummary> {
+  const summaries = new Map<string, ProviderAccountSummary>();
+  if (!profiles || profiles.length === 0) {
+    return summaries;
+  }
+  const profilesByProvider = new Map<string, ProviderAuthProfile[]>();
+  for (const profile of profiles) {
+    const providerProfiles = profilesByProvider.get(profile.provider) ?? [];
+    providerProfiles.push(profile);
+    profilesByProvider.set(profile.provider, providerProfiles);
+  }
+  for (const [provider, providerProfiles] of profilesByProvider) {
+    const defaultProfile = providerProfiles.find((profile) => profile.isDefault);
+    const defaultLabel = defaultProfile ? formatProviderAccountLabel(defaultProfile) : null;
+    const accountCount = providerProfiles.length;
+    const limitedCount = providerProfiles.filter(
+      (profile) => resolveUsageLimitState(profile) === "limited",
+    ).length;
+    const nearLimitCount = providerProfiles.filter(
+      (profile) => resolveUsageLimitState(profile) === "near-limit",
+    ).length;
+    let warning: string | null = null;
+    if (limitedCount > 0) {
+      warning = `${limitedCount} limited`;
+    } else if (nearLimitCount > 0) {
+      warning = `${nearLimitCount} near limit`;
+    }
+    summaries.set(provider, {
+      label: [
+        defaultLabel ? `Default: ${defaultLabel}` : null,
+        `${accountCount} ${accountCount === 1 ? "account" : "accounts"}`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      warning,
+    });
+  }
+  return summaries;
+}
+
+function formatProviderAccountLabel(profile: ProviderAuthProfile): string {
+  return profile.alias || profile.email || profile.accountName || "Account";
+}
+
+function resolveUsageLimitState(
+  profile: ProviderAuthProfile,
+): "limited" | "near-limit" | "ok" | null {
+  if (!profile.usage) {
+    return null;
+  }
+  if (profile.usage.limitState === "limited" || profile.usage.limitState === "near-limit") {
+    return profile.usage.limitState;
+  }
+  const usedPercent = Math.max(
+    typeof profile.usage.primaryUsedPercent === "number" ? profile.usage.primaryUsedPercent : -1,
+    typeof profile.usage.secondaryUsedPercent === "number"
+      ? profile.usage.secondaryUsedPercent
+      : -1,
+  );
+  if (usedPercent < 0) {
+    return null;
+  }
+  if (usedPercent >= 100) {
+    return "limited";
+  }
+  if (usedPercent >= 85) {
+    return "near-limit";
+  }
+  return "ok";
+}

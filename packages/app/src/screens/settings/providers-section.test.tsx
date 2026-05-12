@@ -7,39 +7,60 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@server/server/agent/agent-sdk-types";
 import type { MutableDaemonConfig } from "@server/shared/messages";
 
-const { theme, snapshotState, configState, patchConfigMock, refreshMock } = vi.hoisted(() => ({
-  theme: {
-    spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
-    iconSize: { sm: 14, md: 20 },
-    fontSize: { xs: 11, sm: 13, base: 15 },
-    fontWeight: { normal: "400" },
-    borderRadius: { lg: 8 },
-    opacity: { 50: 0.5 },
-    colors: {
-      surface1: "#111",
-      surface2: "#222",
-      surface3: "#333",
-      foreground: "#fff",
-      foregroundMuted: "#aaa",
-      border: "#555",
-      accent: "#0a84ff",
-      statusSuccess: "#00ff00",
-      statusWarning: "#ff9500",
-      statusDanger: "#ff0000",
-      palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
+const { theme, snapshotState, configState, authProfilesState, patchConfigMock, refreshMock } =
+  vi.hoisted(() => ({
+    theme: {
+      spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
+      iconSize: { sm: 14, md: 20 },
+      fontSize: { xs: 11, sm: 13, base: 15 },
+      fontWeight: { normal: "400" },
+      borderRadius: { lg: 8 },
+      opacity: { 50: 0.5 },
+      colors: {
+        surface1: "#111",
+        surface2: "#222",
+        surface3: "#333",
+        foreground: "#fff",
+        foregroundMuted: "#aaa",
+        border: "#555",
+        accent: "#0a84ff",
+        statusSuccess: "#00ff00",
+        statusWarning: "#ff9500",
+        statusDanger: "#ff0000",
+        palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
+      },
     },
-  },
-  snapshotState: {
-    entries: undefined as ProviderSnapshotEntry[] | undefined,
-    isLoading: false,
-    isRefreshing: false,
-  },
-  configState: {
-    config: null as MutableDaemonConfig | null,
-  },
-  patchConfigMock: vi.fn(async () => undefined),
-  refreshMock: vi.fn(async () => {}),
-}));
+    snapshotState: {
+      entries: undefined as ProviderSnapshotEntry[] | undefined,
+      isLoading: false,
+      isRefreshing: false,
+    },
+    configState: {
+      config: null as MutableDaemonConfig | null,
+    },
+    authProfilesState: {
+      profiles: [] as Array<{
+        provider: "claude" | "codex";
+        key: string;
+        alias: string;
+        email?: string;
+        authMode: "chatgpt" | "api-key" | "oauth" | "external" | "unknown";
+        status: "ready" | "needs-login" | "invalid" | "refreshing";
+        isDefault?: boolean;
+        createdAt: string;
+        updatedAt: string;
+        usage?: {
+          source: "local-rollout" | "provider-api";
+          primaryUsedPercent?: number;
+          secondaryUsedPercent?: number;
+          limitState?: "unknown" | "ok" | "near-limit" | "limited";
+          refreshedAt: string;
+        };
+      }>,
+    },
+    patchConfigMock: vi.fn(async () => undefined),
+    refreshMock: vi.fn(async () => {}),
+  }));
 
 vi.mock("react-native", () => ({
   View: ({ children, testID }: { children?: React.ReactNode; testID?: string }) =>
@@ -170,6 +191,21 @@ vi.mock("@/hooks/use-daemon-config", () => ({
   }),
 }));
 
+vi.mock("@/hooks/use-provider-auth-profiles", () => ({
+  useProviderAuthProfiles: () => ({
+    profiles: authProfilesState.profiles,
+    isLoading: false,
+    isRefreshing: false,
+    isSupported: true,
+    error: null,
+    refetch: vi.fn(),
+    importCurrent: vi.fn(),
+    remove: vi.fn(),
+    setDefault: vi.fn(),
+    refreshProfile: vi.fn(),
+  }),
+}));
+
 vi.mock("@/runtime/host-runtime", () => ({
   useHostRuntimeIsConnected: () => true,
 }));
@@ -233,6 +269,7 @@ describe("ProvidersSection", () => {
     snapshotState.isLoading = false;
     snapshotState.isRefreshing = false;
     configState.config = null;
+    authProfilesState.profiles = [];
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
     refreshMock.mockReset();
@@ -308,6 +345,46 @@ describe("ProvidersSection", () => {
     expect(status).toBeGreaterThan(label);
     expect(modelCount).toBeGreaterThan(status);
     expect(switchEl).toBeGreaterThan(modelCount);
+  });
+
+  it("shows compact default account and usage risk on provider rows", () => {
+    snapshotState.entries = [disabledCodexEntry];
+    configState.config = makeConfig({ codex: { enabled: true } });
+    authProfilesState.profiles = [
+      {
+        provider: "codex",
+        key: "codex-default",
+        alias: "work",
+        email: "work@example.com",
+        authMode: "chatgpt",
+        status: "ready",
+        isDefault: true,
+        createdAt: "2026-05-06T12:00:00.000Z",
+        updatedAt: "2026-05-06T12:00:00.000Z",
+        usage: {
+          source: "provider-api",
+          primaryUsedPercent: 99,
+          limitState: "near-limit",
+          refreshedAt: "2026-05-06T12:00:00.000Z",
+        },
+      },
+      {
+        provider: "codex",
+        key: "codex-other",
+        alias: "backup",
+        authMode: "chatgpt",
+        status: "ready",
+        createdAt: "2026-05-06T12:00:00.000Z",
+        updatedAt: "2026-05-06T12:00:00.000Z",
+      },
+    ];
+
+    render();
+
+    const row = findRow("Codex provider details");
+    expect(row.textContent).toContain("Default: work");
+    expect(row.textContent).toContain("2 accounts");
+    expect(row.textContent).toContain("1 near limit");
   });
 
   it("opens the diagnostic sheet when the outer row is pressed for a disabled provider", () => {

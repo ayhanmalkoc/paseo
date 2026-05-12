@@ -10,6 +10,7 @@ import type {
   ProviderAuthAdapterContext,
   StoredProviderAuthProfile,
 } from "./provider-auth-service.js";
+import type { ProviderAuthUsageSnapshot } from "./agent-sdk-types.js";
 import { ProviderAuthService } from "./provider-auth-service.js";
 
 class FakeAuthAdapter implements ProviderAuthAdapter {
@@ -21,6 +22,7 @@ class FakeAuthAdapter implements ProviderAuthAdapter {
   currentEmail = "user@example.com";
   missingCurrent = false;
   currentError: Error | null = null;
+  usageByProfileKey = new Map<string, ProviderAuthUsageSnapshot>();
 
   async importCurrent(
     context: ProviderAuthAdapterContext,
@@ -60,17 +62,20 @@ class FakeAuthAdapter implements ProviderAuthAdapter {
   }
 
   async refreshProfile(profile: StoredProviderAuthProfile): Promise<StoredProviderAuthProfile> {
-    return {
-      ...profile,
-      plan: "plus",
-      usage: {
+    const usage =
+      this.usageByProfileKey.get(profile.key) ??
+      ({
         source: "provider-api",
         primaryUsedPercent: 12,
         primaryWindowMinutes: 300,
         primaryResetsAt: "2026-05-06T13:30:00.000Z",
         limitState: "ok",
         refreshedAt: "2026-05-06T12:30:00.000Z",
-      },
+      } satisfies ProviderAuthUsageSnapshot);
+    return {
+      ...profile,
+      plan: "plus",
+      usage,
     };
   }
 
@@ -180,6 +185,48 @@ describe("ProviderAuthService", () => {
     await service.removeProfile("codex", "profile-a");
     expect(await service.listProfiles("codex")).toEqual([]);
     await expect(fs.stat(path.dirname(codexHome!))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("promotes the healthiest ready profile when removing the default account", async () => {
+    const adapter = new FakeAuthAdapter();
+    const service = createService(adapter);
+
+    await service.importProfile({ provider: "codex", source: "current" });
+
+    adapter.currentKey = "profile-b";
+    adapter.currentAlias = "healthy";
+    adapter.currentEmail = "healthy@example.com";
+    await service.importProfile({ provider: "codex", source: "current" });
+
+    adapter.currentKey = "profile-c";
+    adapter.currentAlias = "limited";
+    adapter.currentEmail = "limited@example.com";
+    await service.importProfile({ provider: "codex", source: "current" });
+
+    adapter.usageByProfileKey.set("profile-b", {
+      source: "provider-api",
+      primaryUsedPercent: 20,
+      primaryWindowMinutes: 300,
+      primaryResetsAt: "2026-05-06T13:30:00.000Z",
+      limitState: "ok",
+      refreshedAt: "2026-05-06T12:30:00.000Z",
+    });
+    adapter.usageByProfileKey.set("profile-c", {
+      source: "provider-api",
+      primaryUsedPercent: 95,
+      primaryWindowMinutes: 300,
+      primaryResetsAt: "2026-05-06T13:30:00.000Z",
+      limitState: "near-limit",
+      refreshedAt: "2026-05-06T12:30:00.000Z",
+    });
+
+    await service.refreshProfile("codex", "profile-b");
+    await service.refreshProfile("codex", "profile-c");
+    await service.removeProfile("codex", "profile-a");
+
+    const profiles = await service.listProfiles("codex");
+    expect(profiles.find((profile) => profile.key === "profile-b")?.isDefault).toBe(true);
+    expect(profiles.find((profile) => profile.key === "profile-c")?.isDefault).toBe(false);
   });
 
   it("syncs current auth idempotently without changing an existing default", async () => {

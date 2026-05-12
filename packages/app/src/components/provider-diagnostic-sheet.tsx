@@ -255,6 +255,70 @@ function shouldAutoRefreshUsage(profile: ProviderAuthProfile): boolean {
   return Date.now() - refreshedAt > AUTO_USAGE_REFRESH_MAX_AGE_MS;
 }
 
+function sortAuthProfiles(profiles: readonly ProviderAuthProfile[]): ProviderAuthProfile[] {
+  return [...profiles].sort(compareAuthProfiles);
+}
+
+function compareAuthProfiles(left: ProviderAuthProfile, right: ProviderAuthProfile): number {
+  if (left.isDefault !== right.isDefault) {
+    return left.isDefault ? -1 : 1;
+  }
+
+  const statusRankDelta = getAuthProfileStatusRank(left) - getAuthProfileStatusRank(right);
+  if (statusRankDelta !== 0) {
+    return statusRankDelta;
+  }
+
+  const usagePressureDelta = getUsagePressure(right) - getUsagePressure(left);
+  if (usagePressureDelta !== 0) {
+    return usagePressureDelta;
+  }
+
+  const recencyDelta = getAuthProfileRecency(right) - getAuthProfileRecency(left);
+  if (recencyDelta !== 0) {
+    return recencyDelta;
+  }
+
+  return formatAuthProfileSortLabel(left).localeCompare(formatAuthProfileSortLabel(right));
+}
+
+function getAuthProfileStatusRank(profile: ProviderAuthProfile): number {
+  switch (profile.status) {
+    case "ready":
+      return 0;
+    case "refreshing":
+      return 1;
+    case "needs-login":
+      return 2;
+    case "invalid":
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+function getUsagePressure(profile: ProviderAuthProfile): number {
+  const primary = profile.usage?.primaryUsedPercent;
+  const secondary = profile.usage?.secondaryUsedPercent;
+  return Math.max(
+    typeof primary === "number" ? primary : -1,
+    typeof secondary === "number" ? secondary : -1,
+  );
+}
+
+function getAuthProfileRecency(profile: ProviderAuthProfile): number {
+  return Math.max(
+    Date.parse(profile.lastUsedAt ?? ""),
+    Date.parse(profile.updatedAt),
+    Date.parse(profile.createdAt),
+    0,
+  );
+}
+
+function formatAuthProfileSortLabel(profile: ProviderAuthProfile): string {
+  return (profile.alias || profile.email || profile.accountName || profile.key).toLocaleLowerCase();
+}
+
 function AuthProfileRow(props: {
   profile: ProviderAuthProfile;
   busy: boolean;
@@ -389,6 +453,7 @@ function ProviderAuthProfilesSection(props: {
     () => accountLogin.sessions.find((session) => session.id === loginSessionId) ?? null,
     [accountLogin.sessions, loginSessionId],
   );
+  const sortedProfiles = useMemo(() => sortAuthProfiles(profiles), [profiles]);
 
   const runAuthAction = useCallback(async (action: () => Promise<unknown>) => {
     setError(null);
@@ -555,7 +620,7 @@ function ProviderAuthProfilesSection(props: {
               </Text>
             </View>
           ) : null}
-          {profiles.map((profile) => (
+          {sortedProfiles.map((profile) => (
             <AuthProfileRow
               key={profile.key}
               profile={profile}

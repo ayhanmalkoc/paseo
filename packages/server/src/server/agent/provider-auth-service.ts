@@ -247,7 +247,7 @@ export class ProviderAuthService {
     state.profiles = { ...state.profiles };
     delete state.profiles[profileKey];
     if (state.defaultProfileKey === profileKey) {
-      state.defaultProfileKey = Object.keys(state.profiles)[0] ?? null;
+      state.defaultProfileKey = selectReplacementDefaultProfileKey(Object.values(state.profiles));
     }
     await this.save(registry);
     await fs
@@ -660,6 +660,14 @@ function chooseProfileByUsage(profiles: StoredProviderAuthProfile[]): StoredProv
     }
     return compareProfileRecency(left, right);
   })[0];
+}
+
+function selectReplacementDefaultProfileKey(profiles: StoredProviderAuthProfile[]): string | null {
+  const readyProfiles = profiles.filter((profile) => profile.status === "ready");
+  if (readyProfiles.length > 0) {
+    return chooseProfileByUsage(readyProfiles).key;
+  }
+  return [...profiles].sort(compareProfileRecency)[0]?.key ?? null;
 }
 
 function usageScore(profile: StoredProviderAuthProfile): number {
