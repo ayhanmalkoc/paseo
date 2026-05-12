@@ -656,6 +656,7 @@ describe("WorkspaceImportSheet", () => {
 
     expect(await screen.findByText("Source: Claude CLI default")).toBeTruthy();
     expect(screen.getByTestId("workspace-import-account-claude-source")).toBeTruthy();
+    expect(screen.getByTestId("workspace-import-account-claude-provider-default")).toBeTruthy();
     fireEvent.click(await screen.findByTestId("workspace-import-session-claude-provider-thread-1"));
 
     await waitFor(() => {
@@ -663,6 +664,48 @@ describe("WorkspaceImportSheet", () => {
         providerId: "claude",
         providerHandleId: "provider-thread-1",
         cwd: "/repo/paseo",
+        sessionBehavior: "continue",
+      });
+    });
+  });
+
+  it("uses the provider default account when selected during import", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerLabel: "Claude Code",
+          source: { kind: "native-default", label: "Claude CLI default" },
+        }),
+      ],
+    }));
+    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+        authProfiles: [createAuthProfile()],
+      },
+    );
+
+    fireEvent.click(await screen.findByTestId("workspace-import-account-claude-provider-default"));
+    fireEvent.click(await screen.findByTestId("workspace-import-session-claude-provider-thread-1"));
+
+    await waitFor(() => {
+      expect(importAgent).toHaveBeenCalledWith({
+        providerId: "claude",
+        providerHandleId: "provider-thread-1",
+        cwd: "/repo/paseo",
+        providerHomeRef: {
+          kind: "managed-profile",
+          provider: "claude",
+          profileKey: "claude-default",
+        },
         sessionBehavior: "continue",
       });
     });

@@ -28,6 +28,7 @@ const IMPORT_SHEET_SNAP_POINTS = ["70%", "92%"];
 const DISABLED_ACCESSIBILITY_STATE = { disabled: true };
 const ALL_FILTER_VALUE = "__all__";
 const SOURCE_ACCOUNT_VALUE = "__source_account__";
+const PROVIDER_DEFAULT_ACCOUNT_VALUE = "__provider_default_account__";
 
 type RecentProviderSessionsClient = Pick<
   DaemonClient,
@@ -284,6 +285,13 @@ function formatAuthProfileLabel(profile: ProviderAuthProfile): string {
   );
 }
 
+function findDefaultAuthProfile(
+  provider: string,
+  authProfilesByProvider: ReadonlyMap<string, ProviderAuthProfile[]>,
+): ProviderAuthProfile | null {
+  return authProfilesByProvider.get(provider)?.find((profile) => profile.isDefault) ?? null;
+}
+
 function groupAuthProfilesByProvider(
   profiles: ReadonlyArray<ProviderAuthProfile> | undefined,
 ): Map<string, ProviderAuthProfile[]> {
@@ -311,6 +319,7 @@ function buildAccountOptions(
   provider: string,
   authProfilesByProvider: ReadonlyMap<string, ProviderAuthProfile[]>,
 ): SegmentedControlOption<string>[] {
+  const defaultProfile = findDefaultAuthProfile(provider, authProfilesByProvider);
   const options: SegmentedControlOption<string>[] = [
     {
       value: SOURCE_ACCOUNT_VALUE,
@@ -318,6 +327,13 @@ function buildAccountOptions(
       testID: `workspace-import-account-${provider}-source`,
     },
   ];
+  if (defaultProfile) {
+    options.push({
+      value: PROVIDER_DEFAULT_ACCOUNT_VALUE,
+      label: "Provider default",
+      testID: `workspace-import-account-${provider}-provider-default`,
+    });
+  }
   for (const profile of authProfilesByProvider.get(provider) ?? []) {
     options.push({
       value: profile.key,
@@ -330,16 +346,21 @@ function buildAccountOptions(
 }
 
 function resolveExplicitAccountImportHint(input: {
-  isExplicitAccountSelection: boolean;
+  selectedAccountValue: string;
   accountSelectorProvider: string | null;
 }): string | null {
-  if (!input.isExplicitAccountSelection) {
+  if (input.selectedAccountValue === SOURCE_ACCOUNT_VALUE) {
     return null;
   }
+  const isProviderDefault = input.selectedAccountValue === PROVIDER_DEFAULT_ACCOUNT_VALUE;
   if (input.accountSelectorProvider === "codex") {
-    return "This Codex session will be copied into the selected account before opening.";
+    return isProviderDefault
+      ? "This Codex session will be copied into the provider default account before opening."
+      : "This Codex session will be copied into the selected account before opening.";
   }
-  return "This session will continue with the selected account.";
+  return isProviderDefault
+    ? "This session will continue with the provider default account."
+    : "This session will continue with the selected account.";
 }
 
 function ExplicitAccountImportHint({ hint }: { hint: string | null }) {
@@ -375,6 +396,9 @@ function findSelectedAccountProfile(input: {
   if (!input.provider || input.selectedAccountValue === SOURCE_ACCOUNT_VALUE) {
     return null;
   }
+  if (input.selectedAccountValue === PROVIDER_DEFAULT_ACCOUNT_VALUE) {
+    return findDefaultAuthProfile(input.provider, input.authProfilesByProvider);
+  }
   return (
     input.authProfilesByProvider
       .get(input.provider)
@@ -389,6 +413,19 @@ function resolveImportProviderHomeRef(input: {
 }): ProviderHomeRef | undefined {
   const selected = input.selectedAccountByProvider[input.entry.providerId];
   if (selected && selected !== SOURCE_ACCOUNT_VALUE) {
+    if (selected === PROVIDER_DEFAULT_ACCOUNT_VALUE) {
+      const defaultProfile = findDefaultAuthProfile(
+        input.entry.providerId,
+        input.authProfilesByProvider,
+      );
+      return defaultProfile
+        ? (defaultProfile.providerHomeRef ?? {
+            kind: "managed-profile",
+            provider: input.entry.providerId,
+            profileKey: defaultProfile.key,
+          })
+        : undefined;
+    }
     const profile = input.authProfilesByProvider
       .get(input.entry.providerId)
       ?.find((candidate) => candidate.key === selected);
@@ -591,9 +628,8 @@ export function WorkspaceImportSheet({
     accountSelectorProvider,
     selectedAccountByProvider,
   );
-  const isExplicitAccountSelection = selectedAccountValue !== SOURCE_ACCOUNT_VALUE;
   const explicitAccountImportHint = resolveExplicitAccountImportHint({
-    isExplicitAccountSelection,
+    selectedAccountValue,
     accountSelectorProvider,
   });
   const selectedAccountProfile = useMemo(

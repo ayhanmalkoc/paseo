@@ -321,6 +321,17 @@ function formatAuthProfileLabel(profile: ProviderAuthProfile): string {
   );
 }
 
+function findDefaultAuthProfile(authProfiles: ProviderAuthProfile[]): ProviderAuthProfile | null {
+  return authProfiles.find((profile) => profile.isDefault) ?? null;
+}
+
+function formatProviderDefaultAccountDisplay(authProfiles: ProviderAuthProfile[]): string {
+  const defaultProfile = findDefaultAuthProfile(authProfiles);
+  return defaultProfile
+    ? `Provider default · ${formatAuthProfileLabel(defaultProfile)}`
+    : "Provider default";
+}
+
 function normalizeAuthProfileSelection(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
@@ -381,11 +392,10 @@ function resolveDisplayAuthProfile(input: {
     return "Loading accounts...";
   }
   if (!input.selectedAccountKey) {
-    const defaultProfile = input.authProfiles.find((profile) => profile.isDefault);
-    return defaultProfile ? formatAuthProfileLabel(defaultProfile) : "Default account";
+    return formatProviderDefaultAccountDisplay(input.authProfiles);
   }
   const selected = input.authProfiles.find((profile) => profile.key === input.selectedAccountKey);
-  return selected ? formatAuthProfileLabel(selected) : "Default account";
+  return selected ? formatAuthProfileLabel(selected) : "Provider default";
 }
 
 function resolveAuthProfileControlState(input: {
@@ -457,7 +467,7 @@ function resolveAuthProfileDisplayByKey(
   accountKey: string | null | undefined,
 ): string {
   if (!accountKey) {
-    return "Provider default account";
+    return "Provider default";
   }
   const profile = authProfiles.find((candidate) => candidate.key === accountKey);
   return profile ? formatAuthProfileLabel(profile) : accountKey;
@@ -477,13 +487,30 @@ function resolveRuntimeProfileAccountDisplay(
   profile: RuntimeProfile,
 ): string {
   if (profile.accountSelection?.kind === "inherit-provider-default") {
-    return "Provider default account";
+    return "Provider default";
   }
   if (profile.accountSelection?.kind === "native-default") {
-    return "Native default account";
+    return "Native default";
   }
   const accountKey = getRuntimeProfileManagedAccountKey(profile);
   return resolveAuthProfileDisplayByKey(authProfiles, accountKey);
+}
+
+function resolveRuntimeProfileResolvedAccountDisplay(input: {
+  authProfiles: ProviderAuthProfile[];
+  profile: RuntimeProfile;
+  resolvedAccountKey?: string;
+}): string | null {
+  if (input.profile.accountSelection?.kind !== "inherit-provider-default") {
+    return null;
+  }
+  const resolvedAccountKey =
+    normalizeAuthProfileSelection(input.resolvedAccountKey) ??
+    findDefaultAuthProfile(input.authProfiles)?.key;
+  if (!resolvedAccountKey) {
+    return null;
+  }
+  return resolveAuthProfileDisplayByKey(input.authProfiles, resolvedAccountKey);
 }
 
 function formatRuntimeProfileValue(value: unknown): string {
@@ -1286,8 +1313,8 @@ function ControlledStatusBar({
           selectedThinkingOptionId={selectedThinkingOptionId}
           features={features}
           onSetFeature={onSetFeature}
-          onSelectMode={onSelectMode}
-          onSelectThinkingOption={onSelectThinkingOption}
+          onSelectMode={handleModeSelect}
+          onSelectThinkingOption={handleThinkingSelect}
           onToggleFavoriteModel={onToggleFavoriteModel}
           onDropdownClose={onDropdownClose}
           onModelSelectorOpen={onModelSelectorOpen}
@@ -1449,8 +1476,6 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     selectedThinkingOptionId,
     features,
     onSetFeature,
-    onSelectMode,
-    onSelectThinkingOption,
     onToggleFavoriteModel,
     onDropdownClose,
     onModelSelectorOpen,
@@ -1472,6 +1497,8 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     prefsOpen,
     handleRuntimeProfileSelect,
     handleAuthProfileSelect,
+    handleModeSelect,
+    handleThinkingSelect,
     handleThinkingOpenChange,
     handleRuntimeProfileOpenChange,
     handleAuthProfileOpenChange,
@@ -1531,8 +1558,8 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
           selectedThinkingOptionId={selectedThinkingOptionId}
           features={features}
           onSetFeature={onSetFeature}
-          onSelectMode={onSelectMode}
-          onSelectThinkingOption={onSelectThinkingOption}
+          onSelectMode={handleModeSelect}
+          onSelectThinkingOption={handleThinkingSelect}
           onToggleFavoriteModel={onToggleFavoriteModel}
           onDropdownClose={onDropdownClose}
           onModelSelectorOpen={onModelSelectorOpen}
@@ -1942,6 +1969,13 @@ function PreferencesSheetBody(props: PreferencesSheetBodyProps) {
       handleRuntimeProfileSelect(selectedRuntimeProfileIdForApply);
     }
   }, [handleRuntimeProfileSelect, selectedRuntimeProfileIdForApply]);
+  const handleModeSelect = useCallback(
+    (modeId: string) => {
+      onSelectMode?.(modeId);
+      handleModeOpenChange(false);
+    },
+    [handleModeOpenChange, onSelectMode],
+  );
 
   return (
     <>
@@ -1984,6 +2018,7 @@ function PreferencesSheetBody(props: PreferencesSheetBodyProps) {
           profile={selectedRuntimeProfile}
           launchedVersion={selectedRuntimeProfileVersion}
           authProfiles={authProfiles}
+          resolvedAccountKey={selectedAccountKey}
           providerDefinitions={providerDefinitions}
           modeOptions={modeOptions}
           thinkingOptions={thinkingOptions}
@@ -2059,7 +2094,8 @@ function PreferencesSheetBody(props: PreferencesSheetBodyProps) {
                   provider={provider}
                   providerDefinitions={providerDefinitions}
                   selected={mode.id === selectedModeId}
-                  onSelectMode={onSelectMode}
+                  onSelectMode={handleModeSelect}
+                  closeOnSelect={false}
                 />
               ))}
             </DropdownMenuContent>
@@ -2087,6 +2123,7 @@ function RuntimeProfileDetailsSection({
   profile,
   launchedVersion,
   authProfiles,
+  resolvedAccountKey,
   providerDefinitions,
   modeOptions,
   thinkingOptions,
@@ -2097,6 +2134,7 @@ function RuntimeProfileDetailsSection({
   profile: RuntimeProfile;
   launchedVersion?: number;
   authProfiles: ProviderAuthProfile[];
+  resolvedAccountKey?: string;
   providerDefinitions: AgentProviderDefinition[];
   modeOptions?: StatusOption[];
   thinkingOptions?: StatusOption[];
@@ -2119,6 +2157,17 @@ function RuntimeProfileDetailsSection({
         warning: Boolean(usageWarning),
       }
     : null;
+  const resolvedAccountDisplay = resolveRuntimeProfileResolvedAccountDisplay({
+    authProfiles,
+    profile,
+    resolvedAccountKey,
+  });
+  const resolvedAccountRow = resolvedAccountDisplay
+    ? {
+        label: "Resolved account",
+        value: resolvedAccountDisplay,
+      }
+    : null;
   const featureValues = profile.featureValues ?? {};
   const featureRows: ProfileDetailsRow[] = Object.entries(featureValues).map(
     ([featureId, value]) => {
@@ -2139,6 +2188,7 @@ function RuntimeProfileDetailsSection({
       label: "Account",
       value: resolveRuntimeProfileAccountDisplay(authProfiles, profile),
     },
+    ...(resolvedAccountRow ? [resolvedAccountRow] : []),
     ...(usageRow ? [usageRow] : []),
     {
       label: "Model",
@@ -2156,6 +2206,7 @@ function RuntimeProfileDetailsSection({
         profile.thinkingOptionId ?? "Default",
       ),
     },
+    ...featureRows,
     {
       label: "Launched",
       value: launchedVersion ? `Version ${launchedVersion}` : "Current draft",
@@ -2164,7 +2215,6 @@ function RuntimeProfileDetailsSection({
       label: "Latest",
       value: `Version ${profile.version}`,
     },
-    ...featureRows,
   ];
 
   return (
@@ -2415,7 +2465,7 @@ function AuthProfileAutoMenuItem({
 
   return (
     <DropdownMenuItem selected={selected} onSelect={handleSelect}>
-      Default account
+      Provider default
     </DropdownMenuItem>
   );
 }
@@ -2500,12 +2550,14 @@ function ModeMenuItem({
   providerDefinitions,
   selected,
   onSelectMode,
+  closeOnSelect = true,
 }: {
   mode: StatusOption;
   provider: string;
   providerDefinitions: AgentProviderDefinition[];
   selected: boolean;
   onSelectMode?: (modeId: string) => void;
+  closeOnSelect?: boolean;
 }) {
   const { theme } = useUnistyles();
   const visuals = getModeVisuals(provider, mode.id, providerDefinitions);
@@ -2521,7 +2573,12 @@ function ModeMenuItem({
   );
 
   return (
-    <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leadingIcon}>
+    <DropdownMenuItem
+      selected={selected}
+      onSelect={handleSelect}
+      closeOnSelect={closeOnSelect}
+      leading={leadingIcon}
+    >
       {mode.label}
     </DropdownMenuItem>
   );

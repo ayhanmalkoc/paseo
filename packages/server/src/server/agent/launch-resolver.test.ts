@@ -112,6 +112,42 @@ describe("LaunchResolver", () => {
     });
   });
 
+  test("runtime profile snapshot preserves provider default account intent", async () => {
+    const resolver = createResolver({
+      profile: createRuntimeProfile({
+        accountSelection: { kind: "inherit-provider-default" },
+      }),
+      defaultProfileKey: "profile-account",
+    });
+    const config: AgentSessionConfig = {
+      provider: "codex",
+      cwd: "C:\\dev\\paseo",
+      runtimeProfileId: "profile-1",
+    };
+
+    const resolved = await resolver.resolve({
+      agentId: "agent-1",
+      config,
+      normalizedConfig: config,
+      resolveDefaultAuthProfile: true,
+    });
+
+    expect(resolved.config.providerHomeRef).toMatchObject({
+      kind: "managed-profile",
+      provider: "codex",
+      profileKey: "profile-account",
+    });
+    expect(resolved.snapshot).toMatchObject({
+      accountSelection: { kind: "inherit-provider-default" },
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "profile-account",
+      },
+      accountKey: "profile-account",
+    });
+  });
+
   test("runtime profile session behavior defaults to continue", async () => {
     const resolver = createResolver({
       profile: createRuntimeProfile(),
@@ -509,7 +545,13 @@ describe("LaunchResolver", () => {
   });
 });
 
-function createResolver({ profile }: { profile: RuntimeProfile }) {
+function createResolver({
+  profile,
+  defaultProfileKey,
+}: {
+  profile: RuntimeProfile;
+  defaultProfileKey?: string;
+}) {
   const runtimeProfileService = {
     getProfile: async (profileId: string) => (profileId === profile.id ? profile : null),
   } as unknown as RuntimeProfileService;
@@ -523,7 +565,7 @@ function createResolver({ profile }: { profile: RuntimeProfile }) {
       const profileKey =
         selection.providerHomeRef?.kind === "managed-profile"
           ? (selection.providerHomeRef.profileKey ?? null)
-          : null;
+          : (defaultProfileKey ?? null);
       const providerHomeRef = profileKey
         ? { kind: "managed-profile" as const, provider: "codex", profileKey }
         : { kind: "native-default" as const, provider: "codex", homePath: "C:\\Users\\me\\.codex" };

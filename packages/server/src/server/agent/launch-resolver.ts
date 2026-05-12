@@ -217,7 +217,12 @@ export class LaunchResolver {
     return stripUndefined<AgentProfileSnapshot>({
       ...buildSnapshotProfileIdentity(profile),
       provider: config.provider,
-      accountSelection: accountSelectionFromProviderHomeRef(input.providerHomeRef),
+      accountSelection: resolveSnapshotAccountSelection({
+        provider: config.provider,
+        profile,
+        overrides,
+        providerHomeRef: input.providerHomeRef,
+      }),
       providerHomeRef: input.providerHomeRef,
       accountKey: getManagedProviderHomeProfileKey(input.providerHomeRef),
       ...buildSnapshotRuntimeSelection(config),
@@ -316,6 +321,39 @@ function accountSelectionFromProviderHomeRef(
     return { kind: "managed-account", providerHomeRef };
   }
   return { kind: "native-default" };
+}
+
+function accountSelectionFromManagedProfileKey(
+  provider: AgentProvider,
+  profileKey: string | null | undefined,
+): RuntimeProfileAccountSelection | null {
+  const providerHomeRef = resolveManagedHomeRefFromProfileKey(provider, profileKey);
+  return providerHomeRef ? { kind: "managed-account", providerHomeRef } : null;
+}
+
+function resolveSnapshotAccountSelection(input: {
+  provider: AgentProvider;
+  profile: RuntimeProfile | null;
+  overrides?: RuntimeProfileLaunchOverrides;
+  providerHomeRef: ProviderHomeRef;
+}): RuntimeProfileAccountSelection {
+  return (
+    input.overrides?.accountSelection ??
+    accountSelectionFromOptionalProviderHomeRef(input.provider, input.overrides?.providerHomeRef) ??
+    accountSelectionFromManagedProfileKey(input.provider, input.overrides?.accountKey) ??
+    input.profile?.accountSelection ??
+    accountSelectionFromOptionalProviderHomeRef(input.provider, input.profile?.providerHomeRef) ??
+    accountSelectionFromManagedProfileKey(input.provider, input.profile?.accountKey) ??
+    accountSelectionFromProviderHomeRef(input.providerHomeRef)
+  );
+}
+
+function accountSelectionFromOptionalProviderHomeRef(
+  provider: AgentProvider,
+  providerHomeRef: ProviderHomeRef | null | undefined,
+): RuntimeProfileAccountSelection | null {
+  const normalized = normalizeProviderHomeRef(providerHomeRef, provider);
+  return normalized ? accountSelectionFromProviderHomeRef(normalized) : null;
 }
 
 function resolveManagedHomeRefFromProfileKey(
