@@ -276,11 +276,25 @@ export const ProviderAuthProfileSchema: z.ZodType<ProviderAuthProfile> = z.objec
 
 const RuntimeProfileConcurrencyPolicySchema = z.enum(["allow", "warn", "single-active"]);
 const RuntimeProfileSessionBehaviorSchema = z.enum(["continue", "fresh"]);
+const RuntimeProfileAccountSelectionSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("inherit-provider-default"),
+  }),
+  z.object({
+    kind: z.literal("native-default"),
+  }),
+  z.object({
+    kind: z.literal("managed-account"),
+    providerHomeRef: ProviderHomeRefSchema,
+  }),
+]);
 
 const RuntimeProfileFieldsSchema = z.object({
   provider: AgentProviderSchema.optional(),
+  accountSelection: RuntimeProfileAccountSelectionSchema.optional(),
+  // COMPAT(runtimeProfileAccountSelection): accepted from old clients/storage and normalized server-side.
   providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
-  // COMPAT(providerHomeRef): accepted from old clients/storage and normalized server-side.
+  // COMPAT(runtimeProfileAccountSelection): accepted from old clients/storage and normalized server-side.
   accountKey: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   modeId: z.string().nullable().optional(),
@@ -382,8 +396,9 @@ export const AgentProfileSnapshotSchema: z.ZodType<AgentProfileSnapshot> = z.obj
   sourceProfileVersion: z.number().int().positive().optional(),
   sourceProfileName: z.string().optional(),
   provider: AgentProviderSchema,
+  accountSelection: RuntimeProfileAccountSelectionSchema.optional(),
   providerHomeRef: ProviderHomeRefSchema.nullable().optional(),
-  // COMPAT(providerHomeRef): retained so old clients can still parse snapshots.
+  // COMPAT(runtimeProfileAccountSelection): retained so old clients can still parse snapshots.
   accountKey: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   modeId: z.string().nullable().optional(),
@@ -392,6 +407,7 @@ export const AgentProfileSnapshotSchema: z.ZodType<AgentProfileSnapshot> = z.obj
   systemPrompt: z.string().nullable().optional(),
   featureValues: z.record(z.unknown()).optional(),
   envOverlay: z.record(z.string()).optional(),
+  mcpServers: z.record(z.lazy(() => McpServerConfigSchema)).optional(),
   concurrencyPolicy: RuntimeProfileConcurrencyPolicySchema.optional(),
   sessionBehavior: RuntimeProfileSessionBehaviorSchema.optional(),
   resolvedAt: z.string(),

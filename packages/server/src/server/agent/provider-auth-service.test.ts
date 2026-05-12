@@ -137,7 +137,14 @@ describe("ProviderAuthService", () => {
     });
     expect(profile).not.toHaveProperty("providerHomePath");
 
-    const nativeLaunchContext = await service.resolveLaunchContext({ provider: "codex" });
+    const defaultLaunchContext = await service.resolveLaunchContext({ provider: "codex" });
+    expect(defaultLaunchContext.profileKey).toBe("profile-a");
+    expect(defaultLaunchContext.providerHomeRef.kind).toBe("managed-profile");
+
+    const nativeLaunchContext = await service.resolveLaunchContext({
+      provider: "codex",
+      providerHomeRef: { kind: "native-default", provider: "codex" },
+    });
     expect(nativeLaunchContext.profileKey).toBeNull();
     expect(nativeLaunchContext.providerHomeRef.kind).toBe("native-default");
 

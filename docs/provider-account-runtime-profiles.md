@@ -14,9 +14,11 @@ Paseo separates four concepts:
 
 - Provider: the executable/runtime family, such as Codex, Claude, or OpenCode.
 - Account: a credential record plus the provider home that owns that
-  credential.
-- Runtime profile: a reusable preset for provider, account, model, mode,
-  feature values, instructions, MCP servers, and session behavior.
+  credential. Provider settings own accounts, default account selection,
+  device pairing, usage, limits, credits, native homes, and provider model
+  catalogs.
+- Runtime profile: a reusable launch preset. It references provider-owned
+  account/model/runtime facts and stores only the preset choices and overrides.
 - Agent snapshot: the launch-time resolved copy used by an agent. Existing
   agents do not silently follow later runtime profile edits.
 
@@ -32,17 +34,22 @@ The default session behavior is `continue`. `fresh` is explicit.
 
 New code uses these canonical fields:
 
-- `providerHomeRef`: the provider home identity used to launch/resume a provider.
-- `accountKey`: the selected managed account key in profile/editor surfaces.
+- `accountSelection`: profile-level account intent:
+  `inherit-provider-default`, `native-default`, or `managed-account`.
+- `providerHomeRef`: the resolved provider home identity used to launch/resume a
+  provider.
 - `runtimeProfileId`: the selected reusable runtime profile.
 - `sessionBehavior`: `continue` or `fresh`.
 
 `providerHomeRef` is the boundary-safe account identity. For Codex this decides
-the `CODEX_HOME` used by the app-server process.
+the `CODEX_HOME` used by the app-server process. Runtime profiles do not copy
+account usage, credit, limit, or model-catalog data. They keep stable references
+and resolved launch choices; live provider data stays in provider settings and
+provider caches.
 
-`authProfileKey` is not part of the product model. It is accepted only at
-protocol/storage compatibility boundaries and immediately normalized to
-`providerHomeRef`/`accountKey`.
+`accountKey` and `authProfileKey` are not part of the canonical product model.
+They are accepted only at protocol/storage compatibility boundaries and
+immediately normalized to `accountSelection`/`providerHomeRef`.
 
 ## Implemented Scope
 
@@ -54,7 +61,8 @@ Implemented surfaces:
   accounts.
 - Codex account onboarding supports ChatGPT device-code login through the Codex
   app-server flow.
-- New-agent custom settings can select an account.
+- New-agent custom settings can select an account. Empty account selection means
+  provider default; explicit native default bypasses managed accounts.
 - Runtime profile settings can create/edit/delete profiles with provider,
   account, model, mode, thinking, concurrency, session behavior, instructions,
   feature values, environment, and MCP server settings.
@@ -66,7 +74,9 @@ Implemented surfaces:
 - Import session sheet can import native provider sessions with source account
   or an explicitly selected account.
 - CLI import supports selected account through `providerHomeRef`.
-- Persisted/resumed agents carry resolved `providerHomeRef`.
+- Persisted/resumed agents carry resolved `accountSelection`, `providerHomeRef`,
+  model, mode, thinking, feature, environment, MCP, and session behavior
+  snapshots.
 
 ## Codex Session Continuity
 
@@ -93,12 +103,14 @@ Settings:
 
 - Add provider installs/configures provider definitions.
 - Accounts manages provider accounts for the selected provider.
-- Runtime profiles manages reusable launch presets.
+- Accounts owns provider default account selection.
+- Runtime profiles manages reusable launch presets. Account selection is
+  explicit: Provider default, Native default, or a specific managed account.
 
 New agent/custom settings:
 
 - Provider/model/mode selectors.
-- Account selector.
+- Account selector. No explicit account means provider default account.
 - Runtime profile selector.
 - Runtime profile selection can override custom account/model controls.
 
@@ -148,15 +160,16 @@ Accepted compatibility inputs:
 Compatibility behavior:
 
 - Parse old `authProfileKey`.
-- Convert it to `providerHomeRef`/`accountKey` at the boundary.
+- Parse old `accountKey`.
+- Convert both to `accountSelection`/`providerHomeRef` at the boundary.
 - Do not store or pass `authProfileKey` through new internal code.
 - Continue emitting optional `authProfileKey` where old clients parse snapshots
   or import sources.
 
-Every remaining `authProfileKey` reference should be either protocol/storage
-compat or a compat test.
+Every remaining `authProfileKey` or runtime-profile `accountKey` reference
+should be either protocol/storage compat or a compat test.
 
-## Remaining Product Work
+## Provider Support Boundaries Still In Force
 
 Provider-specific follow-up:
 
@@ -167,7 +180,7 @@ Provider-specific follow-up:
 - Add provider-specific continuity tests before enabling either provider in
   `providerAuthProfileProviders`.
 
-UI follow-up:
+UI invariants:
 
 - Keep feature values structured and provider-defined.
 - Keep environment and MCP server settings as JSON unless a future provider
@@ -179,7 +192,7 @@ UI follow-up:
   provider account; an explicit account means Paseo may copy provider session
   state before opening.
 
-Testing:
+Testing invariants:
 
 - Add provider-specific continuity tests before enabling account surfaces beyond
   Codex.
@@ -192,6 +205,8 @@ Testing:
 This layer is healthy when:
 
 - New product code uses `providerHomeRef`/`accountKey`, not `authProfileKey`.
+- Runtime profiles use `accountSelection`, not `accountKey`, as the canonical
+  account choice.
 - Import session, runtime profile switch, and account switch follow the same
   mental model.
 - Existing stored agents and old clients still parse.

@@ -7,11 +7,16 @@ import type {
   AgentProvider,
   ProviderHomeRef,
   RuntimeProfile,
+  RuntimeProfileAccountSelection,
   RuntimeProfilePatch,
   RuntimeProfileConcurrencyPolicy,
   RuntimeProfileSessionBehavior,
 } from "./agent-sdk-types.js";
-import { normalizeProviderHomeRef } from "./provider-home-ref.js";
+import {
+  createManagedProviderHomeRef,
+  createNativeDefaultProviderHomeRef,
+  normalizeProviderHomeRef,
+} from "./provider-home-ref.js";
 
 interface StoredRuntimeProfileRegistry {
   schemaVersion: 1;
@@ -207,6 +212,9 @@ function normalizeProfile(profile: LegacyRuntimeProfileInput): RuntimeProfile {
     normalizeRecord(profile.featureDefaults),
     normalizeRecord(profile.featureValues),
   );
+  const accountSelection = normalizeRuntimeProfileAccountSelection(profile, provider);
+  const providerHomeRef = getCompatProviderHomeRef(accountSelection, provider);
+  const accountKey = getCompatAccountKey(accountSelection);
   return {
     id: normalizeRequiredString(profile.id, "Runtime profile id"),
     version:
@@ -217,9 +225,10 @@ function normalizeProfile(profile: LegacyRuntimeProfileInput): RuntimeProfile {
         : 1,
     name,
     provider,
-    providerHomeRef: normalizeProviderHomeRef(profile.providerHomeRef, provider),
-    // COMPAT(providerHomeRef): keep reading accountKey until old profile files age out.
-    accountKey: normalizeNullableString(profile.accountKey),
+    accountSelection,
+    // COMPAT(runtimeProfileAccountSelection): keep emitting providerHomeRef/accountKey until old clients age out.
+    providerHomeRef,
+    accountKey,
     model: normalizeNullableString(profile.model),
     modeId: normalizeNullableString(profile.modeId),
     thinkingOptionId: normalizeNullableString(profile.thinkingOptionId),
@@ -233,6 +242,86 @@ function normalizeProfile(profile: LegacyRuntimeProfileInput): RuntimeProfile {
     createdAt: normalizeRequiredString(profile.createdAt, "Runtime profile createdAt"),
     updatedAt: normalizeRequiredString(profile.updatedAt, "Runtime profile updatedAt"),
   };
+}
+
+function normalizeRuntimeProfileAccountSelection(
+  profile: LegacyRuntimeProfileInput,
+  provider: AgentProvider,
+): RuntimeProfileAccountSelection {
+  const explicitSelection = normalizeAccountSelectionValue(profile.accountSelection, provider);
+  if (explicitSelection) {
+    return explicitSelection;
+  }
+
+  const providerHomeRef = normalizeProviderHomeRef(profile.providerHomeRef, provider);
+  if (providerHomeRef?.kind === "native-default") {
+    return { kind: "native-default" };
+  }
+  if (providerHomeRef?.kind === "managed-profile") {
+    return { kind: "managed-account", providerHomeRef };
+  }
+
+  const accountKey = normalizeNullableString(profile.accountKey);
+  if (accountKey) {
+    return {
+      kind: "managed-account",
+      providerHomeRef: createManagedProviderHomeRef({ provider, profileKey: accountKey }),
+    };
+  }
+
+  // COMPAT(runtimeProfileAccountSelection): old profile files used missing account fields for native default.
+  return { kind: "native-default" };
+}
+
+function normalizeAccountSelectionValue(
+  value: unknown,
+  provider: AgentProvider,
+): RuntimeProfileAccountSelection | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const kind = (value as { kind?: unknown }).kind;
+  if (kind === "inherit-provider-default") {
+    return { kind };
+  }
+  if (kind === "native-default") {
+    return { kind };
+  }
+  if (kind === "managed-account") {
+    const providerHomeRef = normalizeProviderHomeRef(
+      (value as { providerHomeRef?: ProviderHomeRef | null }).providerHomeRef,
+      provider,
+    );
+    if (providerHomeRef?.kind === "managed-profile") {
+      return { kind, providerHomeRef };
+    }
+    if (providerHomeRef?.kind === "native-default") {
+      return { kind: "native-default" };
+    }
+  }
+  return null;
+}
+
+function getCompatProviderHomeRef(
+  selection: RuntimeProfileAccountSelection,
+  provider: AgentProvider,
+): ProviderHomeRef | null | undefined {
+  if (selection.kind === "native-default") {
+    return createNativeDefaultProviderHomeRef({ provider });
+  }
+  if (selection.kind === "managed-account") {
+    return selection.providerHomeRef;
+  }
+  return undefined;
+}
+
+function getCompatAccountKey(selection: RuntimeProfileAccountSelection): string | null | undefined {
+  if (selection.kind !== "managed-account") {
+    return undefined;
+  }
+  return selection.providerHomeRef.kind === "managed-profile"
+    ? (selection.providerHomeRef.profileKey ?? undefined)
+    : undefined;
 }
 
 function normalizeRequiredString(value: unknown, label: string): string {

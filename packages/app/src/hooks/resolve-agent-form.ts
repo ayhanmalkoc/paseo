@@ -308,7 +308,7 @@ function resolveModelField(input: {
   if (preferredModel) {
     return !availableModels || isValidModel(preferredModel) ? preferredModel : defaultModelId;
   }
-  return "";
+  return defaultModelId;
 }
 
 function resolveThinkingOption(input: {

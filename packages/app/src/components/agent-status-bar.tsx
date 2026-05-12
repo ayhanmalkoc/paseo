@@ -342,7 +342,7 @@ function resolveAuthProfileRestartLabel(
   accountKey: string | null,
 ): string {
   if (!accountKey) {
-    return "Default account";
+    return "Provider default account";
   }
   const profile = authProfiles.find((candidate) => candidate.key === accountKey);
   return profile ? formatAuthProfileLabel(profile) : "Selected account";
@@ -457,10 +457,33 @@ function resolveAuthProfileDisplayByKey(
   accountKey: string | null | undefined,
 ): string {
   if (!accountKey) {
-    return "Default account";
+    return "Provider default account";
   }
   const profile = authProfiles.find((candidate) => candidate.key === accountKey);
   return profile ? formatAuthProfileLabel(profile) : accountKey;
+}
+
+function getRuntimeProfileManagedAccountKey(profile: RuntimeProfile): string | null {
+  if (profile.accountSelection?.kind === "managed-account") {
+    return profile.accountSelection.providerHomeRef.kind === "managed-profile"
+      ? (profile.accountSelection.providerHomeRef.profileKey ?? null)
+      : null;
+  }
+  return profile.accountKey ?? null;
+}
+
+function resolveRuntimeProfileAccountDisplay(
+  authProfiles: ProviderAuthProfile[],
+  profile: RuntimeProfile,
+): string {
+  if (profile.accountSelection?.kind === "inherit-provider-default") {
+    return "Provider default account";
+  }
+  if (profile.accountSelection?.kind === "native-default") {
+    return "Native default account";
+  }
+  const accountKey = getRuntimeProfileManagedAccountKey(profile);
+  return resolveAuthProfileDisplayByKey(authProfiles, accountKey);
 }
 
 function formatRuntimeProfileValue(value: unknown): string {
@@ -2083,8 +2106,9 @@ function RuntimeProfileDetailsSection({
 }) {
   const { theme } = useUnistyles();
   const isStale = launchedVersion !== undefined && launchedVersion < profile.version;
-  const selectedAuthProfile = profile.accountKey
-    ? authProfiles.find((candidate) => candidate.key === profile.accountKey)
+  const selectedAccountKey = getRuntimeProfileManagedAccountKey(profile);
+  const selectedAuthProfile = selectedAccountKey
+    ? authProfiles.find((candidate) => candidate.key === selectedAccountKey)
     : null;
   const usageSummary = formatProviderAuthUsageSummary(selectedAuthProfile?.usage);
   const usageWarning = formatProviderAuthUsageWarning(selectedAuthProfile?.usage);
@@ -2113,7 +2137,7 @@ function RuntimeProfileDetailsSection({
     },
     {
       label: "Account",
-      value: resolveAuthProfileDisplayByKey(authProfiles, profile.accountKey),
+      value: resolveRuntimeProfileAccountDisplay(authProfiles, profile),
     },
     ...(usageRow ? [usageRow] : []),
     {

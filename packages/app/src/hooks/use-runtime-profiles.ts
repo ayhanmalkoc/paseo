@@ -106,7 +106,29 @@ function requireClient(client: DaemonClient | null): DaemonClient {
 }
 
 export function resolveRuntimeProfileSummary(profile: RuntimeProfile): string {
-  return [profile.provider, profile.accountKey, profile.model, profile.modeId]
+  return [
+    profile.provider,
+    formatRuntimeProfileAccountSelection(profile),
+    profile.model,
+    profile.modeId,
+  ]
     .filter(Boolean)
     .join(" · ");
+}
+
+function formatRuntimeProfileAccountSelection(profile: RuntimeProfile): string {
+  if (profile.accountSelection?.kind === "inherit-provider-default") {
+    return "provider default account";
+  }
+  if (profile.accountSelection?.kind === "native-default") {
+    return "native default account";
+  }
+  if (profile.accountSelection?.kind === "managed-account") {
+    return (
+      profile.accountSelection.providerHomeRef.label ??
+      profile.accountSelection.providerHomeRef.profileKey ??
+      ""
+    );
+  }
+  return profile.accountKey ?? "";
 }
