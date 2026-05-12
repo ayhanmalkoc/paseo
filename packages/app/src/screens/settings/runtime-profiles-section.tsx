@@ -434,7 +434,7 @@ function RuntimeProfileEditorSheet({
       desktopMaxWidth={620}
       testID="runtime-profile-editor"
     >
-      <SettingsSection title="Identity">
+      <SettingsSection title="Profile">
         <View style={styles.fieldStack}>
           <LabeledInput
             label="Name"
@@ -443,6 +443,11 @@ function RuntimeProfileEditorSheet({
             placeholder="Work account"
             editable={!saving}
           />
+        </View>
+      </SettingsSection>
+
+      <SettingsSection title="Provider & account">
+        <View style={styles.fieldStack}>
           <SelectField
             label="Provider"
             value={selectedProviderLabel}
@@ -464,7 +469,7 @@ function RuntimeProfileEditorSheet({
         </View>
       </SettingsSection>
 
-      <SettingsSection title="Runtime">
+      <SettingsSection title="Model & behavior">
         <View style={styles.fieldStack}>
           <SelectField
             label="Model"
@@ -490,6 +495,19 @@ function RuntimeProfileEditorSheet({
             onSelect={(value) => setField("thinkingOptionId", value)}
             disabled={saving || thinkingSelectOptions.length <= 1}
           />
+        </View>
+      </SettingsSection>
+
+      <RuntimeProfileFeaturesSection
+        features={draftFeatures.features}
+        isLoading={draftFeatures.isLoading}
+        error={draftFeatures.error}
+        disabled={saving}
+        onSetFeatureValue={handleSetFeatureValue}
+      />
+
+      <SettingsSection title="Conversation">
+        <View style={styles.fieldStack}>
           <SelectField
             label="Concurrency"
             value={resolveOptionLabel(CONCURRENCY_OPTIONS, draft.concurrencyPolicy)}
@@ -513,14 +531,6 @@ function RuntimeProfileEditorSheet({
           />
         </View>
       </SettingsSection>
-
-      <RuntimeProfileFeaturesSection
-        features={draftFeatures.features}
-        isLoading={draftFeatures.isLoading}
-        error={draftFeatures.error}
-        disabled={saving}
-        onSetFeatureValue={handleSetFeatureValue}
-      />
 
       <SettingsSection title="Instructions">
         <View style={styles.fieldStack}>
@@ -782,7 +792,7 @@ function RuntimeProfileFeaturesSection({
 }) {
   const { theme } = useUnistyles();
   return (
-    <SettingsSection title="Features">
+    <SettingsSection title="Provider features">
       <View style={styles.fieldStack}>
         {isLoading ? (
           <View style={styles.inlineStatus}>
