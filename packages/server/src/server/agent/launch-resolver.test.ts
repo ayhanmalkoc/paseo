@@ -68,6 +68,50 @@ describe("LaunchResolver", () => {
     expect(resolved.launchContext.env.CODEX_HOME).toBe("C:\\profiles\\profile-account");
   });
 
+  test("runtime profile account selection distinguishes provider default and native default", async () => {
+    const resolver = createResolver({
+      profile: createRuntimeProfile({
+        accountSelection: { kind: "native-default" },
+      }),
+    });
+    const config: AgentSessionConfig = {
+      provider: "codex",
+      cwd: "C:\\dev\\paseo",
+      runtimeProfileId: "profile-1",
+      profileOverrides: {
+        accountSelection: {
+          kind: "managed-account",
+          providerHomeRef: {
+            kind: "managed-profile",
+            provider: "codex",
+            profileKey: "override-account",
+          },
+        },
+      },
+    };
+
+    const resolved = await resolver.resolve({
+      agentId: "agent-1",
+      config,
+      normalizedConfig: config,
+      resolveDefaultAuthProfile: false,
+    });
+
+    expect(resolved.config.providerHomeRef).toMatchObject({
+      kind: "managed-profile",
+      provider: "codex",
+      profileKey: "override-account",
+    });
+    expect(resolved.snapshot.accountSelection).toEqual({
+      kind: "managed-account",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "override-account",
+      },
+    });
+  });
+
   test("runtime profile session behavior defaults to continue", async () => {
     const resolver = createResolver({
       profile: createRuntimeProfile(),
@@ -316,6 +360,44 @@ describe("LaunchResolver", () => {
     expect(resolved.config.systemPrompt).toBe("Base system prompt.\n\nPrefer the repo workflow.");
     expect(resolved.snapshot.systemPrompt).toBe("Base system prompt.\n\nPrefer the repo workflow.");
     expect(resolved.snapshot.instructionOverlay).toBe("Prefer the repo workflow.");
+  });
+
+  test("runtime profile MCP servers are included in launch config and snapshot", async () => {
+    const resolver = createResolver({
+      profile: createRuntimeProfile({
+        mcpServers: {
+          repo: {
+            type: "stdio",
+            command: "repo-tool",
+          },
+        },
+      }),
+    });
+    const config: AgentSessionConfig = {
+      provider: "codex",
+      cwd: "C:\\dev\\paseo",
+      runtimeProfileId: "profile-1",
+    };
+
+    const resolved = await resolver.resolve({
+      agentId: "agent-1",
+      config,
+      normalizedConfig: config,
+      resolveDefaultAuthProfile: false,
+    });
+
+    expect(resolved.config.mcpServers).toEqual({
+      repo: {
+        type: "stdio",
+        command: "repo-tool",
+      },
+    });
+    expect(resolved.snapshot.mcpServers).toEqual({
+      repo: {
+        type: "stdio",
+        command: "repo-tool",
+      },
+    });
   });
 
   test("runtime profile environment cannot override launch identity or auth env", async () => {

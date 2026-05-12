@@ -4,6 +4,7 @@ import type {
   AgentProvider,
   AgentSessionConfig,
   ProviderHomeRef,
+  RuntimeProfileAccountSelection,
   RuntimeLaunchWarning,
   RuntimeProfile,
   RuntimeProfileLaunchOverrides,
@@ -216,6 +217,7 @@ export class LaunchResolver {
     return stripUndefined<AgentProfileSnapshot>({
       ...buildSnapshotProfileIdentity(profile),
       provider: config.provider,
+      accountSelection: accountSelectionFromProviderHomeRef(input.providerHomeRef),
       providerHomeRef: input.providerHomeRef,
       accountKey: getManagedProviderHomeProfileKey(input.providerHomeRef),
       ...buildSnapshotRuntimeSelection(config),
@@ -234,6 +236,7 @@ export function synthesizeAgentProfileSnapshot(config: AgentSessionConfig): Agen
     createNativeDefaultProviderHomeRef({ provider: config.provider });
   return stripUndefined<AgentProfileSnapshot>({
     provider: config.provider,
+    accountSelection: accountSelectionFromProviderHomeRef(providerHomeRef),
     providerHomeRef,
     accountKey: getManagedProviderHomeProfileKey(providerHomeRef),
     model: config.model ?? null,
@@ -275,7 +278,9 @@ function resolveProviderHomeRefSelection(input: {
   return (
     normalizeProviderHomeRef(input.config.providerHomeRef, input.provider) ??
     normalizeProviderHomeRef(input.previousAdHocSnapshot?.providerHomeRef, input.provider) ??
+    providerHomeRefFromAccountSelection(input.overrides?.accountSelection, input.provider) ??
     normalizeProviderHomeRef(input.overrides?.providerHomeRef, input.provider) ??
+    providerHomeRefFromAccountSelection(input.profile?.accountSelection, input.provider) ??
     normalizeProviderHomeRef(input.profile?.providerHomeRef, input.provider) ??
     resolveManagedHomeRefFromProfileKey(
       input.provider,
@@ -286,6 +291,31 @@ function resolveProviderHomeRefSelection(input: {
       ),
     )
   );
+}
+
+function providerHomeRefFromAccountSelection(
+  selection: RuntimeProfileAccountSelection | null | undefined,
+  provider: AgentProvider,
+): ProviderHomeRef | null {
+  if (!selection) {
+    return null;
+  }
+  if (selection.kind === "inherit-provider-default") {
+    return null;
+  }
+  if (selection.kind === "native-default") {
+    return createNativeDefaultProviderHomeRef({ provider });
+  }
+  return normalizeProviderHomeRef(selection.providerHomeRef, provider);
+}
+
+function accountSelectionFromProviderHomeRef(
+  providerHomeRef: ProviderHomeRef,
+): RuntimeProfileAccountSelection {
+  if (providerHomeRef.kind === "managed-profile") {
+    return { kind: "managed-account", providerHomeRef };
+  }
+  return { kind: "native-default" };
 }
 
 function resolveManagedHomeRefFromProfileKey(
@@ -305,7 +335,9 @@ function buildRuntimeSelectionConfig(
   profile: RuntimeProfile,
 ): Partial<AgentSessionConfig> {
   const providerHomeRef =
+    providerHomeRefFromAccountSelection(overrides.accountSelection, profile.provider) ??
     normalizeProviderHomeRef(overrides.providerHomeRef, profile.provider) ??
+    providerHomeRefFromAccountSelection(profile.accountSelection, profile.provider) ??
     normalizeProviderHomeRef(profile.providerHomeRef, profile.provider) ??
     resolveManagedHomeRefFromProfileKey(
       profile.provider,
@@ -369,13 +401,14 @@ function buildSnapshotProfileSettings(
     envOverlay: sanitizeProfileEnvOverlay(
       mergeRecordValues(profile?.envOverlay, overrides?.envOverlay),
     ),
+    mcpServers: mergeRecordValues(profile?.mcpServers, overrides?.mcpServers),
     concurrencyPolicy: resolveSnapshotConcurrencyPolicy(profile),
   };
 }
 
 type SnapshotProfileSettings = Pick<
   AgentProfileSnapshot,
-  "concurrencyPolicy" | "envOverlay" | "instructionOverlay"
+  "concurrencyPolicy" | "envOverlay" | "instructionOverlay" | "mcpServers"
 >;
 
 function resolveSnapshotSessionBehavior(

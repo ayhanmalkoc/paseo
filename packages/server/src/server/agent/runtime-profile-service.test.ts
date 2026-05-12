@@ -62,5 +62,41 @@ describe("RuntimeProfileService", () => {
     expect(profiles[0]).not.toHaveProperty("featureDefaults");
     expect(profiles[0]).not.toHaveProperty("workspaceDefaults");
     expect(profiles[0]?.sessionBehavior).toBe("continue");
+    expect(profiles[0]?.accountSelection).toEqual({ kind: "native-default" });
+  });
+
+  test("normalizes legacy account fields into canonical account selection", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "runtime-profile-service-"));
+    TEMP_DIRS.push(paseoHome);
+    const service = new RuntimeProfileService({
+      paseoHome,
+      logger: createTestLogger(),
+    });
+
+    const profile = await service.createProfile({
+      name: "Codex work",
+      provider: "codex",
+      accountSelection: {
+        kind: "inherit-provider-default",
+      },
+    });
+
+    expect(profile.accountSelection).toEqual({ kind: "inherit-provider-default" });
+    expect(profile.providerHomeRef).toBeUndefined();
+    expect(profile.accountKey).toBeUndefined();
+
+    const legacy = await service.updateProfile(profile.id, {
+      accountKey: "work-account",
+      accountSelection: undefined,
+    });
+    expect(legacy.accountSelection).toEqual({
+      kind: "managed-account",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider: "codex",
+        profileKey: "work-account",
+      },
+    });
+    expect(legacy.accountKey).toBe("work-account");
   });
 });

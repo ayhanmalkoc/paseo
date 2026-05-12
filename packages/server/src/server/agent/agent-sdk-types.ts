@@ -169,13 +169,20 @@ export interface ProviderHomeRef {
   label?: string | null;
 }
 
+export type RuntimeProfileAccountSelection =
+  | { kind: "inherit-provider-default" }
+  | { kind: "native-default" }
+  | { kind: "managed-account"; providerHomeRef: ProviderHomeRef };
+
 export interface RuntimeProfile {
   id: string;
   version: number;
   name: string;
   provider: AgentProvider;
+  accountSelection?: RuntimeProfileAccountSelection;
+  /** @deprecated COMPAT(runtimeProfileAccountSelection): old clients read providerHomeRef directly. */
   providerHomeRef?: ProviderHomeRef | null;
-  /** @deprecated COMPAT(providerHomeRef): normalized at protocol/storage boundary. */
+  /** @deprecated COMPAT(runtimeProfileAccountSelection): normalized at protocol/storage boundary. */
   accountKey?: string | null;
   model?: string | null;
   modeId?: string | null;
@@ -196,6 +203,7 @@ export type RuntimeProfilePatch = Partial<
     RuntimeProfile,
     | "name"
     | "provider"
+    | "accountSelection"
     | "providerHomeRef"
     | "accountKey"
     | "model"
@@ -214,6 +222,7 @@ export type RuntimeProfilePatch = Partial<
 export type RuntimeProfileLaunchOverrides = Partial<
   Pick<
     RuntimeProfile,
+    | "accountSelection"
     | "providerHomeRef"
     | "accountKey"
     | "model"
@@ -233,8 +242,9 @@ export interface AgentProfileSnapshot {
   sourceProfileVersion?: number;
   sourceProfileName?: string;
   provider: AgentProvider;
+  accountSelection?: RuntimeProfileAccountSelection;
   providerHomeRef?: ProviderHomeRef | null;
-  /** @deprecated COMPAT(providerHomeRef): retained for old clients only. */
+  /** @deprecated COMPAT(runtimeProfileAccountSelection): retained for old clients only. */
   accountKey?: string | null;
   model?: string | null;
   modeId?: string | null;
@@ -243,6 +253,7 @@ export interface AgentProfileSnapshot {
   systemPrompt?: string | null;
   featureValues?: Record<string, unknown>;
   envOverlay?: Record<string, string>;
+  mcpServers?: Record<string, McpServerConfig>;
   concurrencyPolicy?: RuntimeProfileConcurrencyPolicy;
   sessionBehavior?: RuntimeProfileSessionBehavior;
   resolvedAt: string;

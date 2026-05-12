@@ -364,7 +364,7 @@ describe("resolveFormState", () => {
     expect(resolved.thinkingOptionId).toBe("");
   });
 
-  it("does not auto-select a model on fresh drafts without preferences", () => {
+  it("auto-selects the provider default model on fresh drafts without preferences", () => {
     const resolved = resolveFormState(
       undefined,
       { provider: "codex" },
@@ -375,8 +375,8 @@ describe("resolveFormState", () => {
       codexProviderMap,
     );
 
-    expect(resolved.model).toBe("");
-    expect(resolved.thinkingOptionId).toBe("");
+    expect(resolved.model).toBe("gpt-5.3-codex");
+    expect(resolved.thinkingOptionId).toBe("xhigh");
   });
 
   it("auto-selects the model's default thinking option when model is preferred but thinking is not", () => {

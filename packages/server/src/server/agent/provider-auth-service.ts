@@ -333,15 +333,6 @@ export class ProviderAuthService {
     const state = this.getOrCreateProviderState(registry, selection.provider);
     const requestedProfileKey =
       requestedHomeRef?.kind === "managed-profile" ? requestedHomeRef.profileKey : null;
-    if (!normalizeProfileKey(requestedProfileKey)) {
-      return {
-        profileKey: null,
-        providerHomeRef: nativeHomeRef,
-        metadata: {
-          providerHomeRef: nativeHomeRef,
-        },
-      };
-    }
     const selected = this.selectProfileForLaunch(state, requestedProfileKey);
     if (!selected) {
       return {

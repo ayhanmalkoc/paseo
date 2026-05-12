@@ -31,6 +31,7 @@ import type {
   ProviderAuthProfile,
   ProviderSnapshotEntry,
   RuntimeProfile,
+  RuntimeProfileAccountSelection,
   RuntimeProfileConcurrencyPolicy,
   RuntimeProfilePatch,
   RuntimeProfileSessionBehavior,
@@ -39,7 +40,7 @@ import type {
 interface RuntimeProfileDraft {
   name: string;
   provider: AgentProvider;
-  accountKey: string;
+  accountSelectionId: string;
   model: string;
   modeId: string;
   thinkingOptionId: string;
@@ -63,6 +64,8 @@ const EMPTY_MODELS: AgentModelDefinition[] = [];
 const EMPTY_MODES: AgentMode[] = [];
 const EMPTY_FEATURES: AgentFeature[] = [];
 const PROFILE_EDITOR_SNAP_POINTS = ["72%", "94%"];
+const ACCOUNT_SELECTION_PROVIDER_DEFAULT = "__provider-default__";
+const ACCOUNT_SELECTION_NATIVE_DEFAULT = "__native-default__";
 const CONCURRENCY_OPTIONS: SelectOption[] = [
   { id: "warn", label: "Warn", description: "Ask before reusing this profile in parallel" },
   { id: "allow", label: "Allow", description: "Allow parallel agents with this profile" },
@@ -265,7 +268,7 @@ function RuntimeProfileRow({
         <Text style={settingsStyles.rowHint} numberOfLines={2}>
           {[
             providerLabel,
-            profile.accountKey,
+            formatAccountSelectionSummary(profile),
             profile.model,
             profile.modeId,
             profile.sessionBehavior === "fresh" ? "Start fresh" : "Continue conversation",
@@ -379,7 +382,7 @@ function RuntimeProfileEditorSheet({
       setDraft((current) => ({
         ...current,
         provider,
-        accountKey: "",
+        accountSelectionId: ACCOUNT_SELECTION_PROVIDER_DEFAULT,
         model: defaultModel?.id ?? "",
         modeId: nextEntry?.defaultModeId ?? "",
         thinkingOptionId: defaultModel?.defaultThinkingOptionId ?? "",
@@ -450,12 +453,12 @@ function RuntimeProfileEditorSheet({
           />
           <SelectField
             label="Account for this profile"
-            value={resolveOptionLabel(accountOptions, draft.accountKey)}
+            value={resolveOptionLabel(accountOptions, draft.accountSelectionId)}
             options={accountOptions}
-            selectedId={draft.accountKey}
-            onSelect={(value) => setField("accountKey", value)}
+            selectedId={draft.accountSelectionId}
+            onSelect={(value) => setField("accountSelectionId", value)}
             disabled={saving || authProfiles.isLoading}
-            hint="Default/native account follows the provider account that is active at launch time."
+            hint="Provider default follows the provider account setting. Native default bypasses managed accounts."
             showSelectedDescription
           />
         </View>
@@ -878,9 +881,14 @@ function buildProviderOptions(entries: ProviderSnapshotEntry[]): SelectOption[] 
 function buildAccountOptions(accounts: ProviderAuthProfile[]): SelectOption[] {
   return [
     {
-      id: "",
-      label: "Default/native account",
-      description: "Use the provider's native or default account at launch time",
+      id: ACCOUNT_SELECTION_PROVIDER_DEFAULT,
+      label: "Provider default",
+      description: "Use the provider account selected as default",
+    },
+    {
+      id: ACCOUNT_SELECTION_NATIVE_DEFAULT,
+      label: "Native default",
+      description: "Use the provider's native account outside managed accounts",
     },
     ...accounts.map((account) => ({
       id: account.key,
@@ -946,7 +954,7 @@ function createDraft(
   return {
     name: profile?.name ?? (providerEntry?.label ? `${providerEntry.label} profile` : ""),
     provider: defaultProvider,
-    accountKey: profile?.accountKey ?? "",
+    accountSelectionId: getAccountSelectionId(profile),
     model: profile?.model ?? defaultModel?.id ?? "",
     modeId: profile?.modeId ?? providerEntry?.defaultModeId ?? "",
     thinkingOptionId: profile?.thinkingOptionId ?? defaultModel?.defaultThinkingOptionId ?? "",
@@ -964,6 +972,92 @@ function findDefaultModel(models: AgentModelDefinition[]): AgentModelDefinition 
   return models.find((model) => model.isDefault) ?? models[0];
 }
 
+function formatAccountSelectionSummary(profile: RuntimeProfile): string {
+  const selection = profile.accountSelection;
+  if (selection?.kind === "inherit-provider-default") {
+    return "Provider default account";
+  }
+  if (selection?.kind === "native-default") {
+    return "Native default account";
+  }
+  if (selection?.kind === "managed-account") {
+    return (
+      selection.providerHomeRef.label ?? selection.providerHomeRef.profileKey ?? "Managed account"
+    );
+  }
+  if (profile.providerHomeRef?.kind === "native-default") {
+    return "Native default account";
+  }
+  return profile.accountKey ?? "";
+}
+
+function getAccountSelectionId(profile: RuntimeProfile | null): string {
+  const selection = profile?.accountSelection;
+  if (selection?.kind === "inherit-provider-default") {
+    return ACCOUNT_SELECTION_PROVIDER_DEFAULT;
+  }
+  if (selection?.kind === "native-default") {
+    return ACCOUNT_SELECTION_NATIVE_DEFAULT;
+  }
+  if (selection?.kind === "managed-account") {
+    return selection.providerHomeRef.kind === "managed-profile"
+      ? (selection.providerHomeRef.profileKey ?? "")
+      : ACCOUNT_SELECTION_NATIVE_DEFAULT;
+  }
+  if (profile?.providerHomeRef?.kind === "native-default") {
+    return ACCOUNT_SELECTION_NATIVE_DEFAULT;
+  }
+  if (profile?.providerHomeRef?.kind === "managed-profile") {
+    return profile.providerHomeRef.profileKey ?? "";
+  }
+  if (profile?.accountKey) {
+    return profile.accountKey;
+  }
+  return profile ? ACCOUNT_SELECTION_NATIVE_DEFAULT : ACCOUNT_SELECTION_PROVIDER_DEFAULT;
+}
+
+function buildAccountSelection(
+  accountSelectionId: string,
+  provider: AgentProvider,
+): RuntimeProfileAccountSelection {
+  if (accountSelectionId === ACCOUNT_SELECTION_NATIVE_DEFAULT) {
+    return { kind: "native-default" };
+  }
+  if (accountSelectionId && accountSelectionId !== ACCOUNT_SELECTION_PROVIDER_DEFAULT) {
+    return {
+      kind: "managed-account",
+      providerHomeRef: {
+        kind: "managed-profile",
+        provider,
+        profileKey: accountSelectionId,
+      },
+    };
+  }
+  return { kind: "inherit-provider-default" };
+}
+
+function buildCompatProviderHomeRef(
+  accountSelectionId: string,
+  provider: AgentProvider,
+): RuntimeProfile["providerHomeRef"] {
+  const selection = buildAccountSelection(accountSelectionId, provider);
+  if (selection.kind === "native-default") {
+    return { kind: "native-default", provider };
+  }
+  if (selection.kind === "managed-account") {
+    return selection.providerHomeRef;
+  }
+  return null;
+}
+
+function buildCompatAccountKey(accountSelectionId: string): string | null {
+  return accountSelectionId &&
+    accountSelectionId !== ACCOUNT_SELECTION_PROVIDER_DEFAULT &&
+    accountSelectionId !== ACCOUNT_SELECTION_NATIVE_DEFAULT
+    ? accountSelectionId
+    : null;
+}
+
 function buildPatch(
   draft: RuntimeProfileDraft,
 ): RuntimeProfilePatch & { name: string; provider: AgentProvider } {
@@ -978,7 +1072,9 @@ function buildPatch(
   return {
     name,
     provider,
-    accountKey: normalizeNullableText(draft.accountKey),
+    accountSelection: buildAccountSelection(draft.accountSelectionId, provider),
+    providerHomeRef: buildCompatProviderHomeRef(draft.accountSelectionId, provider),
+    accountKey: buildCompatAccountKey(draft.accountSelectionId),
     model: normalizeNullableText(draft.model),
     modeId: normalizeNullableText(draft.modeId),
     thinkingOptionId: normalizeNullableText(draft.thinkingOptionId),
