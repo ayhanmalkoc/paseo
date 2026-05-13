@@ -21,6 +21,8 @@ The expected long-lived branches are:
 - `upstream/main`: upstream source of truth.
 - `origin/main`: fork mirror of `upstream/main`.
 - `dev`: fork integration and verification branch.
+- `test`: fork runtime validation branch. Keep it synchronized from `dev`, then
+  merge the feature or cleanup branch being tested.
 
 ## Branch Roles
 
@@ -82,6 +84,24 @@ Typical branch integration:
 git switch dev
 git merge --no-ff <branch-name>
 git push origin dev
+```
+
+## Use Test For Runtime Validation
+
+Use `test` when a change needs hands-on validation in the development server
+before it is accepted into `dev`:
+
+- Rebase or reset `test` from current `dev` before starting a validation pass.
+- Merge only the branch being tested into `test`.
+- Run the development daemon and web app from `test`.
+- If validation passes and the work is accepted, merge the original feature or
+  cleanup branch into `dev`; do not treat `test` as the source of truth.
+
+Local helper:
+
+```bash
+./scripts/dev-test.sh daemon
+./scripts/dev-test.sh web
 ```
 
 ## Contribution Branch Flow
