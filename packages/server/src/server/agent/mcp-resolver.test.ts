@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { McpServerConfig, ProviderHomeRef } from "./agent-sdk-types.js";
-import { resolveMcpServers, type McpRegistryEntry } from "./mcp-resolver.js";
+import { explainMcpResolution, resolveMcpServers, type McpRegistryEntry } from "./mcp-resolver.js";
 
 function stdio(command: string): McpServerConfig {
   return { type: "stdio", command };
@@ -88,6 +88,53 @@ describe("resolveMcpServers", () => {
       source: "system",
       protected: true,
     });
+  });
+
+  it("explains selected, overridden, and ignored MCP entries", () => {
+    const providerHomeRef: ProviderHomeRef = {
+      kind: "managed-profile",
+      provider: "codex",
+      profileKey: "account-a",
+    };
+
+    const explanation = explainMcpResolution({
+      provider: "codex",
+      providerHomeRef,
+      runtimeProfileId: "profile-a",
+      agentId: "agent-1",
+      paseoMcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+      injectPaseoTools: true,
+      entries: [
+        entry({ id: "shared", scope: { kind: "global" }, command: "global" }),
+        entry({
+          id: "shared",
+          scope: { kind: "provider", provider: "codex" },
+          command: "provider",
+        }),
+        entry({ id: "disabled", scope: { kind: "global" }, command: "disabled", enabled: false }),
+        entry({
+          id: "other-provider",
+          scope: { kind: "provider", provider: "claude" },
+          command: "claude",
+        }),
+        entry({ id: "paseo", scope: { kind: "global" }, command: "fake-paseo" }),
+      ],
+      sessionMcpServers: {
+        shared: stdio("session"),
+      },
+    });
+
+    expect(explanation.servers?.shared).toEqual(stdio("session"));
+    expect(explanation.sources.shared).toEqual({ scope: "session", source: "session" });
+    expect(explanation.steps.map((step) => [step.id, step.action, step.reason])).toEqual([
+      ["shared", "overridden", "overridden-by-later-scope"],
+      ["shared", "overridden", "overridden-by-session"],
+      ["disabled", "ignored", "disabled"],
+      ["other-provider", "ignored", "scope-mismatch"],
+      ["paseo", "ignored", "reserved-system-id"],
+      ["shared", "selected", undefined],
+      ["paseo", "selected", undefined],
+    ]);
   });
 
   it("returns no server map when no scopes apply", () => {

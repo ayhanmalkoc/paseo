@@ -106,5 +106,6 @@ export type {
   McpRegistryEntry,
   McpRegistryEntryInput,
   McpRegistryScope,
+  McpResolutionStep,
   McpServerConfig,
 } from "../shared/messages.js";
