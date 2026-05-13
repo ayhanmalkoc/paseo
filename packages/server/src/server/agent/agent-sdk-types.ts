@@ -89,7 +89,7 @@ export type ProviderAuthMode = "chatgpt" | "api-key" | "oauth" | "external" | "u
 export type ProviderAuthLimitState = "unknown" | "ok" | "near-limit" | "limited";
 
 export interface ProviderAuthUsageSnapshot {
-  source: "local-rollout" | "provider-api";
+  source: "provider-api";
   primaryUsedPercent?: number;
   primaryWindowMinutes?: number;
   primaryResetsAt?: string;

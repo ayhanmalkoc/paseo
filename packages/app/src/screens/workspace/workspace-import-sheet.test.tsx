@@ -603,7 +603,7 @@ describe("WorkspaceImportSheet", () => {
             email: "personal-codex@example.com",
             isDefault: false,
             usage: {
-              source: "local-rollout",
+              source: "provider-api",
               primaryUsedPercent: 94,
               primaryWindowMinutes: 300,
               limitState: "near-limit",

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { promises as fs, type Dirent } from "node:fs";
+import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -22,7 +22,6 @@ import {
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_AUTH_FILENAME = "auth.json";
 const CODEX_CONFIG_FILENAME = "config.toml";
-const MAX_USAGE_SCAN_FILES = 40;
 
 type CodexUsageReader = (
   options: ReadCodexAppServerUsageOptions,
@@ -81,10 +80,6 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
     await copySensitiveFile(resolvedAuthPath, path.join(profileCodexHome, CODEX_AUTH_FILENAME));
     await copyOptionalCodexConfig(path.dirname(resolvedAuthPath), profileCodexHome);
 
-    const usageResult = await this.readUsage(profileCodexHome, context, parsed.key, {
-      preferProviderApi: false,
-    });
-
     return {
       provider: CODEX_PROVIDER,
       key: parsed.key,
@@ -99,7 +94,6 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
       updatedAt: now,
       lastRefresh: parsed.lastRefresh,
       providerHomePath: profileCodexHome,
-      usage: usageResult.usage,
       metadata: {
         authFileHash,
       },
@@ -114,8 +108,7 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
     const data = await fs.readFile(authPath, "utf8");
     const parsed = parseCodexAuthJson(data);
     const usageResult = await this.readUsage(profile.providerHomePath, context, profile.key, {
-      preferProviderApi: true,
-      ...(profile.usage ? { previousUsage: profile.usage } : {}),
+      previousUsage: profile.usage,
     });
     return {
       ...profile,
@@ -159,34 +152,27 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
     codexHome: string,
     context: ProviderAuthAdapterContext,
     profileKey: string,
-    options: { preferProviderApi: boolean; previousUsage?: ProviderAuthUsageSnapshot },
+    options: { previousUsage?: ProviderAuthUsageSnapshot },
   ): Promise<CodexUsageReadResult> {
     let usageRefreshError: ProviderAuthUsageRefreshError | undefined;
-    if (options.preferProviderApi) {
-      const providerUsage = await this.usageReader({
-        codexHome,
-        logger: context.logger,
-        now: context.now,
-        ...(context.runtimeSettings ? { runtimeSettings: context.runtimeSettings } : {}),
-      }).catch((error) => {
-        usageRefreshError = toUsageRefreshError(error, context.now().toISOString());
-        context.logger.debug(
-          { err: error, profileKey },
-          "Failed to refresh Codex usage from app-server",
-        );
-        return undefined;
-      });
-      if (providerUsage) {
-        return { usage: providerUsage };
-      }
-    }
-
-    const localUsage = await scanLatestUsage(codexHome).catch((error) => {
-      context.logger.debug({ err: error, profileKey }, "Failed to scan Codex usage");
+    const providerUsage = await this.usageReader({
+      codexHome,
+      logger: context.logger,
+      now: context.now,
+      ...(context.runtimeSettings ? { runtimeSettings: context.runtimeSettings } : {}),
+    }).catch((error) => {
+      usageRefreshError = toUsageRefreshError(error, context.now().toISOString());
+      context.logger.debug(
+        { err: error, profileKey },
+        "Failed to refresh Codex usage from app-server",
+      );
       return undefined;
     });
+    if (providerUsage) {
+      return { usage: providerUsage };
+    }
     return {
-      usage: chooseNewestUsage(localUsage, options.previousUsage),
+      usage: options.previousUsage,
       ...(usageRefreshError ? { usageRefreshError } : {}),
     };
   }
@@ -224,21 +210,6 @@ function normalizeUsageRefreshMessage(
     return "Codex usage service is temporarily unavailable.";
   }
   return message || "Codex usage refresh failed.";
-}
-
-function chooseNewestUsage(
-  candidate: ProviderAuthUsageSnapshot | undefined,
-  previous: ProviderAuthUsageSnapshot | undefined,
-): ProviderAuthUsageSnapshot | undefined {
-  if (!candidate || !previous) {
-    return candidate ?? previous;
-  }
-  const candidateTime = Date.parse(candidate.refreshedAt);
-  const previousTime = Date.parse(previous.refreshedAt);
-  if (!Number.isFinite(candidateTime) || !Number.isFinite(previousTime)) {
-    return candidate;
-  }
-  return candidateTime >= previousTime ? candidate : previous;
 }
 
 export function parseCodexAuthJson(data: string): ParsedCodexAuth {
@@ -361,199 +332,4 @@ async function copyOptionalCodexConfig(sourceDir: string, targetDir: string): Pr
       throw error;
     }
   });
-}
-
-interface CodexUsageFileCandidate {
-  path: string;
-  mtimeMs: number;
-}
-
-async function scanLatestUsage(codexHome: string): Promise<ProviderAuthUsageSnapshot | undefined> {
-  const sessionsDir = path.join(codexHome, "sessions");
-  const files = await collectJsonlFiles(sessionsDir);
-  for (const file of files) {
-    const snapshot = await scanUsageFile(file.path, new Date(file.mtimeMs));
-    if (snapshot) {
-      return snapshot;
-    }
-  }
-  return undefined;
-}
-
-async function collectJsonlFiles(root: string): Promise<CodexUsageFileCandidate[]> {
-  const entries: CodexUsageFileCandidate[] = [];
-  await collectJsonlFilesInto(root, entries);
-  return [...entries]
-    .sort((left, right) => right.mtimeMs - left.mtimeMs)
-    .slice(0, MAX_USAGE_SCAN_FILES);
-}
-
-async function collectJsonlFilesInto(
-  dirPath: string,
-  entries: CodexUsageFileCandidate[],
-): Promise<void> {
-  let dirents: Dirent[];
-  try {
-    dirents = await fs.readdir(dirPath, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
-
-  await Promise.all(
-    dirents.map(async (entry) => {
-      const fullPath = path.join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        await collectJsonlFilesInto(fullPath, entries);
-        return;
-      }
-      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
-        return;
-      }
-      const stat = await fs.stat(fullPath);
-      entries.push({ path: fullPath, mtimeMs: stat.mtimeMs });
-    }),
-  );
-}
-
-async function scanUsageFile(
-  filePath: string,
-  observedAt: Date,
-): Promise<ProviderAuthUsageSnapshot | undefined> {
-  const text = await fs.readFile(filePath, "utf8");
-  const lines = text.split(/\r?\n/);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index];
-    if (!line.includes("rate_limits") && !line.includes("rateLimits")) {
-      continue;
-    }
-    const snapshot = parseUsageLine(line, observedAt);
-    if (snapshot) {
-      return snapshot;
-    }
-  }
-  return undefined;
-}
-
-function parseUsageLine(line: string, observedAt: Date): ProviderAuthUsageSnapshot | undefined {
-  try {
-    const parsed = JSON.parse(line) as Record<string, unknown>;
-    const payload = readRecord(parsed.payload);
-    const rateLimits = readRecord(payload?.rate_limits) ?? readRecord(payload?.rateLimits);
-    if (!rateLimits) {
-      return undefined;
-    }
-    const primary = readRecord(rateLimits.primary);
-    const secondary = readRecord(rateLimits.secondary);
-    const credits = readRecord(rateLimits.credits);
-    const primaryUsage = readUsageBucket(primary);
-    const secondaryUsage = readUsageBucket(secondary);
-    const snapshot: ProviderAuthUsageSnapshot = {
-      source: "local-rollout",
-      primaryUsedPercent: primaryUsage.usedPercent,
-      primaryWindowMinutes: primaryUsage.windowMinutes,
-      primaryResetsAt: primaryUsage.resetsAt,
-      secondaryUsedPercent: secondaryUsage.usedPercent,
-      secondaryWindowMinutes: secondaryUsage.windowMinutes,
-      secondaryResetsAt: secondaryUsage.resetsAt,
-      creditsRemaining: readUsageNumber(credits?.remaining),
-      limitState: resolveLimitState(primaryUsage.usedPercent, secondaryUsage.usedPercent),
-      refreshedAt: observedAt.toISOString(),
-    };
-    return hasUsageFields(snapshot) ? snapshot : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function readNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-interface UsageBucket {
-  usedPercent?: number;
-  windowMinutes?: number;
-  resetsAt?: string;
-}
-
-function readUsageBucket(record: Record<string, unknown> | null | undefined): UsageBucket {
-  return {
-    usedPercent: readUsageNumberField(record, "used_percent", "usedPercent"),
-    windowMinutes: readUsageNumberField(record, "window_minutes", "windowMinutes"),
-    resetsAt: readResetTimestampField(record, "resets_at", "resetsAt"),
-  };
-}
-
-function readUsageNumberField(
-  record: Record<string, unknown> | null | undefined,
-  snakeKey: string,
-  camelKey: string,
-): number | undefined {
-  return readUsageNumber(record?.[snakeKey]) ?? readUsageNumber(record?.[camelKey]);
-}
-
-function readUsageNumber(value: unknown): number | undefined {
-  const number = readNumber(value);
-  return number !== undefined && number >= 0 ? number : undefined;
-}
-
-function readResetTimestampField(
-  record: Record<string, unknown> | null | undefined,
-  snakeKey: string,
-  camelKey: string,
-): string | undefined {
-  return readResetTimestamp(record?.[snakeKey]) ?? readResetTimestamp(record?.[camelKey]);
-}
-
-function readResetTimestamp(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    const numericValue = Number(value);
-    if (Number.isFinite(numericValue)) {
-      return epochTimestampToIso(numericValue);
-    }
-    const timestamp = Date.parse(value);
-    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
-  }
-  const number = readNumber(value);
-  return number !== undefined && number > 0 ? epochTimestampToIso(number) : undefined;
-}
-
-function epochTimestampToIso(value: number): string | undefined {
-  const timestamp = value > 1_000_000_000_000 ? value : value * 1000;
-  const date = new Date(timestamp);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
-}
-
-function resolveLimitState(
-  primaryUsedPercent: number | undefined,
-  secondaryUsedPercent: number | undefined,
-): ProviderAuthUsageSnapshot["limitState"] | undefined {
-  const usedPercents = [primaryUsedPercent, secondaryUsedPercent].filter(
-    (value): value is number => typeof value === "number",
-  );
-  if (usedPercents.length === 0) {
-    return undefined;
-  }
-  const usedPercent = Math.max(...usedPercents);
-  if (usedPercent >= 100) {
-    return "limited";
-  }
-  if (usedPercent >= 85) {
-    return "near-limit";
-  }
-  return "ok";
-}
-
-function hasUsageFields(snapshot: ProviderAuthUsageSnapshot): boolean {
-  return (
-    snapshot.primaryUsedPercent !== undefined ||
-    snapshot.primaryWindowMinutes !== undefined ||
-    snapshot.primaryResetsAt !== undefined ||
-    snapshot.secondaryUsedPercent !== undefined ||
-    snapshot.secondaryWindowMinutes !== undefined ||
-    snapshot.secondaryResetsAt !== undefined ||
-    snapshot.creditsRemaining !== undefined
-  );
 }

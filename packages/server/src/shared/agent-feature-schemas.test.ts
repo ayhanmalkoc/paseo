@@ -157,7 +157,7 @@ describe("agent feature schemas", () => {
       createdAt: "2026-05-06T12:00:00.000Z",
       updatedAt: "2026-05-06T12:00:00.000Z",
       usage: {
-        source: "local-rollout",
+        source: "provider-api",
         primaryUsedPercent: 15,
         refreshedAt: "2026-05-06T12:10:00.000Z",
       },

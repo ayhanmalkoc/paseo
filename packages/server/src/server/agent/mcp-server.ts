@@ -156,7 +156,7 @@ const McpRuntimeProfileAccountSelectionSchema: z.ZodType<RuntimeProfileAccountSe
 
 const McpProviderAuthUsageSnapshotSchema: z.ZodType<ProviderAuthUsageSnapshot> = z
   .object({
-    source: z.enum(["local-rollout", "provider-api"]),
+    source: z.literal("provider-api"),
     primaryUsedPercent: z.number().optional(),
     primaryWindowMinutes: z.number().optional(),
     primaryResetsAt: z.string().optional(),
@@ -276,11 +276,11 @@ function sanitizeRuntimeProfileAccountSelection(
 function sanitizeProviderAuthUsage(
   usage: (ProviderAuthUsageSnapshot & Record<string, unknown>) | null | undefined,
 ): ProviderAuthUsageSnapshot | undefined {
-  if (!usage || typeof usage.refreshedAt !== "string") {
+  if (!usage || usage.source !== "provider-api" || typeof usage.refreshedAt !== "string") {
     return undefined;
   }
   return {
-    source: usage.source === "local-rollout" ? "local-rollout" : "provider-api",
+    source: "provider-api",
     ...(typeof usage.primaryUsedPercent === "number"
       ? { primaryUsedPercent: usage.primaryUsedPercent }
       : {}),

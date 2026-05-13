@@ -59,6 +59,8 @@ Implemented surfaces:
 
 - Provider settings can list, refresh, default, remove, and import current Codex
   accounts.
+- Provider account usage is refreshed only from the provider API. Rollout/session
+  logs are not treated as a usage source.
 - Codex account onboarding supports ChatGPT device-code login through the Codex
   app-server flow.
 - New-agent custom settings can select an account. Empty account selection means

@@ -24,7 +24,7 @@ describe("provider auth usage formatting", () => {
 
     expect(
       formatProviderAuthUsageSummary({
-        source: "local-rollout",
+        source: "provider-api",
         primaryUsedPercent: 76,
         primaryWindowMinutes: 300,
         primaryResetsAt,
@@ -41,7 +41,7 @@ describe("provider auth usage formatting", () => {
   it("summarizes near-limit usage without changing the display format", () => {
     expect(
       formatProviderAuthUsageSummary({
-        source: "local-rollout",
+        source: "provider-api",
         primaryUsedPercent: 94,
         primaryWindowMinutes: 10_080,
         secondaryUsedPercent: 20,
@@ -55,7 +55,7 @@ describe("provider auth usage formatting", () => {
   it("returns a warning only when the account is constrained", () => {
     expect(
       formatProviderAuthUsageWarning({
-        source: "local-rollout",
+        source: "provider-api",
         primaryUsedPercent: 100,
         primaryWindowMinutes: 300,
         limitState: "limited",
@@ -65,7 +65,7 @@ describe("provider auth usage formatting", () => {
 
     expect(
       formatProviderAuthUsageWarning({
-        source: "local-rollout",
+        source: "provider-api",
         primaryUsedPercent: 50,
         primaryWindowMinutes: 300,
         limitState: "ok",

@@ -50,7 +50,7 @@ const { theme, snapshotState, configState, authProfilesState, patchConfigMock, r
         createdAt: string;
         updatedAt: string;
         usage?: {
-          source: "local-rollout" | "provider-api";
+          source: "provider-api";
           primaryUsedPercent?: number;
           secondaryUsedPercent?: number;
           limitState?: "unknown" | "ok" | "near-limit" | "limited";

@@ -245,9 +245,6 @@ function shouldAutoRefreshUsage(profile: ProviderAuthProfile): boolean {
   if (!profile.usage) {
     return true;
   }
-  if (profile.usage.source !== "provider-api") {
-    return true;
-  }
   const refreshedAt = Date.parse(profile.usage.refreshedAt);
   if (!Number.isFinite(refreshedAt)) {
     return true;

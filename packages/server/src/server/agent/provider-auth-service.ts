@@ -403,7 +403,7 @@ export class ProviderAuthService {
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
       lastUsedAt: profile.lastUsedAt,
-      usage: profile.usage,
+      usage: normalizeProviderAuthUsage(profile.usage),
       usageRefreshError: profile.usageRefreshError,
       providerHomeRef,
     };
@@ -458,14 +458,7 @@ export class ProviderAuthService {
   }> {
     const state = this.getOrCreateProviderState(registry, provider);
     const previous = state.profiles?.[imported.key];
-    const profile: StoredProviderAuthProfile = {
-      ...imported,
-      alias: options.preserveExistingAlias && previous?.alias ? previous.alias : imported.alias,
-      createdAt: previous?.createdAt ?? imported.createdAt,
-      updatedAt: this.now().toISOString(),
-      lastUsedAt: previous?.lastUsedAt ?? imported.lastUsedAt,
-      metadata: mergeProfileMetadata(previous, imported, options.preserveExistingAlias),
-    };
+    const profile = mergeImportedProfile(previous, imported, options, this.now().toISOString());
     let status: Extract<ProviderAuthSyncStatus, "created" | "updated" | "unchanged">;
     if (!previous) {
       status = "created";
@@ -553,7 +546,14 @@ function normalizeRegistry(input: Partial<StoredProviderAuthRegistry>): StoredPr
       if (!profile || typeof profile !== "object") {
         continue;
       }
-      profiles[key] = profile as StoredProviderAuthProfile;
+      const normalizedProfile = { ...(profile as StoredProviderAuthProfile) };
+      const usage = normalizeProviderAuthUsage(normalizedProfile.usage);
+      if (usage) {
+        normalizedProfile.usage = usage;
+      } else {
+        delete normalizedProfile.usage;
+      }
+      profiles[key] = normalizedProfile;
     }
     registry.providers[provider] = {
       defaultProfileKey:
@@ -582,6 +582,25 @@ function resolveNativeDefaultProviderHomePath(provider: AgentProvider): string |
     return path.resolve(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"));
   }
   return null;
+}
+
+function mergeImportedProfile(
+  previous: StoredProviderAuthProfile | undefined,
+  imported: StoredProviderAuthProfile,
+  options: { preserveExistingAlias: boolean },
+  updatedAt: string,
+): StoredProviderAuthProfile {
+  const usage =
+    normalizeProviderAuthUsage(imported.usage) ?? normalizeProviderAuthUsage(previous?.usage);
+  return {
+    ...imported,
+    alias: options.preserveExistingAlias && previous?.alias ? previous.alias : imported.alias,
+    createdAt: previous?.createdAt ?? imported.createdAt,
+    updatedAt,
+    lastUsedAt: previous?.lastUsedAt ?? imported.lastUsedAt,
+    ...(usage ? { usage } : {}),
+    metadata: mergeProfileMetadata(previous, imported, options.preserveExistingAlias),
+  };
 }
 
 function mergeProfileMetadata(
@@ -640,6 +659,47 @@ function toComparableUsage(usage: ProviderAuthUsageSnapshot) {
     secondaryResetsAt: usage.secondaryResetsAt,
     creditsRemaining: usage.creditsRemaining,
     limitState: usage.limitState,
+  };
+}
+
+function normalizeProviderAuthUsage(usage: unknown): ProviderAuthUsageSnapshot | undefined {
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
+    return undefined;
+  }
+  const snapshot = usage as Record<string, unknown>;
+  if (snapshot.source !== "provider-api" || typeof snapshot.refreshedAt !== "string") {
+    return undefined;
+  }
+  return {
+    source: "provider-api",
+    ...(typeof snapshot.primaryUsedPercent === "number"
+      ? { primaryUsedPercent: snapshot.primaryUsedPercent }
+      : {}),
+    ...(typeof snapshot.primaryWindowMinutes === "number"
+      ? { primaryWindowMinutes: snapshot.primaryWindowMinutes }
+      : {}),
+    ...(typeof snapshot.primaryResetsAt === "string"
+      ? { primaryResetsAt: snapshot.primaryResetsAt }
+      : {}),
+    ...(typeof snapshot.secondaryUsedPercent === "number"
+      ? { secondaryUsedPercent: snapshot.secondaryUsedPercent }
+      : {}),
+    ...(typeof snapshot.secondaryWindowMinutes === "number"
+      ? { secondaryWindowMinutes: snapshot.secondaryWindowMinutes }
+      : {}),
+    ...(typeof snapshot.secondaryResetsAt === "string"
+      ? { secondaryResetsAt: snapshot.secondaryResetsAt }
+      : {}),
+    ...(typeof snapshot.creditsRemaining === "number"
+      ? { creditsRemaining: snapshot.creditsRemaining }
+      : {}),
+    ...(snapshot.limitState === "ok" ||
+    snapshot.limitState === "near-limit" ||
+    snapshot.limitState === "limited" ||
+    snapshot.limitState === "unknown"
+      ? { limitState: snapshot.limitState }
+      : {}),
+    refreshedAt: snapshot.refreshedAt,
   };
 }
 
