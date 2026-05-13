@@ -493,11 +493,55 @@ const McpSseServerConfigSchema = z.object({
   headers: z.record(z.string()).optional(),
 });
 
-const McpServerConfigSchema = z.discriminatedUnion("type", [
+export const McpServerConfigSchema = z.discriminatedUnion("type", [
   McpStdioServerConfigSchema,
   McpHttpServerConfigSchema,
   McpSseServerConfigSchema,
 ]);
+
+export const McpRegistryScopeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("global") }),
+  z.object({ kind: z.literal("provider"), provider: AgentProviderSchema }),
+  z.object({
+    kind: z.literal("account"),
+    provider: AgentProviderSchema,
+    accountKey: z.string().trim().min(1),
+  }),
+  z.object({
+    kind: z.literal("runtimeProfile"),
+    profileId: z.string().trim().min(1),
+  }),
+]);
+
+export const McpRegistryEntrySourceSchema = z.enum(["user", "native-import"]);
+
+const McpRegistryImportedFromSchema = z.object({
+  provider: AgentProviderSchema,
+  path: z.string(),
+  importedAt: z.string(),
+});
+
+export const McpRegistryEntrySchema = z.object({
+  id: z.string().trim().min(1),
+  scope: McpRegistryScopeSchema,
+  config: McpServerConfigSchema,
+  enabled: z.boolean(),
+  source: McpRegistryEntrySourceSchema,
+  importedFrom: McpRegistryImportedFromSchema.optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const McpRegistryEntryInputSchema = z.object({
+  id: z.string().trim().min(1),
+  scope: McpRegistryScopeSchema,
+  config: McpServerConfigSchema,
+  enabled: z.boolean().optional(),
+  source: McpRegistryEntrySourceSchema.optional(),
+  importedFrom: McpRegistryImportedFromSchema.optional(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
 
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
@@ -1435,6 +1479,24 @@ export const DeleteRuntimeProfileRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ListMcpRegistryEntriesRequestMessageSchema = z.object({
+  type: z.literal("list_mcp_registry_entries_request"),
+  requestId: z.string(),
+});
+
+export const UpsertMcpRegistryEntryRequestMessageSchema = z.object({
+  type: z.literal("upsert_mcp_registry_entry_request"),
+  entry: McpRegistryEntryInputSchema,
+  requestId: z.string(),
+});
+
+export const RemoveMcpRegistryEntryRequestMessageSchema = z.object({
+  type: z.literal("remove_mcp_registry_entry_request"),
+  id: z.string().trim().min(1),
+  scope: McpRegistryScopeSchema,
+  requestId: z.string(),
+});
+
 export const ResumeAgentRequestMessageSchema = z.object({
   type: z.literal("resume_agent_request"),
   handle: AgentPersistenceHandleSchema,
@@ -2142,6 +2204,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CreateRuntimeProfileRequestMessageSchema,
   UpdateRuntimeProfileRequestMessageSchema,
   DeleteRuntimeProfileRequestMessageSchema,
+  ListMcpRegistryEntriesRequestMessageSchema,
+  UpsertMcpRegistryEntryRequestMessageSchema,
+  RemoveMcpRegistryEntryRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -2395,6 +2460,7 @@ export const ServerInfoStatusPayloadSchema = z
         providerAccountOnboardingProviders: z.array(AgentProviderSchema).optional(),
         runtimeProfiles: z.boolean().optional(),
         agentProfileSnapshots: z.boolean().optional(),
+        mcpRegistry: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3743,6 +3809,30 @@ export const RuntimeProfilesUpdateMessageSchema = z.object({
   }),
 });
 
+export const ListMcpRegistryEntriesResponseMessageSchema = z.object({
+  type: z.literal("list_mcp_registry_entries_response"),
+  payload: z.object({
+    entries: z.array(McpRegistryEntrySchema),
+    requestId: z.string(),
+  }),
+});
+
+export const UpsertMcpRegistryEntryResponseMessageSchema = z.object({
+  type: z.literal("upsert_mcp_registry_entry_response"),
+  payload: z.object({
+    entry: McpRegistryEntrySchema,
+    requestId: z.string(),
+  }),
+});
+
+export const RemoveMcpRegistryEntryResponseMessageSchema = z.object({
+  type: z.literal("remove_mcp_registry_entry_response"),
+  payload: z.object({
+    removed: z.boolean(),
+    requestId: z.string(),
+  }),
+});
+
 const AgentSlashCommandSchema = z.object({
   name: z.string(),
   description: z.string(),
@@ -3982,6 +4072,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   UpdateRuntimeProfileResponseMessageSchema,
   DeleteRuntimeProfileResponseMessageSchema,
   RuntimeProfilesUpdateMessageSchema,
+  ListMcpRegistryEntriesResponseMessageSchema,
+  UpsertMcpRegistryEntryResponseMessageSchema,
+  RemoveMcpRegistryEntryResponseMessageSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,
@@ -4025,6 +4118,11 @@ export type ServerCapabilityState = z.infer<typeof ServerCapabilityStateSchema>;
 export type ServerVoiceCapabilities = z.infer<typeof ServerVoiceCapabilitiesSchema>;
 export type ServerCapabilities = z.infer<typeof ServerCapabilitiesSchema>;
 export type ServerInfoStatusPayload = z.infer<typeof ServerInfoStatusPayloadSchema>;
+export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
+export type McpRegistryScope = z.infer<typeof McpRegistryScopeSchema>;
+export type McpRegistryEntrySource = z.infer<typeof McpRegistryEntrySourceSchema>;
+export type McpRegistryEntry = z.infer<typeof McpRegistryEntrySchema>;
+export type McpRegistryEntryInput = z.infer<typeof McpRegistryEntryInputSchema>;
 export type RpcErrorMessage = z.infer<typeof RpcErrorMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
 export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
@@ -4147,6 +4245,15 @@ export type DeleteRuntimeProfileResponseMessage = z.infer<
   typeof DeleteRuntimeProfileResponseMessageSchema
 >;
 export type RuntimeProfilesUpdateMessage = z.infer<typeof RuntimeProfilesUpdateMessageSchema>;
+export type ListMcpRegistryEntriesResponseMessage = z.infer<
+  typeof ListMcpRegistryEntriesResponseMessageSchema
+>;
+export type UpsertMcpRegistryEntryResponseMessage = z.infer<
+  typeof UpsertMcpRegistryEntryResponseMessageSchema
+>;
+export type RemoveMcpRegistryEntryResponseMessage = z.infer<
+  typeof RemoveMcpRegistryEntryResponseMessageSchema
+>;
 export type ChatCreateResponse = z.infer<typeof ChatCreateResponseSchema>;
 export type ChatListResponse = z.infer<typeof ChatListResponseSchema>;
 export type ChatInspectResponse = z.infer<typeof ChatInspectResponseSchema>;

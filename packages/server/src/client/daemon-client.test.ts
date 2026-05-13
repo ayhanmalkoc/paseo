@@ -123,6 +123,94 @@ afterEach(async () => {
   clients.length = 0;
 });
 
+test("sends MCP registry management requests", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const listPromise = client.listMcpRegistryEntries();
+  const listRequest = parseSentFrame(mock.sent[0]);
+  expect(listRequest.type).toBe("list_mcp_registry_entries_request");
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "list_mcp_registry_entries_response",
+      payload: {
+        entries: [],
+        requestId: listRequest.requestId,
+      },
+    }),
+  );
+  await expect(listPromise).resolves.toMatchObject({ entries: [] });
+
+  const entry = {
+    id: "context-mode",
+    scope: { kind: "provider", provider: "codex" },
+    config: { type: "stdio", command: "context-mode" },
+    enabled: true,
+    source: "user",
+    createdAt: "2026-05-13T12:00:00.000Z",
+    updatedAt: "2026-05-13T12:00:00.000Z",
+  } as const;
+  const upsertPromise = client.upsertMcpRegistryEntry({
+    entry: {
+      id: entry.id,
+      scope: entry.scope,
+      config: entry.config,
+    },
+  });
+  const upsertRequest = parseSentFrame(mock.sent[1]);
+  expect(upsertRequest).toMatchObject({
+    type: "upsert_mcp_registry_entry_request",
+    entry: {
+      id: "context-mode",
+      scope: { kind: "provider", provider: "codex" },
+    },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "upsert_mcp_registry_entry_response",
+      payload: {
+        entry,
+        requestId: upsertRequest.requestId,
+      },
+    }),
+  );
+  await expect(upsertPromise).resolves.toMatchObject({ entry });
+
+  const removePromise = client.removeMcpRegistryEntry({
+    id: "context-mode",
+    scope: { kind: "provider", provider: "codex" },
+  });
+  const removeRequest = parseSentFrame(mock.sent[2]);
+  expect(removeRequest).toMatchObject({
+    type: "remove_mcp_registry_entry_request",
+    id: "context-mode",
+    scope: { kind: "provider", provider: "codex" },
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "remove_mcp_registry_entry_response",
+      payload: {
+        removed: true,
+        requestId: removeRequest.requestId,
+      },
+    }),
+  );
+  await expect(removePromise).resolves.toMatchObject({ removed: true });
+});
+
 test("dedupes in-flight checkout status requests per agentId", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

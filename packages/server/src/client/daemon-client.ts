@@ -72,6 +72,11 @@ import type {
   CreateRuntimeProfileResponseMessage,
   UpdateRuntimeProfileResponseMessage,
   DeleteRuntimeProfileResponseMessage,
+  ListMcpRegistryEntriesResponseMessage,
+  UpsertMcpRegistryEntryResponseMessage,
+  RemoveMcpRegistryEntryResponseMessage,
+  McpRegistryEntryInput,
+  McpRegistryScope,
   RestartAgentWithRuntimeProfileResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
@@ -361,6 +366,9 @@ type ListRuntimeProfilesPayload = ListRuntimeProfilesResponseMessage["payload"];
 type CreateRuntimeProfilePayload = CreateRuntimeProfileResponseMessage["payload"];
 type UpdateRuntimeProfilePayload = UpdateRuntimeProfileResponseMessage["payload"];
 type DeleteRuntimeProfilePayload = DeleteRuntimeProfileResponseMessage["payload"];
+type ListMcpRegistryEntriesPayload = ListMcpRegistryEntriesResponseMessage["payload"];
+type UpsertMcpRegistryEntryPayload = UpsertMcpRegistryEntryResponseMessage["payload"];
+type RemoveMcpRegistryEntryPayload = RemoveMcpRegistryEntryResponseMessage["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -3694,6 +3702,51 @@ export class DaemonClient {
         profileId: options.profileId,
       },
       responseType: "delete_runtime_profile_response",
+      timeout: 10000,
+    });
+  }
+
+  async listMcpRegistryEntries(options?: {
+    requestId?: string;
+  }): Promise<ListMcpRegistryEntriesPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options?.requestId,
+      message: {
+        type: "list_mcp_registry_entries_request",
+      },
+      responseType: "list_mcp_registry_entries_response",
+      timeout: 10000,
+    });
+  }
+
+  async upsertMcpRegistryEntry(options: {
+    entry: McpRegistryEntryInput;
+    requestId?: string;
+  }): Promise<UpsertMcpRegistryEntryPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "upsert_mcp_registry_entry_request",
+        entry: options.entry,
+      },
+      responseType: "upsert_mcp_registry_entry_response",
+      timeout: 10000,
+    });
+  }
+
+  async removeMcpRegistryEntry(options: {
+    id: string;
+    scope: McpRegistryScope;
+    requestId?: string;
+  }): Promise<RemoveMcpRegistryEntryPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "remove_mcp_registry_entry_request",
+        id: options.id,
+        scope: options.scope,
+      },
+      responseType: "remove_mcp_registry_entry_response",
       timeout: 10000,
     });
   }
