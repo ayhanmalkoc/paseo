@@ -209,6 +209,37 @@ test("sends MCP registry management requests", async () => {
     }),
   );
   await expect(removePromise).resolves.toMatchObject({ removed: true });
+
+  const importPromise = client.importMcpRegistryEntries({
+    provider: "codex",
+    source: "native",
+    path: "/tmp/codex/config.toml",
+  });
+  const importRequest = parseSentFrame(mock.sent[3]);
+  expect(importRequest).toMatchObject({
+    type: "import_mcp_registry_entries_request",
+    provider: "codex",
+    source: "native",
+    path: "/tmp/codex/config.toml",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "import_mcp_registry_entries_response",
+      payload: {
+        provider: "codex",
+        path: "/tmp/codex/config.toml",
+        entries: [entry],
+        skipped: [],
+        requestId: importRequest.requestId,
+      },
+    }),
+  );
+  await expect(importPromise).resolves.toMatchObject({
+    provider: "codex",
+    path: "/tmp/codex/config.toml",
+    entries: [entry],
+    skipped: [],
+  });
 });
 
 test("dedupes in-flight checkout status requests per agentId", async () => {

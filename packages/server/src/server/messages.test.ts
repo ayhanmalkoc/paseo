@@ -163,5 +163,27 @@ describe("MCP registry protocol messages", () => {
         },
       }).type,
     ).toBe("list_mcp_registry_entries_response");
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "import_mcp_registry_entries_request",
+        provider: "codex",
+        source: "native",
+        requestId: "req_2",
+      }).type,
+    ).toBe("import_mcp_registry_entries_request");
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "import_mcp_registry_entries_response",
+        payload: {
+          provider: "codex",
+          path: "/root/.codex/config.toml",
+          entries: [entry],
+          skipped: [],
+          requestId: "req_2",
+        },
+      }).type,
+    ).toBe("import_mcp_registry_entries_response");
   });
 });
