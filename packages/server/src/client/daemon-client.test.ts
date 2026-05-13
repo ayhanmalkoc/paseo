@@ -240,6 +240,56 @@ test("sends MCP registry management requests", async () => {
     entries: [entry],
     skipped: [],
   });
+
+  const explainPromise = client.explainMcpRegistry({
+    provider: "codex",
+    accountKey: "account-a",
+    runtimeProfileId: "profile-a",
+    sessionMcpServers: {
+      session: { type: "stdio", command: "session-tool" },
+    },
+    includeSystem: true,
+    agentId: "agent-1",
+  });
+  const explainRequest = parseSentFrame(mock.sent[4]);
+  expect(explainRequest).toMatchObject({
+    type: "explain_mcp_registry_request",
+    provider: "codex",
+    accountKey: "account-a",
+    runtimeProfileId: "profile-a",
+    includeSystem: true,
+    agentId: "agent-1",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "explain_mcp_registry_response",
+      payload: {
+        provider: "codex",
+        accountKey: "account-a",
+        runtimeProfileId: "profile-a",
+        servers: {
+          session: { type: "stdio", command: "session-tool" },
+        },
+        sources: {
+          session: { scope: "session", source: "session" },
+        },
+        steps: [
+          {
+            id: "session",
+            action: "selected",
+            source: { scope: "session", source: "session" },
+            config: { type: "stdio", command: "session-tool" },
+          },
+        ],
+        requestId: explainRequest.requestId,
+      },
+    }),
+  );
+  await expect(explainPromise).resolves.toMatchObject({
+    provider: "codex",
+    accountKey: "account-a",
+    runtimeProfileId: "profile-a",
+  });
 });
 
 test("dedupes in-flight checkout status requests per agentId", async () => {

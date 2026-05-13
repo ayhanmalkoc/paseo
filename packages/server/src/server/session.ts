@@ -96,6 +96,8 @@ import type { RuntimeProfileService } from "./agent/runtime-profile-service.js";
 import type { AccountOnboardingService } from "./agent/account-onboarding-service.js";
 import type { McpRegistryService } from "./agent/mcp-registry-service.js";
 import { readNativeMcpRegistryEntries } from "./agent/mcp-native-import.js";
+import { explainMcpResolution } from "./agent/mcp-resolver.js";
+import { createManagedProviderHomeRef } from "./agent/provider-home-ref.js";
 import type {
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
@@ -2184,6 +2186,8 @@ export class Session {
         return this.handleRemoveMcpRegistryEntryRequest(msg);
       case "import_mcp_registry_entries_request":
         return this.handleImportMcpRegistryEntriesRequest(msg);
+      case "explain_mcp_registry_request":
+        return this.handleExplainMcpRegistryRequest(msg);
       default:
         return undefined;
     }
@@ -4229,6 +4233,49 @@ export class Session {
     }
   }
 
+  private async handleExplainMcpRegistryRequest(
+    msg: Extract<SessionInboundMessage, { type: "explain_mcp_registry_request" }>,
+  ): Promise<void> {
+    try {
+      const accountKey = normalizeOptionalString(msg.accountKey);
+      const runtimeProfileId = normalizeOptionalString(msg.runtimeProfileId);
+      const entries = await this.requireMcpRegistryService().listEntries();
+      const includeSystem =
+        msg.includeSystem !== false &&
+        this.daemonConfigStore.get().mcp.injectIntoAgents !== false &&
+        this.mcpBaseUrl !== null;
+      const explanation = explainMcpResolution({
+        entries,
+        provider: msg.provider,
+        providerHomeRef: accountKey
+          ? createManagedProviderHomeRef({
+              provider: msg.provider,
+              profileKey: accountKey,
+            })
+          : null,
+        runtimeProfileId,
+        sessionMcpServers: msg.sessionMcpServers,
+        injectPaseoTools: includeSystem,
+        paseoMcpBaseUrl: this.mcpBaseUrl,
+        agentId: msg.agentId ?? "preview",
+      });
+      this.emit({
+        type: "explain_mcp_registry_response",
+        payload: {
+          provider: msg.provider,
+          accountKey,
+          runtimeProfileId,
+          servers: explanation.servers,
+          sources: explanation.sources,
+          steps: explanation.steps,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitMcpRegistryRpcError(msg, error, "mcp_registry_explain_failed");
+    }
+  }
+
   private requireProviderAuthService(): ProviderAuthService {
     if (!this.providerAuthService) {
       throw new Error("Provider auth profiles are not available");
@@ -4347,7 +4394,8 @@ export class Session {
           | "list_mcp_registry_entries_request"
           | "upsert_mcp_registry_entry_request"
           | "remove_mcp_registry_entry_request"
-          | "import_mcp_registry_entries_request";
+          | "import_mcp_registry_entries_request"
+          | "explain_mcp_registry_request";
       }
     >,
     error: unknown,
@@ -9417,6 +9465,14 @@ function isValidPullRequestTimelineIdentity(options: {
 
 function isValidGitHubRepoSegment(value: string): boolean {
   return /^[A-Za-z0-9._-]+$/.test(value);
+}
+
+function normalizeOptionalString(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function toPullRequestTimelinePayloadItem(

@@ -5,6 +5,7 @@ import {
   type McpRegistryEntry,
   type McpRegistryEntryInput,
   type McpRegistryScope,
+  type McpResolutionStep,
   type McpServerConfig,
 } from "@getpaseo/server";
 import { withOutput } from "../../output/index.js";
@@ -33,6 +34,17 @@ export interface McpMutationResult {
   target?: string;
 }
 
+export interface McpExplainItem {
+  id: string;
+  action: string;
+  reason: string;
+  source: string;
+  scope: string;
+  type: string;
+  target: string;
+  overriddenBy: string;
+}
+
 const mcpListSchema: OutputSchema<McpListItem> = {
   idField: "id",
   columns: [
@@ -42,6 +54,20 @@ const mcpListSchema: OutputSchema<McpListItem> = {
     { header: "SCOPE", field: "scope", width: 24 },
     { header: "TYPE", field: "type", width: 8 },
     { header: "TARGET", field: "target", width: 42 },
+  ],
+};
+
+const mcpExplainSchema: OutputSchema<McpExplainItem> = {
+  idField: "id",
+  columns: [
+    { header: "ID", field: "id", width: 24 },
+    { header: "ACTION", field: "action", width: 12 },
+    { header: "SOURCE", field: "source", width: 14 },
+    { header: "SCOPE", field: "scope", width: 24 },
+    { header: "TYPE", field: "type", width: 8 },
+    { header: "TARGET", field: "target", width: 36 },
+    { header: "REASON", field: "reason", width: 24 },
+    { header: "OVERRIDDEN BY", field: "overriddenBy", width: 24 },
   ],
 };
 
@@ -82,6 +108,16 @@ interface ImportOptions extends CommandOptions {
   provider?: string;
   fromNative?: boolean;
   path?: string;
+}
+
+interface ExplainOptions extends CommandOptions {
+  host?: string;
+  provider?: string;
+  account?: string;
+  profile?: string;
+  agentId?: string;
+  system?: boolean;
+  sessionConfig?: string;
 }
 
 export function createMcpCommand(): Command {
@@ -134,6 +170,18 @@ export function createMcpCommand(): Command {
       .option("--from-native", "Import from the provider's native config")
       .option("--path <path>", "Native provider home or config file path"),
   ).action(withOutput(runImportCommand));
+
+  addJsonAndDaemonHostOptions(
+    mcp
+      .command("explain")
+      .description("Preview resolved MCP servers for a provider/account/profile")
+      .requiredOption("--provider <provider>", "Provider to resolve, e.g. codex")
+      .option("--account <account>", "Managed account key or provider:accountKey")
+      .option("--profile <profileId>", "Runtime profile id")
+      .option("--agent-id <agentId>", "Caller agent id used for system Paseo MCP URL")
+      .option("--session-config <json>", "Session MCP server override JSON object")
+      .option("--no-system", "Exclude system Paseo MCP tools"),
+  ).action(withOutput(runExplainCommand));
 
   return mcp;
 }
@@ -249,12 +297,131 @@ async function runImportCommand(
   }
 }
 
+async function runExplainCommand(
+  options: ExplainOptions,
+  _command: Command,
+): Promise<ListResult<McpExplainItem>> {
+  const provider = parseProvider(options.provider ?? "");
+  const accountKey = parseExplainAccountKey(options.account, provider);
+  const sessionMcpServers = options.sessionConfig
+    ? parseSessionMcpServers(options.sessionConfig)
+    : undefined;
+  const client = await connectToDaemon({ host: options.host });
+  try {
+    const payload = await client.explainMcpRegistry({
+      provider,
+      accountKey,
+      runtimeProfileId: options.profile,
+      agentId: options.agentId,
+      includeSystem: options.system !== false,
+      sessionMcpServers,
+    });
+    return {
+      type: "list",
+      data: payload.steps.map(toExplainItem),
+      schema: mcpExplainSchema,
+    };
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
 function parseOptionalScope(options: ScopeOptions): McpRegistryScope | null {
   const selected = selectedScopeCount(options);
   if (selected === 0) {
     return null;
   }
   return parseRequiredScope(options);
+}
+
+export function parseExplainAccountKey(
+  value: string | undefined,
+  provider: AgentProviderId,
+): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (!trimmed.includes(":")) {
+    return trimmed;
+  }
+  const [scopeProvider, accountKey] = splitAccountScope(trimmed);
+  if (scopeProvider !== provider) {
+    throw {
+      code: "INVALID_SCOPE",
+      message: `--account provider '${scopeProvider}' does not match --provider '${provider}'`,
+    };
+  }
+  return accountKey;
+}
+
+export function parseSessionMcpServers(value: string): Record<string, McpServerConfig> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw {
+      code: "INVALID_SESSION_MCP_CONFIG",
+      message: `--session-config must be a JSON object: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw {
+      code: "INVALID_SESSION_MCP_CONFIG",
+      message: "--session-config must be a JSON object keyed by MCP server id",
+    };
+  }
+  const servers: Record<string, McpServerConfig> = {};
+  for (const [id, config] of Object.entries(parsed)) {
+    servers[id] = parseSessionMcpServerConfig(id, config);
+  }
+  return servers;
+}
+
+function parseSessionMcpServerConfig(id: string, config: unknown): McpServerConfig {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw {
+      code: "INVALID_SESSION_MCP_CONFIG",
+      message: `Session MCP server '${id}' must be an object`,
+    };
+  }
+  const value = config as Partial<McpServerConfig>;
+  if (value.type === "stdio" && typeof value.command === "string" && value.command.trim()) {
+    return {
+      type: "stdio",
+      command: value.command,
+      ...(Array.isArray(value.args) && value.args.every((arg) => typeof arg === "string")
+        ? { args: value.args }
+        : {}),
+      ...recordIfNotEmpty("env", normalizeStringRecord(value.env)),
+    };
+  }
+  if ((value.type === "http" || value.type === "sse") && typeof value.url === "string") {
+    return {
+      type: value.type,
+      url: value.url,
+      ...recordIfNotEmpty("headers", normalizeStringRecord(value.headers)),
+    };
+  }
+  throw {
+    code: "INVALID_SESSION_MCP_CONFIG",
+    message: `Session MCP server '${id}' must be stdio, http, or sse config`,
+  };
+}
+
+function normalizeStringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const record: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "string") {
+      record[key] = item;
+    }
+  }
+  return record;
 }
 
 export function parseRequiredScope(options: ScopeOptions): McpRegistryScope {
@@ -404,6 +571,19 @@ function toMutationResult(entry: McpRegistryEntry): Omit<McpMutationResult, "act
   };
 }
 
+function toExplainItem(step: McpResolutionStep): McpExplainItem {
+  return {
+    id: step.id,
+    action: step.action,
+    reason: step.reason ?? "",
+    source: step.source.source,
+    scope: formatResolvedScope(step.source),
+    type: step.config?.type ?? "-",
+    target: step.config ? formatConfigTarget(step.config) : "",
+    overriddenBy: step.overriddenBy ? formatResolvedScope(step.overriddenBy) : "",
+  };
+}
+
 function formatScope(scope: McpRegistryScope): string {
   switch (scope.kind) {
     case "global":
@@ -414,6 +594,24 @@ function formatScope(scope: McpRegistryScope): string {
       return `account:${scope.provider}:${scope.accountKey}`;
     case "runtimeProfile":
       return `profile:${scope.profileId}`;
+  }
+  return "";
+}
+
+function formatResolvedScope(source: McpResolutionStep["source"]): string {
+  switch (source.scope) {
+    case "global":
+      return "global";
+    case "provider":
+      return `provider:${source.provider ?? ""}`;
+    case "account":
+      return `account:${source.provider ?? ""}:${source.accountKey ?? ""}`;
+    case "runtimeProfile":
+      return `profile:${source.runtimeProfileId ?? ""}`;
+    case "session":
+      return "session";
+    case "system":
+      return "system";
   }
   return "";
 }

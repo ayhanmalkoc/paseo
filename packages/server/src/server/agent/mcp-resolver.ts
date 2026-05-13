@@ -43,6 +43,21 @@ export interface ResolvedMcpServers {
   sources: Record<string, ResolvedMcpSourceInfo>;
 }
 
+export type McpResolutionStepAction = "selected" | "overridden" | "ignored";
+
+export interface McpResolutionStep {
+  id: string;
+  action: McpResolutionStepAction;
+  reason?: string;
+  source: ResolvedMcpSourceInfo;
+  config?: McpServerConfig;
+  overriddenBy?: ResolvedMcpSourceInfo;
+}
+
+export interface McpResolutionExplanation extends ResolvedMcpServers {
+  steps: McpResolutionStep[];
+}
+
 export function isReservedMcpServerId(id: string): boolean {
   return id === SYSTEM_PASEO_MCP_SERVER_ID;
 }
@@ -57,49 +72,140 @@ export function resolveMcpServers(input: {
   paseoMcpBaseUrl?: string | null;
   agentId: string;
 }): ResolvedMcpServers {
+  const explanation = explainMcpResolution(input);
+  return {
+    servers: explanation.servers,
+    sources: explanation.sources,
+  };
+}
+
+export function explainMcpResolution(input: {
+  entries?: McpRegistryEntry[];
+  provider: AgentProvider;
+  providerHomeRef?: ProviderHomeRef | null;
+  runtimeProfileId?: string | null;
+  sessionMcpServers?: Record<string, McpServerConfig>;
+  injectPaseoTools?: boolean;
+  paseoMcpBaseUrl?: string | null;
+  agentId: string;
+}): McpResolutionExplanation {
   const servers: Record<string, McpServerConfig> = {};
   const sources: Record<string, ResolvedMcpSourceInfo> = {};
+  const steps: McpResolutionStep[] = [];
   const accountKey = getManagedProviderHomeProfileKey(input.providerHomeRef);
   const runtimeProfileId = normalizeString(input.runtimeProfileId);
   const entries = input.entries ?? [];
 
   for (const entry of entries) {
-    if (!entry.enabled || isReservedMcpServerId(entry.id)) {
+    const source = sourceInfoFromEntry(entry);
+    if (!entry.enabled) {
+      steps.push({
+        id: entry.id,
+        action: "ignored",
+        reason: "disabled",
+        source,
+      });
+      continue;
+    }
+    if (isReservedMcpServerId(entry.id)) {
+      steps.push({
+        id: entry.id,
+        action: "ignored",
+        reason: "reserved-system-id",
+        source,
+      });
       continue;
     }
     if (!scopeMatches(entry.scope, input.provider, accountKey, runtimeProfileId)) {
+      steps.push({
+        id: entry.id,
+        action: "ignored",
+        reason: "scope-mismatch",
+        source,
+      });
       continue;
     }
+    const previousSource = sources[entry.id];
+    if (previousSource) {
+      const previousStep = findLastSelectedStep(steps, entry.id);
+      if (previousStep) {
+        previousStep.action = "overridden";
+        previousStep.reason = "overridden-by-later-scope";
+        previousStep.overriddenBy = source;
+      }
+    }
     servers[entry.id] = entry.config;
-    sources[entry.id] = sourceInfoFromEntry(entry);
+    sources[entry.id] = source;
+    steps.push({
+      id: entry.id,
+      action: "selected",
+      source,
+      config: entry.config,
+    });
   }
 
   for (const [id, config] of Object.entries(input.sessionMcpServers ?? {})) {
-    if (isReservedMcpServerId(id)) {
-      continue;
-    }
-    servers[id] = config;
-    sources[id] = {
+    const source: ResolvedMcpSourceInfo = {
       scope: "session",
       source: "session",
     };
+    if (isReservedMcpServerId(id)) {
+      steps.push({
+        id,
+        action: "ignored",
+        reason: "reserved-system-id",
+        source,
+      });
+      continue;
+    }
+    const previousSource = sources[id];
+    if (previousSource) {
+      const previousStep = findLastSelectedStep(steps, id);
+      if (previousStep) {
+        previousStep.action = "overridden";
+        previousStep.reason = "overridden-by-session";
+        previousStep.overriddenBy = source;
+      }
+    }
+    servers[id] = config;
+    sources[id] = source;
+    steps.push({
+      id,
+      action: "selected",
+      source,
+      config,
+    });
   }
 
   if (input.injectPaseoTools === true && input.paseoMcpBaseUrl) {
-    servers[SYSTEM_PASEO_MCP_SERVER_ID] = {
-      type: "http",
-      url: `${input.paseoMcpBaseUrl}?callerAgentId=${input.agentId}`,
-    };
-    sources[SYSTEM_PASEO_MCP_SERVER_ID] = {
+    const source: ResolvedMcpSourceInfo = {
       scope: "system",
       source: "system",
       protected: true,
     };
+    const previousStep = findLastSelectedStep(steps, SYSTEM_PASEO_MCP_SERVER_ID);
+    if (previousStep) {
+      previousStep.action = "overridden";
+      previousStep.reason = "overridden-by-system";
+      previousStep.overriddenBy = source;
+    }
+    servers[SYSTEM_PASEO_MCP_SERVER_ID] = {
+      type: "http",
+      url: `${input.paseoMcpBaseUrl}?callerAgentId=${input.agentId}`,
+    };
+    sources[SYSTEM_PASEO_MCP_SERVER_ID] = source;
+    steps.push({
+      id: SYSTEM_PASEO_MCP_SERVER_ID,
+      action: "selected",
+      source,
+      config: servers[SYSTEM_PASEO_MCP_SERVER_ID],
+    });
   }
 
   return {
     servers: Object.keys(servers).length > 0 ? servers : undefined,
     sources,
+    steps,
   };
 }
 
@@ -152,6 +258,16 @@ function sourceInfoFromEntry(entry: McpRegistryEntry): ResolvedMcpSourceInfo {
     source: entry.source,
     entryId: entry.id,
   };
+}
+
+function findLastSelectedStep(steps: McpResolutionStep[], id: string): McpResolutionStep | null {
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const step = steps[index];
+    if (step.id === id && step.action === "selected") {
+      return step;
+    }
+  }
+  return null;
 }
 
 function normalizeString(value: string | null | undefined): string | null {

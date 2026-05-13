@@ -185,5 +185,46 @@ describe("MCP registry protocol messages", () => {
         },
       }).type,
     ).toBe("import_mcp_registry_entries_response");
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "explain_mcp_registry_request",
+        provider: "codex",
+        accountKey: "account-a",
+        runtimeProfileId: "profile-a",
+        sessionMcpServers: {
+          session: { type: "stdio", command: "session-tool" },
+        },
+        includeSystem: true,
+        agentId: "agent-1",
+        requestId: "req_3",
+      }).type,
+    ).toBe("explain_mcp_registry_request");
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "explain_mcp_registry_response",
+        payload: {
+          provider: "codex",
+          accountKey: "account-a",
+          runtimeProfileId: "profile-a",
+          servers: {
+            session: { type: "stdio", command: "session-tool" },
+          },
+          sources: {
+            session: { scope: "session", source: "session" },
+          },
+          steps: [
+            {
+              id: "session",
+              action: "selected",
+              source: { scope: "session", source: "session" },
+              config: { type: "stdio", command: "session-tool" },
+            },
+          ],
+          requestId: "req_3",
+        },
+      }).type,
+    ).toBe("explain_mcp_registry_response");
   });
 });

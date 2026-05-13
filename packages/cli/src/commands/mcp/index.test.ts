@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseMcpConfig, parseRequiredScope } from "./index.js";
+import {
+  parseExplainAccountKey,
+  parseMcpConfig,
+  parseRequiredScope,
+  parseSessionMcpServers,
+} from "./index.js";
 
 describe("mcp command parsing", () => {
   it("parses provider scopes", () => {
@@ -50,6 +55,24 @@ describe("mcp command parsing", () => {
       type: "http",
       url: "http://127.0.0.1:3000/mcp",
       headers: { Authorization: "Bearer secret" },
+    });
+  });
+
+  it("parses explain account and session override config", () => {
+    expect(parseExplainAccountKey("codex:work", "codex")).toBe("work");
+    expect(parseExplainAccountKey("work", "codex")).toBe("work");
+    expect(() => parseExplainAccountKey("claude:work", "codex")).toThrow(
+      expect.objectContaining({ code: "INVALID_SCOPE" }),
+    );
+
+    expect(
+      parseSessionMcpServers(
+        JSON.stringify({
+          session: { type: "stdio", command: "session-tool", args: ["--serve"] },
+        }),
+      ),
+    ).toEqual({
+      session: { type: "stdio", command: "session-tool", args: ["--serve"] },
     });
   });
 });
