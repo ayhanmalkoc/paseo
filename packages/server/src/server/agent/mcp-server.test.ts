@@ -9,6 +9,7 @@ import { z } from "zod";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
+import type { ProviderAuthProfile, RuntimeProfile } from "./agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type { ProviderDefinition } from "./provider-registry.js";
 import { AgentListItemPayloadSchema, AgentSnapshotPayloadSchema } from "../../shared/messages.js";
@@ -189,6 +190,68 @@ function createProviderDefinition(overrides: Partial<ProviderDefinition>): Provi
     })),
     fetchModels: vi.fn().mockResolvedValue([]),
     fetchModes: vi.fn().mockResolvedValue([]),
+    ...overrides,
+  };
+}
+
+function createRuntimeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
+  return {
+    id: "profile-1",
+    version: 2,
+    name: "Codex default",
+    provider: "codex",
+    accountSelection: { kind: "inherit-provider-default" },
+    model: "gpt-5.5",
+    modeId: "full-access",
+    thinkingOptionId: "xhigh",
+    featureValues: { fast: true },
+    envOverlay: { SECRET_TOKEN: "hidden" },
+    mcpServers: {
+      private: {
+        type: "stdio",
+        command: "private-mcp",
+      },
+    },
+    concurrencyPolicy: "warn",
+    sessionBehavior: "continue",
+    createdAt: "2026-05-01T00:00:00.000Z",
+    updatedAt: "2026-05-02T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createProviderAuthProfile(
+  overrides: Partial<ProviderAuthProfile> = {},
+): ProviderAuthProfile {
+  const provider = overrides.provider ?? "codex";
+  const key = overrides.key ?? "account-1";
+  return {
+    provider,
+    key,
+    alias: "Default account",
+    email: "default@example.com",
+    authMode: "chatgpt",
+    plan: "plus",
+    status: "ready",
+    isDefault: true,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    updatedAt: "2026-05-02T00:00:00.000Z",
+    lastUsedAt: "2026-05-03T00:00:00.000Z",
+    usage: {
+      source: "provider-api",
+      primaryUsedPercent: 25,
+      primaryWindowMinutes: 300,
+      primaryResetsAt: "2026-05-13T12:00:00.000Z",
+      refreshedAt: "2026-05-13T09:00:00.000Z",
+    },
+    providerHomeRef: {
+      kind: "managed-profile",
+      provider,
+      profileKey: key,
+      homePath: "/secret/provider/home",
+      accountFingerprint: "fingerprint",
+      label: "Default account",
+    },
     ...overrides,
   };
 }
@@ -677,6 +740,52 @@ describe("create_agent MCP tool", () => {
       }),
       undefined,
       { labels: { source: "mcp" } },
+    );
+  });
+
+  it("passes an explicit runtime profile through create_agent", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const runtimeProfile = createRuntimeProfile({ id: "profile-codex", provider: "codex" });
+    const runtimeProfileService = {
+      getProfile: vi.fn().mockResolvedValue(runtimeProfile),
+      listProfiles: vi.fn(),
+    } as unknown as NonNullable<
+      Parameters<typeof createAgentMcpServer>[0]["runtimeProfileService"]
+    >;
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "agent-runtime-profile",
+      cwd: REPO_CWD,
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Profile test", model: "gpt-5.4", runtimeProfileId: "profile-codex" },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      runtimeProfileService,
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    await tool.handler({
+      cwd: existingCwd,
+      title: "Profile test",
+      initialPrompt: "Use the runtime profile",
+      provider: "codex/gpt-5.4",
+      runtimeProfileId: "profile-codex",
+    });
+
+    expect(runtimeProfileService.getProfile).toHaveBeenCalledWith("profile-codex");
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "codex",
+        model: "gpt-5.4",
+        runtimeProfileId: "profile-codex",
+        providerHomeRef: undefined,
+      }),
+      undefined,
+      undefined,
     );
   });
 
@@ -1642,6 +1751,197 @@ describe("provider listing MCP tool", () => {
 
     expect(providerRegistry.claude.createClient).toHaveBeenCalledTimes(1);
     expect(isAvailable).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("provider account and runtime profile MCP tools", () => {
+  const logger = createTestLogger();
+
+  it("lists safe runtime profile summaries without exposing secret-backed fields", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const profile = createRuntimeProfile({
+      accountSelection: {
+        kind: "managed-account",
+        providerHomeRef: {
+          kind: "managed-profile",
+          provider: "codex",
+          profileKey: "account-1",
+          homePath: "/secret/provider/home",
+          accountFingerprint: "fingerprint",
+          label: "Default account",
+        },
+      },
+    });
+    const runtimeProfileService = {
+      listProfiles: vi.fn().mockResolvedValue([profile]),
+      getProfile: vi.fn(),
+    } as unknown as NonNullable<
+      Parameters<typeof createAgentMcpServer>[0]["runtimeProfileService"]
+    >;
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      runtimeProfileService,
+      logger,
+    });
+    const tool = registeredTool(server, "list_runtime_profiles");
+    const response = await tool.handler({ provider: "codex" });
+
+    expect(runtimeProfileService.listProfiles).toHaveBeenCalledWith("codex");
+    expect(response.structuredContent).toEqual({
+      profiles: [
+        expect.objectContaining({
+          id: "profile-1",
+          name: "Codex default",
+          provider: "codex",
+          model: "gpt-5.5",
+          hasEnvOverlay: true,
+          hasMcpServers: true,
+        }),
+      ],
+    });
+    expect(JSON.stringify(response.structuredContent)).not.toContain("SECRET_TOKEN");
+    expect(JSON.stringify(response.structuredContent)).not.toContain("/secret/provider/home");
+  });
+
+  it("reports the caller runtime profile with the resolved provider-default account", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const runtimeProfile = createRuntimeProfile({
+      id: "profile-default",
+      accountSelection: { kind: "inherit-provider-default" },
+    });
+    const account = createProviderAuthProfile({ key: "account-default", isDefault: true });
+    const runtimeProfileService = {
+      getProfile: vi.fn().mockResolvedValue(runtimeProfile),
+      listProfiles: vi.fn(),
+    } as unknown as NonNullable<
+      Parameters<typeof createAgentMcpServer>[0]["runtimeProfileService"]
+    >;
+    const providerAuthService = {
+      listProfiles: vi.fn().mockResolvedValue([account]),
+    } as unknown as NonNullable<Parameters<typeof createAgentMcpServer>[0]["providerAuthService"]>;
+    spies.agentManager.getAgent.mockReturnValue(
+      createManagedAgent({
+        id: "caller-agent",
+        provider: "codex",
+        config: {
+          provider: "codex",
+          cwd: REPO_CWD,
+          runtimeProfileId: "profile-default",
+          profileSnapshot: {
+            sourceProfileId: "profile-default",
+            sourceProfileVersion: 2,
+            sourceProfileName: "Codex default",
+            provider: "codex",
+            accountSelection: { kind: "inherit-provider-default" },
+            model: "gpt-5.5",
+            modeId: "full-access",
+            thinkingOptionId: "xhigh",
+            featureValues: { fast: true },
+            sessionBehavior: "continue",
+            resolvedAt: "2026-05-13T09:00:00.000Z",
+          },
+        },
+      }),
+    );
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerAuthService,
+      runtimeProfileService,
+      callerAgentId: "caller-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "get_current_runtime_profile");
+    const response = await tool.handler({});
+
+    expect(response.structuredContent).toEqual(
+      expect.objectContaining({
+        agentId: "caller-agent",
+        provider: "codex",
+        customSettings: false,
+        runtimeProfile: expect.objectContaining({ id: "profile-default" }),
+        accountSelection: { kind: "inherit-provider-default" },
+        resolvedAccount: expect.objectContaining({
+          key: "account-default",
+          email: "default@example.com",
+        }),
+        model: "gpt-5.5",
+        modeId: "full-access",
+        thinkingOptionId: "xhigh",
+        sessionBehavior: "continue",
+        featureValues: { fast: true },
+      }),
+    );
+    expect(JSON.stringify(response.structuredContent)).not.toContain("/secret/provider/home");
+  });
+
+  it("refreshes usage and sets provider default account through provider auth service", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const previous = createProviderAuthProfile({
+      key: "account-old",
+      alias: "Old account",
+      isDefault: true,
+    });
+    const next = createProviderAuthProfile({
+      key: "account-new",
+      alias: "New account",
+      email: "new@example.com",
+      isDefault: false,
+    });
+    const refreshed = createProviderAuthProfile({
+      key: "account-new",
+      alias: "New account",
+      email: "new@example.com",
+      usage: {
+        source: "provider-api",
+        primaryUsedPercent: 10,
+        secondaryUsedPercent: 20,
+        creditsRemaining: 5,
+        refreshedAt: "2026-05-13T10:00:00.000Z",
+      },
+    });
+    const providerAuthService = {
+      listProfiles: vi.fn().mockResolvedValue([previous, next]),
+      refreshProfile: vi.fn().mockResolvedValue(refreshed),
+      setDefaultProfile: vi.fn().mockResolvedValue([
+        { ...previous, isDefault: false },
+        { ...next, isDefault: true },
+      ]),
+    } as unknown as NonNullable<Parameters<typeof createAgentMcpServer>[0]["providerAuthService"]>;
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerAuthService,
+      logger,
+    });
+
+    const refreshTool = registeredTool(server, "refresh_provider_account_usage");
+    const refreshResponse = await refreshTool.handler({
+      provider: "codex",
+      accountKey: "account-new",
+    });
+    expect(providerAuthService.refreshProfile).toHaveBeenCalledWith("codex", "account-new");
+    expect(refreshResponse.structuredContent).toEqual({
+      account: expect.objectContaining({
+        key: "account-new",
+        usage: expect.objectContaining({ creditsRemaining: 5 }),
+      }),
+    });
+
+    const defaultTool = registeredTool(server, "set_provider_default_account");
+    const defaultResponse = await defaultTool.handler({
+      provider: "codex",
+      accountKey: "account-new",
+    });
+    expect(providerAuthService.setDefaultProfile).toHaveBeenCalledWith("codex", "account-new");
+    expect(defaultResponse.structuredContent).toEqual({
+      previousDefaultAccount: expect.objectContaining({ key: "account-old" }),
+      newDefaultAccount: expect.objectContaining({ key: "account-new", isDefault: true }),
+    });
   });
 });
 

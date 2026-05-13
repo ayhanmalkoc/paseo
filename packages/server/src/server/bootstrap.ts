@@ -641,6 +641,8 @@ export async function createPaseoDaemon(
         getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
         scheduleService,
         providerRegistry,
+        providerAuthService,
+        runtimeProfileService,
         github,
         workspaceGitService,
         archiveWorkspaceRecord: archiveWorkspaceRecordForMcp,
