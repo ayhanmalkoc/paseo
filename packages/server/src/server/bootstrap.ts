@@ -935,6 +935,7 @@ export async function createPaseoDaemon(
             runtimeProfileService,
             accountOnboardingService,
             config.pushNotificationSender,
+            mcpRegistryService,
           );
 
           if (relayEnabled) {
