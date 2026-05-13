@@ -117,7 +117,7 @@ export function toAgentPayload(
     providerHomeRef: agent.config.providerHomeRef ?? null,
     accountKey: agent.config.providerHomeRef?.profileKey ?? null,
     authProfileKey: agent.config.providerHomeRef?.profileKey ?? null,
-    profileSnapshot: agent.config.profileSnapshot,
+    ...(agent.config.profileSnapshot ? { profileSnapshot: agent.config.profileSnapshot } : {}),
     thinkingOptionId,
     effectiveThinkingOptionId,
     ...(runtimeInfo ? { runtimeInfo } : {}),

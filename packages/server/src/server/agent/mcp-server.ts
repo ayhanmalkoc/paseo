@@ -5,7 +5,15 @@ import type { Logger } from "pino";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 
-import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
+import type {
+  AgentProvider,
+  AgentSessionConfig,
+  ProviderAuthProfile,
+  ProviderAuthUsageSnapshot,
+  ProviderHomeRef,
+  RuntimeProfile,
+  RuntimeProfileAccountSelection,
+} from "./agent-sdk-types.js";
 import type { AgentManager, WaitForAgentResult } from "./agent-manager.js";
 import {
   AgentPermissionRequestPayloadSchema,
@@ -49,6 +57,8 @@ import type {
 import type { ScheduleService } from "../schedule/service.js";
 import { ScheduleSummarySchema, StoredScheduleSchema } from "../schedule/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import type { ProviderAuthService } from "./provider-auth-service.js";
+import type { RuntimeProfileService } from "./runtime-profile-service.js";
 import { getAgentProviderDefinition } from "./provider-manifest.js";
 import { resolveAndValidateCreateAgentMode } from "./create-agent-mode.js";
 import { resolveSnapshotCwd } from "./provider-snapshot-manager.js";
@@ -78,6 +88,8 @@ export interface AgentMcpServerOptions {
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
   providerRegistry?: Record<AgentProvider, ProviderDefinition> | null;
+  providerAuthService?: ProviderAuthService | null;
+  runtimeProfileService?: RuntimeProfileService | null;
   github?: GitHubService;
   workspaceGitService?: Pick<
     WorkspaceGitService,
@@ -120,6 +132,98 @@ const CODEX_TO_CLAUDE_MODE: Record<string, string> = {
   "full-access": "bypassPermissions",
 };
 
+const McpProviderHomeRefSchema = z
+  .object({
+    kind: z.enum(["native-default", "managed-profile"]),
+    provider: AgentProviderEnum,
+    profileKey: z.string().nullable().optional(),
+    accountFingerprint: z.string().nullable().optional(),
+    label: z.string().nullable().optional(),
+  })
+  .strict();
+
+const McpRuntimeProfileAccountSelectionSchema: z.ZodType<RuntimeProfileAccountSelection> =
+  z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("inherit-provider-default") }).strict(),
+    z.object({ kind: z.literal("native-default") }).strict(),
+    z
+      .object({
+        kind: z.literal("managed-account"),
+        providerHomeRef: McpProviderHomeRefSchema,
+      })
+      .strict(),
+  ]);
+
+const McpProviderAuthUsageSnapshotSchema: z.ZodType<ProviderAuthUsageSnapshot> = z
+  .object({
+    source: z.enum(["local-rollout", "provider-api"]),
+    primaryUsedPercent: z.number().optional(),
+    primaryWindowMinutes: z.number().optional(),
+    primaryResetsAt: z.string().optional(),
+    secondaryUsedPercent: z.number().optional(),
+    secondaryWindowMinutes: z.number().optional(),
+    secondaryResetsAt: z.string().optional(),
+    creditsRemaining: z.number().optional(),
+    limitState: z.enum(["unknown", "ok", "near-limit", "limited"]).optional(),
+    refreshedAt: z.string(),
+  })
+  .strict();
+
+const McpProviderAccountSummarySchema = z
+  .object({
+    provider: AgentProviderEnum,
+    key: z.string(),
+    alias: z.string(),
+    email: z.string().optional(),
+    accountName: z.string().optional(),
+    accountId: z.string().optional(),
+    userId: z.string().optional(),
+    authMode: z.enum(["chatgpt", "api-key", "oauth", "external", "unknown"]),
+    plan: z.string().optional(),
+    status: z.enum(["ready", "needs-login", "invalid", "refreshing"]),
+    isDefault: z.boolean().optional(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+    lastUsedAt: z.string().optional(),
+    usage: McpProviderAuthUsageSnapshotSchema.optional(),
+    usageRefreshError: z
+      .object({
+        source: z.literal("provider-api"),
+        code: z.enum(["auth-invalid", "provider-unavailable", "unknown"]),
+        message: z.string(),
+        occurredAt: z.string(),
+      })
+      .strict()
+      .optional(),
+    providerHomeRef: McpProviderHomeRefSchema.optional(),
+  })
+  .strict();
+
+const McpRuntimeProfileSummarySchema = z
+  .object({
+    id: z.string(),
+    version: z.number(),
+    name: z.string(),
+    provider: AgentProviderEnum,
+    accountSelection: McpRuntimeProfileAccountSelectionSchema.optional(),
+    model: z.string().nullable().optional(),
+    modeId: z.string().nullable().optional(),
+    thinkingOptionId: z.string().nullable().optional(),
+    featureValues: z.record(z.string(), z.unknown()).optional(),
+    concurrencyPolicy: z.enum(["allow", "warn", "single-active"]),
+    sessionBehavior: z.enum(["continue", "fresh"]).optional(),
+    hasInstructionOverlay: z.boolean(),
+    hasSystemPrompt: z.boolean(),
+    hasEnvOverlay: z.boolean(),
+    hasMcpServers: z.boolean(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+  })
+  .strict();
+
+type McpProviderAccountSummary = z.infer<typeof McpProviderAccountSummarySchema>;
+type McpRuntimeProfileSummary = z.infer<typeof McpRuntimeProfileSummarySchema>;
+
 function mapModeAcrossProviders(
   sourceMode: string,
   sourceProvider: AgentProvider,
@@ -146,6 +250,90 @@ function mapModeAcrossProviders(
   }
 
   return sourceMode;
+}
+
+function sanitizeProviderHomeRef(ref: ProviderHomeRef): z.infer<typeof McpProviderHomeRefSchema> {
+  return {
+    kind: ref.kind,
+    provider: ref.provider,
+    ...(ref.profileKey !== undefined ? { profileKey: ref.profileKey } : {}),
+    ...(ref.accountFingerprint !== undefined ? { accountFingerprint: ref.accountFingerprint } : {}),
+    ...(ref.label !== undefined ? { label: ref.label } : {}),
+  };
+}
+
+function sanitizeRuntimeProfileAccountSelection(
+  selection: RuntimeProfileAccountSelection | undefined,
+): RuntimeProfileAccountSelection | undefined {
+  if (!selection) return undefined;
+  if (selection.kind !== "managed-account") return selection;
+  return {
+    kind: "managed-account",
+    providerHomeRef: sanitizeProviderHomeRef(selection.providerHomeRef),
+  };
+}
+
+function sanitizeProviderAccount(profile: ProviderAuthProfile): McpProviderAccountSummary {
+  return {
+    provider: profile.provider,
+    key: profile.key,
+    alias: profile.alias,
+    ...(profile.email ? { email: profile.email } : {}),
+    ...(profile.accountName ? { accountName: profile.accountName } : {}),
+    ...(profile.accountId ? { accountId: profile.accountId } : {}),
+    ...(profile.userId ? { userId: profile.userId } : {}),
+    authMode: profile.authMode,
+    ...(profile.plan ? { plan: profile.plan } : {}),
+    status: profile.status,
+    ...(profile.isDefault !== undefined ? { isDefault: profile.isDefault } : {}),
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt,
+    ...(profile.lastUsedAt ? { lastUsedAt: profile.lastUsedAt } : {}),
+    ...(profile.usage ? { usage: profile.usage } : {}),
+    ...(profile.usageRefreshError ? { usageRefreshError: profile.usageRefreshError } : {}),
+    ...(profile.providerHomeRef
+      ? { providerHomeRef: sanitizeProviderHomeRef(profile.providerHomeRef) }
+      : {}),
+  };
+}
+
+function sanitizeRuntimeProfile(profile: RuntimeProfile): McpRuntimeProfileSummary {
+  return {
+    id: profile.id,
+    version: profile.version,
+    name: profile.name,
+    provider: profile.provider,
+    ...(profile.accountSelection
+      ? { accountSelection: sanitizeRuntimeProfileAccountSelection(profile.accountSelection) }
+      : {}),
+    ...(profile.model !== undefined ? { model: profile.model } : {}),
+    ...(profile.modeId !== undefined ? { modeId: profile.modeId } : {}),
+    ...(profile.thinkingOptionId !== undefined
+      ? { thinkingOptionId: profile.thinkingOptionId }
+      : {}),
+    ...(profile.featureValues ? { featureValues: profile.featureValues } : {}),
+    concurrencyPolicy: profile.concurrencyPolicy,
+    ...(profile.sessionBehavior ? { sessionBehavior: profile.sessionBehavior } : {}),
+    hasInstructionOverlay: Boolean(profile.instructionOverlay),
+    hasSystemPrompt: Boolean(profile.systemPrompt),
+    hasEnvOverlay: Boolean(profile.envOverlay && Object.keys(profile.envOverlay).length > 0),
+    hasMcpServers: Boolean(profile.mcpServers && Object.keys(profile.mcpServers).length > 0),
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt,
+  };
+}
+
+function optionalOrNull<T>(
+  primary: T | null | undefined,
+  fallback: T | null | undefined,
+): T | null {
+  return primary ?? fallback ?? null;
+}
+
+function sanitizeRuntimeProfileOrNull(
+  profile: RuntimeProfile | null,
+): McpRuntimeProfileSummary | null {
+  return profile ? sanitizeRuntimeProfile(profile) : null;
 }
 
 type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -328,6 +516,8 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     terminalManager,
     scheduleService,
     providerRegistry,
+    providerAuthService,
+    runtimeProfileService,
     callerAgentId,
     resolveSpeakHandler,
     resolveCallerContext,
@@ -382,22 +572,127 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     if (callerAgent.provider !== targetProvider) {
       return {};
     }
-    if (callerAgent.config.runtimeProfileId) {
+    const callerConfig = callerAgent.config ?? {};
+    if (callerConfig.runtimeProfileId) {
       return {
-        runtimeProfileId: callerAgent.config.runtimeProfileId,
-        ...(callerAgent.config.profileOverrides
-          ? { profileOverrides: callerAgent.config.profileOverrides }
+        runtimeProfileId: callerConfig.runtimeProfileId,
+        ...(callerConfig.profileOverrides
+          ? { profileOverrides: callerConfig.profileOverrides }
           : {}),
       };
     }
     return {
-      ...(callerAgent.config.providerHomeRef
-        ? { providerHomeRef: callerAgent.config.providerHomeRef }
-        : {}),
-      ...(callerAgent.config.featureValues
-        ? { featureValues: callerAgent.config.featureValues }
-        : {}),
+      ...(callerConfig.providerHomeRef ? { providerHomeRef: callerConfig.providerHomeRef } : {}),
+      ...(callerConfig.featureValues ? { featureValues: callerConfig.featureValues } : {}),
     };
+  };
+
+  const resolveExplicitRuntimeProfileConfig = async (
+    runtimeProfileId: string | null | undefined,
+    targetProvider: AgentProvider,
+  ): Promise<Partial<AgentSessionConfig> | null> => {
+    const trimmedProfileId = runtimeProfileId?.trim();
+    if (!trimmedProfileId) {
+      return null;
+    }
+    if (!runtimeProfileService) {
+      throw new Error("Runtime profiles are not available in this Paseo daemon");
+    }
+    const profile = await runtimeProfileService.getProfile(trimmedProfileId);
+    if (!profile) {
+      throw new Error(`Runtime profile '${trimmedProfileId}' was not found`);
+    }
+    if (profile.provider !== targetProvider) {
+      throw new Error(
+        `Runtime profile '${trimmedProfileId}' belongs to provider '${profile.provider}', not '${targetProvider}'`,
+      );
+    }
+    return { runtimeProfileId: profile.id };
+  };
+
+  const accountSelectionFromProviderHomeRef = (
+    providerHomeRef: ProviderHomeRef | null | undefined,
+  ): RuntimeProfileAccountSelection | undefined => {
+    if (!providerHomeRef) return undefined;
+    if (providerHomeRef.kind === "native-default") return { kind: "native-default" };
+    return { kind: "managed-account", providerHomeRef };
+  };
+
+  const resolveCurrentAccountSelection = (
+    agentConfig: AgentSessionConfig,
+  ): RuntimeProfileAccountSelection | undefined => {
+    return (
+      agentConfig.profileSnapshot?.accountSelection ??
+      accountSelectionFromProviderHomeRef(agentConfig.providerHomeRef) ?? {
+        kind: "inherit-provider-default",
+      }
+    );
+  };
+
+  const resolveAccountForSelection = async (
+    provider: AgentProvider,
+    selection: RuntimeProfileAccountSelection | undefined,
+  ): Promise<McpProviderAccountSummary | null> => {
+    if (!providerAuthService || selection?.kind === "native-default") {
+      return null;
+    }
+    const accounts = await providerAuthService.listProfiles(provider);
+    if (selection?.kind === "managed-account") {
+      const accountKey = selection.providerHomeRef.profileKey;
+      const account = accounts.find((candidate) => candidate.key === accountKey) ?? null;
+      return account ? sanitizeProviderAccount(account) : null;
+    }
+    const defaultAccount = accounts.find((candidate) => candidate.isDefault) ?? null;
+    return defaultAccount ? sanitizeProviderAccount(defaultAccount) : null;
+  };
+
+  const resolveRuntimeProfileForAgentConfig = async (
+    agentConfig: AgentSessionConfig,
+  ): Promise<RuntimeProfile | null> => {
+    if (!runtimeProfileService || !agentConfig.runtimeProfileId) {
+      return null;
+    }
+    return runtimeProfileService.getProfile(agentConfig.runtimeProfileId);
+  };
+
+  const buildCurrentRuntimeProfilePayload = async (
+    callerAgent: NonNullable<ReturnType<typeof resolveCallerAgent>>,
+  ) => {
+    const agentConfig =
+      callerAgent.config ??
+      ({ provider: callerAgent.provider, cwd: callerAgent.cwd } as AgentSessionConfig);
+    const runtimeProfile = await resolveRuntimeProfileForAgentConfig(agentConfig);
+    const profileSnapshot = agentConfig.profileSnapshot ?? null;
+    const accountSelection = resolveCurrentAccountSelection(agentConfig);
+    const resolvedAccount = await resolveAccountForSelection(
+      callerAgent.provider,
+      accountSelection,
+    );
+    const featureValues = agentConfig.featureValues ?? profileSnapshot?.featureValues;
+    const payload: Record<string, unknown> = {
+      agentId: callerAgent.id,
+      provider: callerAgent.provider,
+      runtimeProfile: sanitizeRuntimeProfileOrNull(runtimeProfile),
+      customSettings: !agentConfig.runtimeProfileId,
+      resolvedAccount,
+      model: optionalOrNull(agentConfig.model, profileSnapshot?.model),
+      modeId: optionalOrNull(agentConfig.modeId, profileSnapshot?.modeId),
+      thinkingOptionId: optionalOrNull(
+        agentConfig.thinkingOptionId,
+        profileSnapshot?.thinkingOptionId,
+      ),
+      sessionBehavior: optionalOrNull(
+        agentConfig.sessionBehavior,
+        profileSnapshot?.sessionBehavior,
+      ),
+    };
+    if (accountSelection) {
+      payload.accountSelection = sanitizeRuntimeProfileAccountSelection(accountSelection);
+    }
+    if (featureValues) {
+      payload.featureValues = featureValues;
+    }
+    return payload;
   };
 
   const buildCallerAgentScheduleConfigExtras = (
@@ -516,6 +811,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     provider: ProviderModelInputSchema.describe(
       "Required provider/model pair, for example codex/gpt-5.4.",
     ),
+    runtimeProfileId: z
+      .string()
+      .optional()
+      .describe(
+        "Optional Paseo runtime profile ID. The profile must belong to the selected provider.",
+      ),
     thinking: z.string().optional().describe("Thinking option ID"),
     labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
     initialPrompt: z
@@ -558,6 +859,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     provider: ProviderModelInputSchema.describe(
       "Required provider/model pair, for example codex/gpt-5.4.",
     ),
+    runtimeProfileId: z
+      .string()
+      .optional()
+      .describe(
+        "Optional Paseo runtime profile ID. The profile must belong to the selected provider.",
+      ),
     thinking: z.string().optional().describe("Thinking option ID"),
     labels: z.record(z.string(), z.string()).optional().describe("Labels to set on the agent"),
     initialPrompt: z
@@ -696,10 +1003,10 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     return modes.some((mode) => mode.id === modeId && mode.isUnattended === true);
   };
 
-  const resolveCallerCreateAgentArgs = (
+  const resolveCallerCreateAgentArgs = async (
     args: unknown,
     parentAgentId: string,
-  ): ResolvedCreateAgentArgs => {
+  ): Promise<ResolvedCreateAgentArgs> => {
     const callerArgs = agentToAgentCreateAgentArgsSchema.parse(args);
     const resolvedProviderModel = resolveRequiredProviderModel(callerArgs.provider);
     const parentAgent = agentManager.getAgent(parentAgentId);
@@ -724,7 +1031,12 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       availableModes: getAvailableModeIds(provider),
       targetUnattendedMode: getUnattendedModeId(provider),
     });
-    const inheritedProfileConfig = buildCallerAgentProfileInheritance(parentAgent, provider);
+    const explicitProfileConfig = await resolveExplicitRuntimeProfileConfig(
+      callerArgs.runtimeProfileId,
+      provider,
+    );
+    const inheritedProfileConfig =
+      explicitProfileConfig ?? buildCallerAgentProfileInheritance(parentAgent, provider);
     return {
       provider,
       initialPrompt: callerArgs.initialPrompt,
@@ -802,6 +1114,11 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       setupContinuation = createdWorktree.setupContinuation;
     }
 
+    const profileConfig = await resolveExplicitRuntimeProfileConfig(
+      topLevelArgs.runtimeProfileId,
+      resolvedProviderModel.provider,
+    );
+
     return {
       provider: resolvedProviderModel.provider,
       initialPrompt: topLevelArgs.initialPrompt,
@@ -810,7 +1127,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       model: resolvedProviderModel.model,
       thinking: topLevelArgs.thinking,
       providerHomeRef: undefined,
-      runtimeProfileId: undefined,
+      runtimeProfileId: profileConfig?.runtimeProfileId,
       profileOverrides: undefined,
       featureValues: undefined,
       labels: topLevelArgs.labels,
@@ -847,7 +1164,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
     },
     async (args: unknown) => {
       const resolved = callerAgentId
-        ? resolveCallerCreateAgentArgs(args, callerAgentId)
+        ? await resolveCallerCreateAgentArgs(args, callerAgentId)
         : await resolveTopLevelCreateAgentArgs(args);
       const {
         provider,
@@ -873,6 +1190,13 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
         ...childAgentDefaultLabels,
         ...labels,
       };
+      const createAgentOptions =
+        Object.keys(mergedLabels).length > 0 || options.mcpServerHeaders
+          ? {
+              ...(Object.keys(mergedLabels).length > 0 ? { labels: mergedLabels } : {}),
+              ...(options.mcpServerHeaders ? { mcpServerHeaders: options.mcpServerHeaders } : {}),
+            }
+          : undefined;
       const snapshot = await agentManager.createAgent(
         {
           provider,
@@ -887,10 +1211,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           featureValues,
         },
         undefined,
-        {
-          ...(Object.keys(mergedLabels).length > 0 ? { labels: mergedLabels } : {}),
-          ...(options.mcpServerHeaders ? { mcpServerHeaders: options.mcpServerHeaders } : {}),
-        },
+        createAgentOptions,
       );
 
       setupContinuation?.startAfterAgentCreate({
@@ -1788,6 +2109,159 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       return {
         content: [],
         structuredContent: ensureValidJson({ providers }),
+      };
+    },
+  );
+
+  server.registerTool(
+    "list_runtime_profiles",
+    {
+      title: "List runtime profiles",
+      description:
+        "List safe summaries of Paseo runtime profiles. Secrets, environment overlays, MCP server configs, and prompt text are not exposed.",
+      inputSchema: {
+        provider: AgentProviderEnum.optional().describe("Optional provider filter."),
+      },
+      outputSchema: {
+        profiles: z.array(McpRuntimeProfileSummarySchema),
+      },
+    },
+    async ({ provider }) => {
+      if (!runtimeProfileService) {
+        throw new Error("Runtime profiles are not available in this Paseo daemon");
+      }
+      const profiles = await runtimeProfileService.listProfiles(provider);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          profiles: profiles.map(sanitizeRuntimeProfile),
+        }),
+      };
+    },
+  );
+
+  server.registerTool(
+    "get_current_runtime_profile",
+    {
+      title: "Get current runtime profile",
+      description:
+        "Describe the caller agent's active Paseo runtime profile or custom settings, including resolved provider-default account when available.",
+      inputSchema: {},
+      outputSchema: {
+        agentId: z.string(),
+        provider: AgentProviderEnum,
+        runtimeProfile: McpRuntimeProfileSummarySchema.nullable(),
+        customSettings: z.boolean(),
+        accountSelection: McpRuntimeProfileAccountSelectionSchema.optional(),
+        resolvedAccount: McpProviderAccountSummarySchema.nullable(),
+        model: z.string().nullable(),
+        modeId: z.string().nullable(),
+        thinkingOptionId: z.string().nullable(),
+        sessionBehavior: z.enum(["continue", "fresh"]).nullable(),
+        featureValues: z.record(z.string(), z.unknown()).optional(),
+      },
+    },
+    async () => {
+      const callerAgent = resolveCallerAgent();
+      if (!callerAgent) {
+        throw new Error("get_current_runtime_profile requires a caller agent context");
+      }
+      return {
+        content: [],
+        structuredContent: ensureValidJson(await buildCurrentRuntimeProfilePayload(callerAgent)),
+      };
+    },
+  );
+
+  server.registerTool(
+    "list_provider_accounts",
+    {
+      title: "List provider accounts",
+      description:
+        "List safe summaries of managed provider accounts. Tokens and native home paths are not exposed.",
+      inputSchema: {
+        provider: AgentProviderEnum.optional().describe("Optional provider filter."),
+      },
+      outputSchema: {
+        accounts: z.array(McpProviderAccountSummarySchema),
+      },
+    },
+    async ({ provider }) => {
+      if (!providerAuthService) {
+        throw new Error("Provider accounts are not available in this Paseo daemon");
+      }
+      const accounts = await providerAuthService.listProfiles(provider);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          accounts: accounts.map(sanitizeProviderAccount),
+        }),
+      };
+    },
+  );
+
+  server.registerTool(
+    "refresh_provider_account_usage",
+    {
+      title: "Refresh provider account usage",
+      description:
+        "Refresh usage/limit metadata for one managed provider account, if the provider supports live usage refresh.",
+      inputSchema: {
+        provider: AgentProviderEnum.describe("Provider ID, for example codex."),
+        accountKey: z.string().describe("Managed provider account key."),
+      },
+      outputSchema: {
+        account: McpProviderAccountSummarySchema,
+      },
+    },
+    async ({ provider, accountKey }) => {
+      if (!providerAuthService) {
+        throw new Error("Provider accounts are not available in this Paseo daemon");
+      }
+      const account = await providerAuthService.refreshProfile(provider, accountKey);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          account: sanitizeProviderAccount(account),
+        }),
+      };
+    },
+  );
+
+  server.registerTool(
+    "set_provider_default_account",
+    {
+      title: "Set provider default account",
+      description:
+        "Set the managed default account for a provider. This changes future provider-default launches and profile resolutions, but does not import/remove accounts or expose credentials.",
+      inputSchema: {
+        provider: AgentProviderEnum.describe("Provider ID, for example codex."),
+        accountKey: z.string().describe("Managed provider account key to make default."),
+      },
+      outputSchema: {
+        previousDefaultAccount: McpProviderAccountSummarySchema.nullable(),
+        newDefaultAccount: McpProviderAccountSummarySchema,
+      },
+    },
+    async ({ provider, accountKey }) => {
+      if (!providerAuthService) {
+        throw new Error("Provider accounts are not available in this Paseo daemon");
+      }
+      const before = await providerAuthService.listProfiles(provider);
+      const previousDefaultAccount = before.find((account) => account.isDefault) ?? null;
+      const updated = await providerAuthService.setDefaultProfile(provider, accountKey);
+      const newDefaultAccount = updated.find((account) => account.key === accountKey);
+      if (!newDefaultAccount) {
+        throw new Error(`Provider auth profile '${accountKey}' was not found for ${provider}`);
+      }
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          previousDefaultAccount: previousDefaultAccount
+            ? sanitizeProviderAccount(previousDefaultAccount)
+            : null,
+          newDefaultAccount: sanitizeProviderAccount(newDefaultAccount),
+        }),
       };
     },
   );
