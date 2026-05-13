@@ -95,6 +95,7 @@ import type { ProviderAuthService } from "./agent/provider-auth-service.js";
 import type { RuntimeProfileService } from "./agent/runtime-profile-service.js";
 import type { AccountOnboardingService } from "./agent/account-onboarding-service.js";
 import type { McpRegistryService } from "./agent/mcp-registry-service.js";
+import { readNativeMcpRegistryEntries } from "./agent/mcp-native-import.js";
 import type {
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
@@ -2181,6 +2182,8 @@ export class Session {
         return this.handleUpsertMcpRegistryEntryRequest(msg);
       case "remove_mcp_registry_entry_request":
         return this.handleRemoveMcpRegistryEntryRequest(msg);
+      case "import_mcp_registry_entries_request":
+        return this.handleImportMcpRegistryEntriesRequest(msg);
       default:
         return undefined;
     }
@@ -4198,6 +4201,34 @@ export class Session {
     }
   }
 
+  private async handleImportMcpRegistryEntriesRequest(
+    msg: Extract<SessionInboundMessage, { type: "import_mcp_registry_entries_request" }>,
+  ): Promise<void> {
+    try {
+      const service = this.requireMcpRegistryService();
+      const imported = await readNativeMcpRegistryEntries({
+        provider: msg.provider,
+        path: msg.path,
+      });
+      const entries = [];
+      for (const entry of imported.entries) {
+        entries.push(await service.upsertEntry(entry));
+      }
+      this.emit({
+        type: "import_mcp_registry_entries_response",
+        payload: {
+          provider: imported.provider,
+          path: imported.path,
+          entries,
+          skipped: imported.skipped,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitMcpRegistryRpcError(msg, error, "mcp_registry_import_failed");
+    }
+  }
+
   private requireProviderAuthService(): ProviderAuthService {
     if (!this.providerAuthService) {
       throw new Error("Provider auth profiles are not available");
@@ -4315,7 +4346,8 @@ export class Session {
         type:
           | "list_mcp_registry_entries_request"
           | "upsert_mcp_registry_entry_request"
-          | "remove_mcp_registry_entry_request";
+          | "remove_mcp_registry_entry_request"
+          | "import_mcp_registry_entries_request";
       }
     >,
     error: unknown,
