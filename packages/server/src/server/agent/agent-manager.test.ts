@@ -872,7 +872,7 @@ test("createAgent applies selected provider auth profile to config and launch en
   rmSync(workdir, { recursive: true, force: true });
 });
 
-test("createAgent syncs current provider auth without selecting a managed profile", async () => {
+test("createAgent syncs current provider auth and launches with the default managed profile", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -961,16 +961,19 @@ test("createAgent syncs current provider auth without selecting a managed profil
   const profiles = await providerAuthService.listProfiles("codex");
   expect(profiles.map((profile) => profile.key)).toEqual(["profile-a"]);
   expect(client.lastConfig?.providerHomeRef).toMatchObject({
-    kind: "native-default",
+    kind: "managed-profile",
     provider: "codex",
+    profileKey: "profile-a",
   });
   expect(snapshot.config.providerHomeRef).toMatchObject({
-    kind: "native-default",
+    kind: "managed-profile",
     provider: "codex",
+    profileKey: "profile-a",
   });
   expect(client.lastLaunchContext).toEqual({
     env: {
       PASEO_AGENT_ID: snapshot.id,
+      CODEX_HOME: join(workdir, "provider-auth", "codex", "profiles", "profile-a", "codex-home"),
     },
   });
 
@@ -1341,6 +1344,8 @@ test("createAgent injects paseo MCP server when manager has an MCP base URL", as
     },
   });
   expect(client.lastConfig?.mcpServers).toEqual(snapshot.config.mcpServers);
+
+  rmSync(workdir, { recursive: true, force: true });
 });
 
 test("createAgent passes injected MCP auth headers only to provider launch config", async () => {
@@ -1423,7 +1428,116 @@ test("createAgent passes injected MCP auth headers only to provider launch confi
   rmSync(workdir, { recursive: true, force: true });
 });
 
-test("createAgent preserves a user-provided paseo MCP config", async () => {
+test("createAgent resolves registry MCP servers before session and system MCP", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class CaptureClient extends TestAgentClient {
+    lastConfig: AgentSessionConfig | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.lastConfig = config;
+      return new TestAgentSession(config);
+    }
+  }
+
+  const client = new CaptureClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpRegistryService: {
+      async listEntries() {
+        return [
+          {
+            id: "shared",
+            scope: { kind: "global" },
+            config: {
+              type: "stdio",
+              command: "global-mcp",
+            },
+            enabled: true,
+            source: "user",
+            createdAt: "2026-05-13T10:00:00.000Z",
+            updatedAt: "2026-05-13T10:00:00.000Z",
+          },
+          {
+            id: "provider-only",
+            scope: { kind: "provider", provider: "codex" },
+            config: {
+              type: "stdio",
+              command: "provider-mcp",
+            },
+            enabled: true,
+            source: "user",
+            createdAt: "2026-05-13T10:00:00.000Z",
+            updatedAt: "2026-05-13T10:00:00.000Z",
+          },
+          {
+            id: "paseo",
+            scope: { kind: "global" },
+            config: {
+              type: "http",
+              url: "https://example.com/fake-paseo",
+            },
+            enabled: true,
+            source: "user",
+            createdAt: "2026-05-13T10:00:00.000Z",
+            updatedAt: "2026-05-13T10:00:00.000Z",
+          },
+        ];
+      },
+    },
+    idFactory: () => "00000000-0000-4000-8000-000000000106",
+  });
+
+  const snapshot = await manager.createAgent({
+    provider: "codex",
+    cwd: workdir,
+    mcpServers: {
+      shared: {
+        type: "stdio",
+        command: "session-mcp",
+      },
+      "session-only": {
+        type: "stdio",
+        command: "session-only-mcp",
+      },
+      paseo: {
+        type: "http",
+        url: "https://example.com/session-paseo",
+      },
+    },
+  });
+
+  expect(snapshot.config.mcpServers).toEqual({
+    shared: {
+      type: "stdio",
+      command: "session-mcp",
+    },
+    "provider-only": {
+      type: "stdio",
+      command: "provider-mcp",
+    },
+    "session-only": {
+      type: "stdio",
+      command: "session-only-mcp",
+    },
+    paseo: {
+      type: "http",
+      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+    },
+  });
+  expect(client.lastConfig?.mcpServers).toEqual(snapshot.config.mcpServers);
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
+test("createAgent reserves the paseo MCP id for system tools", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -1462,10 +1576,12 @@ test("createAgent preserves a user-provided paseo MCP config", async () => {
   expect(snapshot.config.mcpServers).toEqual({
     paseo: {
       type: "http",
-      url: "https://example.com/custom-paseo",
+      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
     },
   });
   expect(client.lastConfig?.mcpServers).toEqual(snapshot.config.mcpServers);
+
+  rmSync(workdir, { recursive: true, force: true });
 });
 
 test("createAgent fails when cwd does not exist", async () => {
@@ -1760,7 +1876,7 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     cwd: workdir,
     systemPrompt: "new prompt",
     mcpServers: {
-      paseo: {
+      bridge: {
         type: "stdio",
         command: "node",
         args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
@@ -1770,7 +1886,7 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
 
   expect(resumed.config.systemPrompt).toBe("new prompt");
   expect(resumed.config.mcpServers).toEqual({
-    paseo: {
+    bridge: {
       type: "stdio",
       command: "node",
       args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
@@ -1781,7 +1897,7 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     modeId: "auto",
     systemPrompt: "new prompt",
     mcpServers: {
-      paseo: {
+      bridge: {
         type: "stdio",
         command: "node",
         args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
