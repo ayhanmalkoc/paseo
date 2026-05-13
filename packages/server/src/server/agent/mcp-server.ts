@@ -273,7 +273,49 @@ function sanitizeRuntimeProfileAccountSelection(
   };
 }
 
+function sanitizeProviderAuthUsage(
+  usage: (ProviderAuthUsageSnapshot & Record<string, unknown>) | null | undefined,
+): ProviderAuthUsageSnapshot | undefined {
+  if (!usage || typeof usage.refreshedAt !== "string") {
+    return undefined;
+  }
+  return {
+    source: usage.source === "local-rollout" ? "local-rollout" : "provider-api",
+    ...(typeof usage.primaryUsedPercent === "number"
+      ? { primaryUsedPercent: usage.primaryUsedPercent }
+      : {}),
+    ...(typeof usage.primaryWindowMinutes === "number"
+      ? { primaryWindowMinutes: usage.primaryWindowMinutes }
+      : {}),
+    ...(typeof usage.primaryResetsAt === "string"
+      ? { primaryResetsAt: usage.primaryResetsAt }
+      : {}),
+    ...(typeof usage.secondaryUsedPercent === "number"
+      ? { secondaryUsedPercent: usage.secondaryUsedPercent }
+      : {}),
+    ...(typeof usage.secondaryWindowMinutes === "number"
+      ? { secondaryWindowMinutes: usage.secondaryWindowMinutes }
+      : {}),
+    ...(typeof usage.secondaryResetsAt === "string"
+      ? { secondaryResetsAt: usage.secondaryResetsAt }
+      : {}),
+    ...(typeof usage.creditsRemaining === "number"
+      ? { creditsRemaining: usage.creditsRemaining }
+      : {}),
+    ...(usage.limitState === "ok" ||
+    usage.limitState === "near-limit" ||
+    usage.limitState === "limited" ||
+    usage.limitState === "unknown"
+      ? { limitState: usage.limitState }
+      : {}),
+    refreshedAt: usage.refreshedAt,
+  };
+}
+
 function sanitizeProviderAccount(profile: ProviderAuthProfile): McpProviderAccountSummary {
+  const usage = sanitizeProviderAuthUsage(
+    profile.usage as (ProviderAuthUsageSnapshot & Record<string, unknown>) | null | undefined,
+  );
   return {
     provider: profile.provider,
     key: profile.key,
@@ -289,7 +331,7 @@ function sanitizeProviderAccount(profile: ProviderAuthProfile): McpProviderAccou
     createdAt: profile.createdAt,
     updatedAt: profile.updatedAt,
     ...(profile.lastUsedAt ? { lastUsedAt: profile.lastUsedAt } : {}),
-    ...(profile.usage ? { usage: profile.usage } : {}),
+    ...(usage ? { usage } : {}),
     ...(profile.usageRefreshError ? { usageRefreshError: profile.usageRefreshError } : {}),
     ...(profile.providerHomeRef
       ? { providerHomeRef: sanitizeProviderHomeRef(profile.providerHomeRef) }

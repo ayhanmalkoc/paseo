@@ -1811,7 +1811,16 @@ describe("provider account and runtime profile MCP tools", () => {
       id: "profile-default",
       accountSelection: { kind: "inherit-provider-default" },
     });
-    const account = createProviderAuthProfile({ key: "account-default", isDefault: true });
+    const account = createProviderAuthProfile({
+      key: "account-default",
+      isDefault: true,
+      usage: {
+        source: "provider-api",
+        primaryUsedPercent: 25,
+        creditsRemaining: null as unknown as number,
+        refreshedAt: "2026-05-13T09:00:00.000Z",
+      },
+    });
     const runtimeProfileService = {
       getProfile: vi.fn().mockResolvedValue(runtimeProfile),
       listProfiles: vi.fn(),
@@ -1876,6 +1885,7 @@ describe("provider account and runtime profile MCP tools", () => {
       }),
     );
     expect(JSON.stringify(response.structuredContent)).not.toContain("/secret/provider/home");
+    expect(JSON.stringify(response.structuredContent)).not.toContain('"creditsRemaining":null');
   });
 
   it("refreshes usage and sets provider default account through provider auth service", async () => {
@@ -1884,6 +1894,12 @@ describe("provider account and runtime profile MCP tools", () => {
       key: "account-old",
       alias: "Old account",
       isDefault: true,
+      usage: {
+        source: "provider-api",
+        primaryUsedPercent: 90,
+        creditsRemaining: null as unknown as number,
+        refreshedAt: "2026-05-13T09:00:00.000Z",
+      },
     });
     const next = createProviderAuthProfile({
       key: "account-new",
@@ -1918,6 +1934,19 @@ describe("provider account and runtime profile MCP tools", () => {
       providerAuthService,
       logger,
     });
+
+    const listTool = registeredTool(server, "list_provider_accounts");
+    const listResponse = await listTool.handler({ provider: "codex" });
+    expect(listResponse.structuredContent).toEqual({
+      accounts: [
+        expect.objectContaining({
+          key: "account-old",
+          usage: expect.objectContaining({ primaryUsedPercent: 90 }),
+        }),
+        expect.objectContaining({ key: "account-new" }),
+      ],
+    });
+    expect(JSON.stringify(listResponse.structuredContent)).not.toContain('"creditsRemaining":null');
 
     const refreshTool = registeredTool(server, "refresh_provider_account_usage");
     const refreshResponse = await refreshTool.handler({
