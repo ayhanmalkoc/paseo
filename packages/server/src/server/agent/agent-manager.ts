@@ -62,6 +62,8 @@ import { IMPORTABLE_PROVIDERS } from "./provider-registry.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
 import type { RuntimeProfileService } from "./runtime-profile-service.js";
 import { LaunchResolver, type ResolvedAgentLaunch } from "./launch-resolver.js";
+import type { McpRegistryReader } from "./mcp-registry-service.js";
+import { resolveMcpServers } from "./mcp-resolver.js";
 import {
   createManagedProviderHomeRefFromProfile,
   getManagedProviderHomeProfileKey,
@@ -257,6 +259,7 @@ export interface AgentManagerOptions {
   mcpBaseUrl?: string;
   providerAuthService?: ProviderAuthService;
   runtimeProfileService?: RuntimeProfileService;
+  mcpRegistryService?: McpRegistryReader;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
@@ -548,6 +551,7 @@ export class AgentManager {
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly providerAuthService: ProviderAuthService | null;
+  private readonly mcpRegistryService: McpRegistryReader | null;
   private readonly launchResolver: LaunchResolver;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
@@ -560,6 +564,7 @@ export class AgentManager {
     this.onAgentAttention = options?.onAgentAttention;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
     this.providerAuthService = options?.providerAuthService ?? null;
+    this.mcpRegistryService = options?.mcpRegistryService ?? null;
     this.launchResolver = new LaunchResolver({
       providerAuthService: this.providerAuthService,
       runtimeProfileService: options.runtimeProfileService,
@@ -616,22 +621,6 @@ export class AgentManager {
 
   setMcpBaseUrl(url: string | null): void {
     this.mcpBaseUrl = url;
-  }
-
-  private buildInjectedMcpConfig(config: AgentSessionConfig, agentId: string): AgentSessionConfig {
-    if (this.mcpBaseUrl == null) {
-      return config;
-    }
-    return {
-      ...config,
-      mcpServers: {
-        paseo: {
-          type: "http" as const,
-          url: `${this.mcpBaseUrl}?callerAgentId=${agentId}`,
-        },
-        ...config.mcpServers,
-      },
-    };
   }
 
   private withInjectedMcpHeaders(
@@ -1089,9 +1078,8 @@ export class AgentManager {
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
-    const injectedConfig = this.buildInjectedMcpConfig(config, resolvedAgentId);
-    this.requireEnabledProvider(injectedConfig.provider);
-    const normalizedConfig = await this.normalizeConfig(injectedConfig);
+    this.requireEnabledProvider(config.provider);
+    const normalizedConfig = await this.normalizeConfig(config);
     const resolvedLaunch = await this.resolveAgentLaunch(resolvedAgentId, normalizedConfig, {
       resolveDefaultAuthProfile: true,
     });
@@ -1150,19 +1138,6 @@ export class AgentManager {
       provider: handle.provider,
     } as AgentSessionConfig;
     const normalizedConfig = await this.normalizeConfig(mergedConfig);
-    const resumeOverrides: Partial<AgentSessionConfig> = { ...overrides };
-    let hasResumeOverrides = overrides !== undefined;
-
-    if (normalizedConfig.model !== mergedConfig.model) {
-      resumeOverrides.model = normalizedConfig.model;
-      hasResumeOverrides = true;
-    }
-
-    if (normalizedConfig.modeId !== mergedConfig.modeId) {
-      resumeOverrides.modeId = normalizedConfig.modeId;
-      hasResumeOverrides = true;
-    }
-
     const resolvedLaunch = await this.resolveAgentLaunch(resolvedAgentId, normalizedConfig, {
       resolveDefaultAuthProfile: false,
     });
@@ -1188,7 +1163,7 @@ export class AgentManager {
         ? await client.createSession(resolvedLaunch.config, resolvedLaunch.launchContext)
         : await client.resumeSession(
             preparedHandle,
-            hasResumeOverrides ? resumeOverrides : undefined,
+            resolvedLaunch.config,
             resolvedLaunch.launchContext,
             { strict: true },
           );
@@ -3705,7 +3680,7 @@ export class AgentManager {
       excludeAgentId?: string;
     },
   ): Promise<ResolvedAgentLaunch> {
-    return this.launchResolver.resolve({
+    const resolvedLaunch = await this.launchResolver.resolve({
       agentId,
       config: normalizedConfig,
       normalizedConfig,
@@ -3713,6 +3688,31 @@ export class AgentManager {
       activeAgents: this.buildAccountLeaseSnapshots(),
       excludeAgentId: options.excludeAgentId,
     });
+    return {
+      ...resolvedLaunch,
+      config: await this.resolveScopedMcpConfig(agentId, resolvedLaunch.config),
+    };
+  }
+
+  private async resolveScopedMcpConfig(
+    agentId: string,
+    config: AgentSessionConfig,
+  ): Promise<AgentSessionConfig> {
+    const entries = this.mcpRegistryService ? await this.mcpRegistryService.listEntries() : [];
+    const resolved = resolveMcpServers({
+      entries,
+      provider: config.provider,
+      providerHomeRef: config.providerHomeRef,
+      runtimeProfileId: config.runtimeProfileId,
+      sessionMcpServers: config.mcpServers,
+      injectPaseoTools: this.mcpBaseUrl !== null,
+      paseoMcpBaseUrl: this.mcpBaseUrl,
+      agentId,
+    });
+    return {
+      ...config,
+      mcpServers: resolved.servers,
+    };
   }
 
   private requireRuntimeWarningConfirmation(
