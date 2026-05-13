@@ -77,6 +77,13 @@ export interface AddOptions extends ScopeOptions {
 
 type RemoveOptions = ScopeOptions;
 
+interface ImportOptions extends CommandOptions {
+  host?: string;
+  provider?: string;
+  fromNative?: boolean;
+  path?: string;
+}
+
 export function createMcpCommand(): Command {
   const mcp = new Command("mcp").description("Manage scoped MCP registry entries");
 
@@ -118,6 +125,15 @@ export function createMcpCommand(): Command {
         .argument("<id>", "MCP server id"),
     ),
   ).action(withOutput(runRemoveCommand));
+
+  addJsonAndDaemonHostOptions(
+    mcp
+      .command("import")
+      .description("Import MCP registry entries from a native provider config")
+      .requiredOption("--provider <provider>", "Provider to import from, e.g. codex")
+      .option("--from-native", "Import from the provider's native config")
+      .option("--path <path>", "Native provider home or config file path"),
+  ).action(withOutput(runImportCommand));
 
   return mcp;
 }
@@ -199,6 +215,34 @@ async function runRemoveCommand(
         enabled: "-",
       },
       schema: mcpMutationSchema,
+    };
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+async function runImportCommand(
+  options: ImportOptions,
+  _command: Command,
+): Promise<ListResult<McpListItem>> {
+  if (options.fromNative !== true) {
+    throw {
+      code: "INVALID_MCP_IMPORT_SOURCE",
+      message: "Specify --from-native to import MCP servers from a native provider config",
+    };
+  }
+  const provider = parseProvider(options.provider ?? "");
+  const client = await connectToDaemon({ host: options.host });
+  try {
+    const payload = await client.importMcpRegistryEntries({
+      provider,
+      source: "native",
+      path: options.path,
+    });
+    return {
+      type: "list",
+      data: payload.entries.map(toListItem),
+      schema: mcpListSchema,
     };
   } finally {
     await client.close().catch(() => {});

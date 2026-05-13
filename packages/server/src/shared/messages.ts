@@ -543,6 +543,11 @@ export const McpRegistryEntryInputSchema = z.object({
   updatedAt: z.string().optional(),
 });
 
+export const McpRegistryImportSkippedSchema = z.object({
+  id: z.string().optional(),
+  reason: z.string(),
+});
+
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
@@ -1497,6 +1502,14 @@ export const RemoveMcpRegistryEntryRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ImportMcpRegistryEntriesRequestMessageSchema = z.object({
+  type: z.literal("import_mcp_registry_entries_request"),
+  provider: AgentProviderSchema,
+  source: z.literal("native").default("native"),
+  path: z.string().optional(),
+  requestId: z.string(),
+});
+
 export const ResumeAgentRequestMessageSchema = z.object({
   type: z.literal("resume_agent_request"),
   handle: AgentPersistenceHandleSchema,
@@ -2207,6 +2220,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ListMcpRegistryEntriesRequestMessageSchema,
   UpsertMcpRegistryEntryRequestMessageSchema,
   RemoveMcpRegistryEntryRequestMessageSchema,
+  ImportMcpRegistryEntriesRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -3833,6 +3847,17 @@ export const RemoveMcpRegistryEntryResponseMessageSchema = z.object({
   }),
 });
 
+export const ImportMcpRegistryEntriesResponseMessageSchema = z.object({
+  type: z.literal("import_mcp_registry_entries_response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    path: z.string(),
+    entries: z.array(McpRegistryEntrySchema),
+    skipped: z.array(McpRegistryImportSkippedSchema),
+    requestId: z.string(),
+  }),
+});
+
 const AgentSlashCommandSchema = z.object({
   name: z.string(),
   description: z.string(),
@@ -4075,6 +4100,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ListMcpRegistryEntriesResponseMessageSchema,
   UpsertMcpRegistryEntryResponseMessageSchema,
   RemoveMcpRegistryEntryResponseMessageSchema,
+  ImportMcpRegistryEntriesResponseMessageSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,
@@ -4123,6 +4149,7 @@ export type McpRegistryScope = z.infer<typeof McpRegistryScopeSchema>;
 export type McpRegistryEntrySource = z.infer<typeof McpRegistryEntrySourceSchema>;
 export type McpRegistryEntry = z.infer<typeof McpRegistryEntrySchema>;
 export type McpRegistryEntryInput = z.infer<typeof McpRegistryEntryInputSchema>;
+export type McpRegistryImportSkipped = z.infer<typeof McpRegistryImportSkippedSchema>;
 export type RpcErrorMessage = z.infer<typeof RpcErrorMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
 export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;
@@ -4253,6 +4280,9 @@ export type UpsertMcpRegistryEntryResponseMessage = z.infer<
 >;
 export type RemoveMcpRegistryEntryResponseMessage = z.infer<
   typeof RemoveMcpRegistryEntryResponseMessageSchema
+>;
+export type ImportMcpRegistryEntriesResponseMessage = z.infer<
+  typeof ImportMcpRegistryEntriesResponseMessageSchema
 >;
 export type ChatCreateResponse = z.infer<typeof ChatCreateResponseSchema>;
 export type ChatListResponse = z.infer<typeof ChatListResponseSchema>;

@@ -75,6 +75,7 @@ import type {
   ListMcpRegistryEntriesResponseMessage,
   UpsertMcpRegistryEntryResponseMessage,
   RemoveMcpRegistryEntryResponseMessage,
+  ImportMcpRegistryEntriesResponseMessage,
   McpRegistryEntryInput,
   McpRegistryScope,
   RestartAgentWithRuntimeProfileResponseMessage,
@@ -369,6 +370,7 @@ type DeleteRuntimeProfilePayload = DeleteRuntimeProfileResponseMessage["payload"
 type ListMcpRegistryEntriesPayload = ListMcpRegistryEntriesResponseMessage["payload"];
 type UpsertMcpRegistryEntryPayload = UpsertMcpRegistryEntryResponseMessage["payload"];
 type RemoveMcpRegistryEntryPayload = RemoveMcpRegistryEntryResponseMessage["payload"];
+type ImportMcpRegistryEntriesPayload = ImportMcpRegistryEntriesResponseMessage["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -3747,6 +3749,25 @@ export class DaemonClient {
         scope: options.scope,
       },
       responseType: "remove_mcp_registry_entry_response",
+      timeout: 10000,
+    });
+  }
+
+  async importMcpRegistryEntries(options: {
+    provider: AgentProvider;
+    source?: "native";
+    path?: string;
+    requestId?: string;
+  }): Promise<ImportMcpRegistryEntriesPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "import_mcp_registry_entries_request",
+        provider: options.provider,
+        source: options.source ?? "native",
+        path: options.path,
+      },
+      responseType: "import_mcp_registry_entries_response",
       timeout: 10000,
     });
   }
