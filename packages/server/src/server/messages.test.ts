@@ -1,7 +1,11 @@
 import { describe, expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "./agent/agent-sdk-types.js";
-import { serializeAgentStreamEvent } from "./messages.js";
+import {
+  serializeAgentStreamEvent,
+  SessionInboundMessageSchema,
+  SessionOutboundMessageSchema,
+} from "./messages.js";
 
 describe("serializeAgentStreamEvent", () => {
   test("preserves user_message text as-is", () => {
@@ -122,5 +126,42 @@ describe("serializeAgentStreamEvent", () => {
     ];
 
     expect(events.map((event) => serializeAgentStreamEvent(event))).toEqual([null, null, null]);
+  });
+});
+
+describe("MCP registry protocol messages", () => {
+  test("parses registry management requests and responses", () => {
+    const scope = { kind: "provider", provider: "codex" } as const;
+    const entry = {
+      id: "context-mode",
+      scope,
+      config: { type: "stdio", command: "context-mode", args: ["serve"] },
+      enabled: true,
+      source: "user",
+      createdAt: "2026-05-13T12:00:00.000Z",
+      updatedAt: "2026-05-13T12:00:00.000Z",
+    } as const;
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "upsert_mcp_registry_entry_request",
+        entry: {
+          id: entry.id,
+          scope,
+          config: entry.config,
+        },
+        requestId: "req_1",
+      }).type,
+    ).toBe("upsert_mcp_registry_entry_request");
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "list_mcp_registry_entries_response",
+        payload: {
+          entries: [entry],
+          requestId: "req_1",
+        },
+      }).type,
+    ).toBe("list_mcp_registry_entries_response");
   });
 });
