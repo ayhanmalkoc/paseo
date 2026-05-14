@@ -123,6 +123,55 @@ describe("CodexProviderAuthAdapter", () => {
     }
   });
 
+  it("does not overwrite an existing managed Codex config during refresh", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-refresh-"));
+    try {
+      const sourceHome = path.join(root, "source-codex");
+      const providerBaseDir = path.join(root, "providers", "codex");
+      await fs.mkdir(sourceHome, { recursive: true });
+      await fs.writeFile(
+        path.join(sourceHome, "auth.json"),
+        JSON.stringify({ OPENAI_API_KEY: "sk-test-secret" }),
+        "utf8",
+      );
+      await fs.writeFile(path.join(sourceHome, "config.toml"), 'model = "source-model"\n', "utf8");
+
+      const adapter = new CodexProviderAuthAdapter({
+        usageReader: async () => {
+          throw new Error("import should not refresh usage");
+        },
+      });
+      const profile = await adapter.importAuthFile(
+        path.join(sourceHome, "auth.json"),
+        createContext(providerBaseDir),
+      );
+      await fs.writeFile(
+        path.join(profile.providerHomePath, "config.toml"),
+        '# paseo-disabled-mcp-server "context-mode"\n# [mcp_servers.context-mode]\n# command = "context-mode"\n# /paseo-disabled-mcp-server\n',
+        "utf8",
+      );
+
+      await fs.writeFile(
+        path.join(sourceHome, "config.toml"),
+        'model = "new-source-model"\n',
+        "utf8",
+      );
+      await adapter.importAuthFile(
+        path.join(sourceHome, "auth.json"),
+        createContext(providerBaseDir),
+      );
+
+      await expect(
+        fs.readFile(path.join(profile.providerHomePath, "config.toml"), "utf8"),
+      ).resolves.toContain("# paseo-disabled-mcp-server");
+      await expect(
+        fs.readFile(path.join(profile.providerHomePath, "config.toml"), "utf8"),
+      ).resolves.not.toContain("new-source-model");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("refreshes usage from live Codex app-server usage", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-"));
     try {

@@ -76,6 +76,10 @@ Implemented surfaces:
   The provider adapter launches Codex with that account home, so native MCP,
   plugin, hook, and other Codex-owned config stays provider-owned and is resolved
   by Codex at launch.
+- Native Codex config is copied into a managed account only when the managed
+  `config.toml` does not already exist. Refresh/import must not overwrite an
+  existing managed config, because account-local MCP toggles and power-user
+  config edits live there.
 - Provider account settings expose MCP convenience controls backed by the same
   account-native config. Toggling, editing, adding, or removing an MCP server
   updates that account `config.toml`; there is no separate Paseo MCP registry in

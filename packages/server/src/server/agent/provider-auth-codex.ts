@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants as fsConstants, promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -357,8 +357,8 @@ async function writeAccountMetadata(
 async function copyOptionalCodexConfig(sourceDir: string, targetDir: string): Promise<void> {
   const sourceConfig = path.join(sourceDir, CODEX_CONFIG_FILENAME);
   const targetConfig = path.join(targetDir, CODEX_CONFIG_FILENAME);
-  await fs.copyFile(sourceConfig, targetConfig).catch((error) => {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+  await fs.copyFile(sourceConfig, targetConfig, fsConstants.COPYFILE_EXCL).catch((error) => {
+    if (!["EEXIST", "ENOENT"].includes((error as NodeJS.ErrnoException).code ?? "")) {
       throw error;
     }
   });
