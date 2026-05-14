@@ -50,7 +50,6 @@ interface RuntimeProfileDraft {
   instructionOverlay: string;
   featureValues: Record<string, unknown>;
   envOverlayJson: string;
-  mcpServersJson: string;
 }
 
 interface SelectOption {
@@ -565,16 +564,6 @@ function RuntimeProfileEditorSheet({
             monospace
             hint="Applied to the provider process. CODEX_HOME and PASEO_AGENT_ID are reserved."
           />
-          <LabeledInput
-            label="MCP servers JSON"
-            value={draft.mcpServersJson}
-            onChangeText={(value) => setField("mcpServersJson", value)}
-            placeholder='{"server": {"type": "stdio", "command": "tool"}}'
-            editable={!saving}
-            multiline
-            monospace
-            hint="Canonical MCP server map. Supports stdio, http, and sse entries."
-          />
         </View>
       </SettingsSection>
 
@@ -974,7 +963,6 @@ function createDraft(
     instructionOverlay: profile?.instructionOverlay ?? "",
     featureValues: profile?.featureValues ?? {},
     envOverlayJson: formatJson(profile?.envOverlay),
-    mcpServersJson: formatJson(profile?.mcpServers),
   };
 }
 
@@ -1094,7 +1082,6 @@ function buildPatch(
     instructionOverlay: normalizeNullableText(draft.instructionOverlay),
     featureValues: draft.featureValues,
     envOverlay: parseStringObjectJson("Environment JSON", draft.envOverlayJson),
-    mcpServers: parseMcpServersJson(draft.mcpServersJson),
   };
 }
 
@@ -1128,10 +1115,6 @@ function parseStringObjectJson(label: string, value: string): Record<string, str
     }
   }
   return parsed as Record<string, string>;
-}
-
-function parseMcpServersJson(value: string): NonNullable<RuntimeProfile["mcpServers"]> {
-  return parseObjectJson("MCP servers JSON", value) as NonNullable<RuntimeProfile["mcpServers"]>;
 }
 
 function formatJson(value: unknown): string {

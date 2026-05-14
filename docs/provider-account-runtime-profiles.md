@@ -67,10 +67,11 @@ Implemented surfaces:
   provider default; explicit native default bypasses managed accounts.
 - Runtime profile settings can create/edit/delete profiles with provider,
   account, model, mode, thinking, concurrency, session behavior, instructions,
-  feature values, environment, and MCP server settings.
-- Feature values use provider-defined structured controls. Environment and MCP
-  server settings stay as JSON because they are open-ended power-user
-  configuration.
+  feature values, and environment.
+- Feature values use provider-defined structured controls. Environment stays as
+  JSON because it is open-ended power-user configuration. MCP and provider-native
+  details live in provider settings/native config, not in runtime profile
+  presets.
 - Active agents can switch account/runtime profile through an explicit restart
   confirmation.
 - Import session sheet can import native provider sessions with source account
@@ -79,6 +80,34 @@ Implemented surfaces:
 - Persisted/resumed agents carry resolved `accountSelection`, `providerHomeRef`,
   model, mode, thinking, feature, environment, MCP, and session behavior
   snapshots.
+
+## Managed Provider Layout
+
+Provider-owned state uses a readable provider tree:
+
+```text
+$PASEO_HOME/providers/
+  codex/
+    accounts/
+      <account-alias-key>/
+        metadata.json
+        home/
+          auth.json
+          config.toml
+    pending/
+      <login-session-id>/
+        home/
+```
+
+The old `provider-auth` tree is not the canonical layout. During development,
+existing local registry data is copied into the readable `providers` tree the
+first time the new registry is created. New code reads and writes
+`$PASEO_HOME/providers/accounts.json`.
+
+Runtime profiles remain launch presets. They select provider/account/model and
+runtime behavior. Provider-native configuration such as Codex `config.toml`,
+MCP server details, plugins, hooks, and future provider extras stays with the
+provider/account home and is resolved at launch.
 
 ## Codex Session Continuity
 
