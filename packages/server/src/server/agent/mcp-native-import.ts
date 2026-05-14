@@ -8,6 +8,8 @@ import { isReservedMcpServerId, type McpRegistryEntry } from "./mcp-resolver.js"
 
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_CONFIG_FILENAME = "config.toml";
+const PASEO_DISABLED_MCP_BEGIN_PREFIX = "# paseo-disabled-mcp-server ";
+const PASEO_DISABLED_MCP_END = "# /paseo-disabled-mcp-server";
 
 export interface NativeMcpImportSkipped {
   id?: string;
@@ -131,6 +133,16 @@ export function resolveCodexNativeConfigPath(inputPath?: string): string {
 }
 
 export function parseCodexNativeMcpConfigToml(content: string): NativeMcpImportParseResult {
+  const disabledBlocks = extractPaseoDisabledMcpBlocks(content);
+  const contentWithoutDisabledBlocks = removeAllPaseoDisabledMcpServerConfigs(content);
+  const parsed = parseCodexActiveMcpConfigToml(contentWithoutDisabledBlocks);
+  return {
+    servers: [...parsed.servers, ...disabledBlocks.servers],
+    skipped: [...parsed.skipped, ...disabledBlocks.skipped],
+  };
+}
+
+function parseCodexActiveMcpConfigToml(content: string): NativeMcpImportParseResult {
   const tables = new Map<string, RawMcpTable>();
   const skipped: NativeMcpImportSkipped[] = [];
   let current: {
@@ -192,6 +204,44 @@ export function parseCodexNativeMcpConfigToml(content: string): NativeMcpImportP
       continue;
     }
     skipped.push({ id, reason: "No supported command or URL config found" });
+  }
+
+  return { servers, skipped };
+}
+
+function extractPaseoDisabledMcpBlocks(content: string): NativeMcpImportParseResult {
+  const servers: NativeMcpServerCandidate[] = [];
+  const skipped: NativeMcpImportSkipped[] = [];
+  const lines = content.split(/\r?\n/);
+  let current: {
+    id: string;
+    lines: string[];
+  } | null = null;
+
+  for (const rawLine of lines) {
+    const beginId = parsePaseoDisabledMcpBegin(rawLine.trim());
+    if (beginId !== null) {
+      current = { id: beginId, lines: [] };
+      continue;
+    }
+    if (current && rawLine.trim() === PASEO_DISABLED_MCP_END) {
+      const uncommented = current.lines.map(uncommentPaseoDisabledMcpLine).join("\n");
+      const parsed = parseCodexActiveMcpConfigToml(uncommented);
+      const matchingServer = parsed.servers.find((server) => server.id === current?.id);
+      if (matchingServer) {
+        servers.push({ ...matchingServer, enabled: false });
+      } else {
+        skipped.push({
+          id: current.id,
+          reason: "Disabled MCP block has no supported command or URL config",
+        });
+      }
+      current = null;
+      continue;
+    }
+    if (current) {
+      current.lines.push(rawLine);
+    }
   }
 
   return { servers, skipped };
@@ -274,15 +324,19 @@ export function writeCodexNativeMcpServerConfig(input: {
   enabled?: boolean;
 }): string {
   const withoutExisting = removeCodexNativeMcpServerConfig(input.content, input.id);
-  const block = formatCodexNativeMcpServerBlock({
-    id: input.id,
-    config: input.config,
-    enabled: input.enabled ?? true,
-  });
+  const block =
+    input.enabled === false
+      ? formatPaseoDisabledMcpServerBlock({ id: input.id, config: input.config })
+      : formatCodexNativeMcpServerBlock({ id: input.id, config: input.config });
   return normalizeTomlDocument([withoutExisting.trimEnd(), block].filter(Boolean).join("\n\n"));
 }
 
 export function removeCodexNativeMcpServerConfig(content: string, id: string): string {
+  const withoutDisabled = removePaseoDisabledMcpServerConfig(content, id);
+  return removeCodexNativeActiveMcpServerConfig(withoutDisabled, id);
+}
+
+function removeCodexNativeActiveMcpServerConfig(content: string, id: string): string {
   const lines = content.split(/\r?\n/);
   const nextLines: string[] = [];
   let skipping = false;
@@ -300,15 +354,56 @@ export function removeCodexNativeMcpServerConfig(content: string, id: string): s
   return normalizeTomlDocument(nextLines.join("\n").trimEnd());
 }
 
+function removePaseoDisabledMcpServerConfig(content: string, id: string): string {
+  const lines = content.split(/\r?\n/);
+  const nextLines: string[] = [];
+  let skipping = false;
+
+  for (const rawLine of lines) {
+    const disabledId = parsePaseoDisabledMcpBegin(rawLine.trim());
+    if (disabledId === id) {
+      skipping = true;
+      continue;
+    }
+    if (skipping && rawLine.trim() === PASEO_DISABLED_MCP_END) {
+      skipping = false;
+      continue;
+    }
+    if (!skipping) {
+      nextLines.push(rawLine);
+    }
+  }
+
+  return normalizeTomlDocument(nextLines.join("\n").trimEnd());
+}
+
+function removeAllPaseoDisabledMcpServerConfigs(content: string): string {
+  const lines = content.split(/\r?\n/);
+  const nextLines: string[] = [];
+  let skipping = false;
+
+  for (const rawLine of lines) {
+    if (parsePaseoDisabledMcpBegin(rawLine.trim()) !== null) {
+      skipping = true;
+      continue;
+    }
+    if (skipping && rawLine.trim() === PASEO_DISABLED_MCP_END) {
+      skipping = false;
+      continue;
+    }
+    if (!skipping) {
+      nextLines.push(rawLine);
+    }
+  }
+
+  return normalizeTomlDocument(nextLines.join("\n").trimEnd());
+}
+
 function isCodexNativeMcpTableForId(parts: string[], id: string): boolean {
   return parts[0] === "mcp_servers" && parts[1] === id;
 }
 
-function formatCodexNativeMcpServerBlock(input: {
-  id: string;
-  config: McpServerConfig;
-  enabled: boolean;
-}): string {
+function formatCodexNativeMcpServerBlock(input: { id: string; config: McpServerConfig }): string {
   const keyPath = `mcp_servers.${formatTomlKey(input.id)}`;
   const lines: string[] = [`[${keyPath}]`];
 
@@ -317,7 +412,6 @@ function formatCodexNativeMcpServerBlock(input: {
     if (input.config.args && input.config.args.length > 0) {
       lines.push(`args = ${formatTomlValue(input.config.args)}`);
     }
-    lines.push(`enabled = ${input.enabled ? "true" : "false"}`);
     if (input.config.env && Object.keys(input.config.env).length > 0) {
       lines.push("", `[${keyPath}.env]`);
       for (const [key, value] of Object.entries(input.config.env).sort()) {
@@ -331,7 +425,6 @@ function formatCodexNativeMcpServerBlock(input: {
   if (input.config.type === "sse") {
     lines.push(`transport = "sse"`);
   }
-  lines.push(`enabled = ${input.enabled ? "true" : "false"}`);
   if (input.config.headers && Object.keys(input.config.headers).length > 0) {
     lines.push("", `[${keyPath}.http_headers]`);
     for (const [key, value] of Object.entries(input.config.headers).sort()) {
@@ -339,6 +432,35 @@ function formatCodexNativeMcpServerBlock(input: {
     }
   }
   return lines.join("\n");
+}
+
+function formatPaseoDisabledMcpServerBlock(input: { id: string; config: McpServerConfig }): string {
+  const nativeBlock = formatCodexNativeMcpServerBlock(input);
+  return [
+    `${PASEO_DISABLED_MCP_BEGIN_PREFIX}${JSON.stringify(input.id)}`,
+    ...nativeBlock.split("\n").map((line) => `# ${line}`),
+    PASEO_DISABLED_MCP_END,
+  ].join("\n");
+}
+
+function parsePaseoDisabledMcpBegin(line: string): string | null {
+  if (!line.startsWith(PASEO_DISABLED_MCP_BEGIN_PREFIX)) {
+    return null;
+  }
+  const rawId = line.slice(PASEO_DISABLED_MCP_BEGIN_PREFIX.length).trim();
+  if (!rawId) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(rawId);
+    return typeof parsed === "string" && parsed.trim() ? parsed : null;
+  } catch {
+    return rawId;
+  }
+}
+
+function uncommentPaseoDisabledMcpLine(line: string): string {
+  return line.replace(/^# ?/, "");
 }
 
 function formatTomlKey(value: string): string {

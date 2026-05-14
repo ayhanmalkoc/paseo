@@ -89,9 +89,10 @@ X-Test = "ok"
 
   test("keeps disabled native MCP entries parseable", () => {
     const parsed = parseCodexNativeMcpConfigToml(`
-[mcp_servers.context_mode]
-command = "context-mode"
-enabled = false
+# paseo-disabled-mcp-server "context_mode"
+# [mcp_servers.context_mode]
+# command = "context-mode"
+# /paseo-disabled-mcp-server
 `);
 
     expect(parsed.servers).toEqual([
@@ -137,10 +138,18 @@ describe("Codex native MCP config writers", () => {
 
     expect(updated).toContain('model = "gpt-5.5"');
     expect(updated).not.toContain('command = "old"');
-    expect(updated).toContain("[mcp_servers.context-mode]");
+    expect(updated).not.toContain("\n[mcp_servers.context-mode]");
+    expect(updated).toContain("# [mcp_servers.context-mode]");
     expect(updated).toContain('command = "context-mode"');
     expect(updated).toContain('args = ["serve"]');
-    expect(updated).toContain("enabled = false");
+    expect(updated).not.toContain("enabled = false");
+    expect(parseCodexNativeMcpConfigToml(updated).servers).toEqual([
+      {
+        id: "context-mode",
+        config: { type: "stdio", command: "context-mode", args: ["serve"] },
+        enabled: false,
+      },
+    ]);
 
     const removed = removeCodexNativeMcpServerConfig(updated, "context-mode");
     expect(removed).toContain('model = "gpt-5.5"');

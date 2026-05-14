@@ -112,6 +112,12 @@ describe("ProviderNativeConfigService", () => {
     await expect(
       service.listAccountMcpServers({ provider: "codex", profileKey: "work" }),
     ).resolves.toEqual([created]);
+    await expect(
+      fs.readFile(path.join(providerHomePath, "config.toml"), "utf8"),
+    ).resolves.toContain("# [mcp_servers.context-mode]");
+    await expect(
+      fs.readFile(path.join(providerHomePath, "config.toml"), "utf8"),
+    ).resolves.not.toContain("\n[mcp_servers.context-mode]");
 
     const updated = await service.upsertAccountMcpServer({
       provider: "codex",
