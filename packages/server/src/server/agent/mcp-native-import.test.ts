@@ -155,6 +155,48 @@ describe("Codex native MCP config writers", () => {
     expect(removed).toContain('model = "gpt-5.5"');
     expect(removed).not.toContain("context-mode");
   });
+
+  test("preserves provider-specific MCP subtables while toggling", () => {
+    const content = `model = "gpt-5.5"
+
+[mcp_servers."context-mode"]
+command = "context-mode"
+
+[mcp_servers."context-mode".tools.ctx_batch_execute]
+approval_mode = "approve"
+
+[mcp_servers."context-mode".tools.ctx_search]
+approval_mode = "approve"
+
+[mcp_servers.notebooklm]
+command = "npx"
+`;
+
+    const disabled = writeCodexNativeMcpServerConfig({
+      content,
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode" },
+      enabled: false,
+    });
+
+    expect(disabled).toContain('# [mcp_servers."context-mode".tools.ctx_batch_execute]');
+    expect(disabled).toContain('# approval_mode = "approve"');
+    expect(disabled).toContain("[mcp_servers.notebooklm]");
+    expect(disabled).not.toContain("\n[mcp_servers.context-mode]\n");
+
+    const enabled = writeCodexNativeMcpServerConfig({
+      content: disabled,
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode" },
+      enabled: true,
+    });
+
+    expect(enabled).toContain('[mcp_servers."context-mode"]');
+    expect(enabled).toContain('[mcp_servers."context-mode".tools.ctx_batch_execute]');
+    expect(enabled).toContain('[mcp_servers."context-mode".tools.ctx_search]');
+    expect(enabled).toContain("[mcp_servers.notebooklm]");
+    expect(enabled).not.toContain("paseo-disabled-mcp-server");
+  });
 });
 
 describe("readProviderHomeNativeMcpEntries", () => {

@@ -266,11 +266,23 @@ export function writeCodexNativeMcpServerConfig(input: {
   config: McpServerConfig;
   enabled?: boolean;
 }): string {
+  const existing = parseCodexNativeMcpConfigToml(input.content).servers.find(
+    (server) => server.id === input.id,
+  );
+  const existingNativeBlock = configsEqual(existing?.config, input.config)
+    ? (extractCodexNativeActiveMcpServerBlock(input.content, input.id) ??
+      extractPaseoDisabledMcpServerNativeBlock(input.content, input.id))
+    : undefined;
   const withoutExisting = removeCodexNativeMcpServerConfig(input.content, input.id);
   const block =
     input.enabled === false
-      ? formatPaseoDisabledMcpServerBlock({ id: input.id, config: input.config })
-      : formatCodexNativeMcpServerBlock({ id: input.id, config: input.config });
+      ? formatPaseoDisabledMcpServerBlock({
+          id: input.id,
+          config: input.config,
+          nativeBlock: existingNativeBlock,
+        })
+      : (existingNativeBlock ??
+        formatCodexNativeMcpServerBlock({ id: input.id, config: input.config }));
   return normalizeTomlDocument([withoutExisting.trimEnd(), block].filter(Boolean).join("\n\n"));
 }
 
@@ -297,6 +309,35 @@ function removeCodexNativeActiveMcpServerConfig(content: string, id: string): st
   return normalizeTomlDocument(nextLines.join("\n").trimEnd());
 }
 
+function extractCodexNativeActiveMcpServerBlock(content: string, id: string): string | undefined {
+  const chunks: string[] = [];
+  let current: string[] | null = null;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const header = parseTomlTableHeader(stripTomlComment(rawLine).trim());
+    if (header) {
+      const isTargetTable = isCodexNativeMcpTableForId(header, id);
+      if (current) {
+        chunks.push(current.join("\n").trimEnd());
+        current = null;
+      }
+      if (isTargetTable) {
+        current = [];
+      }
+    }
+    if (current) {
+      current.push(rawLine);
+    }
+  }
+
+  if (current) {
+    chunks.push(current.join("\n").trimEnd());
+  }
+
+  const block = chunks.filter(Boolean).join("\n\n");
+  return block ? normalizeTomlDocument(block) : undefined;
+}
+
 function removePaseoDisabledMcpServerConfig(content: string, id: string): string {
   const lines = content.split(/\r?\n/);
   const nextLines: string[] = [];
@@ -318,6 +359,36 @@ function removePaseoDisabledMcpServerConfig(content: string, id: string): string
   }
 
   return normalizeTomlDocument(nextLines.join("\n").trimEnd());
+}
+
+function extractPaseoDisabledMcpServerNativeBlock(content: string, id: string): string | undefined {
+  const lines: string[] = [];
+  let collecting = false;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const disabledId = parsePaseoDisabledMcpBegin(rawLine.trim());
+    if (disabledId === id) {
+      collecting = true;
+      continue;
+    }
+    if (collecting && rawLine.trim() === PASEO_DISABLED_MCP_END) {
+      break;
+    }
+    if (collecting) {
+      if (rawLine.startsWith("# ")) {
+        lines.push(rawLine.slice(2));
+      } else if (rawLine === "#") {
+        lines.push("");
+      } else if (rawLine.startsWith("#")) {
+        lines.push(rawLine.slice(1));
+      } else {
+        lines.push(rawLine);
+      }
+    }
+  }
+
+  const block = lines.join("\n").trimEnd();
+  return block ? normalizeTomlDocument(block) : undefined;
 }
 
 function removeAllPaseoDisabledMcpServerConfigs(content: string): string {
@@ -377,13 +448,34 @@ function formatCodexNativeMcpServerBlock(input: { id: string; config: McpServerC
   return lines.join("\n");
 }
 
-function formatPaseoDisabledMcpServerBlock(input: { id: string; config: McpServerConfig }): string {
-  const nativeBlock = formatCodexNativeMcpServerBlock(input);
+function formatPaseoDisabledMcpServerBlock(input: {
+  id: string;
+  config: McpServerConfig;
+  nativeBlock?: string;
+}): string {
+  const nativeBlock = input.nativeBlock ?? formatCodexNativeMcpServerBlock(input);
   return [
     `${PASEO_DISABLED_MCP_BEGIN_PREFIX}${JSON.stringify(input.id)}`,
     ...nativeBlock.split("\n").map((line) => `# ${line}`),
     PASEO_DISABLED_MCP_END,
   ].join("\n");
+}
+
+function configsEqual(left: McpServerConfig | undefined, right: McpServerConfig): boolean {
+  return left !== undefined && stableStringify(left) === stableStringify(right);
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function parsePaseoDisabledMcpBegin(line: string): string | null {
