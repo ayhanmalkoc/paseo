@@ -63,6 +63,7 @@ import type { ProviderAuthService } from "./provider-auth-service.js";
 import type { RuntimeProfileService } from "./runtime-profile-service.js";
 import { LaunchResolver, type ResolvedAgentLaunch } from "./launch-resolver.js";
 import type { McpRegistryReader } from "./mcp-registry-service.js";
+import { readProviderHomeNativeMcpRegistryEntries } from "./mcp-native-import.js";
 import { resolveMcpServers } from "./mcp-resolver.js";
 import {
   createManagedProviderHomeRefFromProfile,
@@ -551,7 +552,6 @@ export class AgentManager {
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly providerAuthService: ProviderAuthService | null;
-  private readonly mcpRegistryService: McpRegistryReader | null;
   private readonly launchResolver: LaunchResolver;
   private onAgentAttention?: AgentAttentionCallback;
   private logger: Logger;
@@ -564,7 +564,6 @@ export class AgentManager {
     this.onAgentAttention = options?.onAgentAttention;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
     this.providerAuthService = options?.providerAuthService ?? null;
-    this.mcpRegistryService = options?.mcpRegistryService ?? null;
     this.launchResolver = new LaunchResolver({
       providerAuthService: this.providerAuthService,
       runtimeProfileService: options.runtimeProfileService,
@@ -3698,9 +3697,13 @@ export class AgentManager {
     agentId: string,
     config: AgentSessionConfig,
   ): Promise<AgentSessionConfig> {
-    const entries = this.mcpRegistryService ? await this.mcpRegistryService.listEntries() : [];
+    const nativeEntries = await readProviderHomeNativeMcpRegistryEntries({
+      provider: config.provider,
+      providerHomePath: config.providerHomeRef?.homePath,
+      accountKey: getManagedProviderHomeProfileKey(config.providerHomeRef),
+    });
     const resolved = resolveMcpServers({
-      entries,
+      entries: nativeEntries,
       provider: config.provider,
       providerHomeRef: config.providerHomeRef,
       runtimeProfileId: config.runtimeProfileId,

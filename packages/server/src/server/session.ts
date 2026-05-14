@@ -95,6 +95,7 @@ import type { ProviderAuthService } from "./agent/provider-auth-service.js";
 import type { RuntimeProfileService } from "./agent/runtime-profile-service.js";
 import type { AccountOnboardingService } from "./agent/account-onboarding-service.js";
 import type { McpRegistryService } from "./agent/mcp-registry-service.js";
+import type { ProviderNativeConfigService } from "./agent/provider-native-config-service.js";
 import { readNativeMcpRegistryEntries } from "./agent/mcp-native-import.js";
 import { explainMcpResolution } from "./agent/mcp-resolver.js";
 import { createManagedProviderHomeRef } from "./agent/provider-home-ref.js";
@@ -560,6 +561,7 @@ export interface SessionOptions {
   runtimeProfileService?: RuntimeProfileService;
   accountOnboardingService?: AccountOnboardingService;
   mcpRegistryService?: McpRegistryService;
+  providerNativeConfigService?: ProviderNativeConfigService;
   scriptRouteStore?: ScriptRouteStore;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
   workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
@@ -802,6 +804,7 @@ export class Session {
   private readonly runtimeProfileService: RuntimeProfileService | null;
   private readonly accountOnboardingService: AccountOnboardingService | null;
   private readonly mcpRegistryService: McpRegistryService | null;
+  private readonly providerNativeConfigService: ProviderNativeConfigService | null;
   private unsubscribeAccountLoginEvents: (() => void) | null = null;
   private unsubscribeRuntimeProfileEvents: (() => void) | null = null;
   private voiceModeAgentId: string | null = null;
@@ -840,6 +843,7 @@ export class Session {
       runtimeProfileService,
       accountOnboardingService,
       mcpRegistryService,
+      providerNativeConfigService,
       scriptRouteStore,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
@@ -896,6 +900,7 @@ export class Session {
     this.runtimeProfileService = runtimeProfileService ?? null;
     this.accountOnboardingService = accountOnboardingService ?? null;
     this.mcpRegistryService = mcpRegistryService ?? null;
+    this.providerNativeConfigService = providerNativeConfigService ?? null;
     this.scriptRouteStore = scriptRouteStore ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
     this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
@@ -2109,6 +2114,7 @@ export class Session {
       this.dispatchProviderRegistryMessage(msg) ??
       this.dispatchProviderAuthMessage(msg) ??
       this.dispatchProviderRuntimeProfileMessage(msg) ??
+      this.dispatchProviderNativeConfigMessage(msg) ??
       this.dispatchMcpRegistryMessage(msg)
     );
   }
@@ -2188,6 +2194,25 @@ export class Session {
         return this.handleImportMcpRegistryEntriesRequest(msg);
       case "explain_mcp_registry_request":
         return this.handleExplainMcpRegistryRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchProviderNativeConfigMessage(
+    msg: SessionInboundMessage,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "read_provider_native_config_request":
+        return this.handleReadProviderNativeConfigRequest(msg);
+      case "write_provider_native_config_request":
+        return this.handleWriteProviderNativeConfigRequest(msg);
+      case "list_provider_native_mcp_servers_request":
+        return this.handleListProviderNativeMcpServersRequest(msg);
+      case "upsert_provider_native_mcp_server_request":
+        return this.handleUpsertProviderNativeMcpServerRequest(msg);
+      case "remove_provider_native_mcp_server_request":
+        return this.handleRemoveProviderNativeMcpServerRequest(msg);
       default:
         return undefined;
     }
@@ -4154,6 +4179,117 @@ export class Session {
     }
   }
 
+  private async handleReadProviderNativeConfigRequest(
+    msg: Extract<SessionInboundMessage, { type: "read_provider_native_config_request" }>,
+  ): Promise<void> {
+    try {
+      const config = await this.requireProviderNativeConfigService().readAccountConfig({
+        provider: msg.provider,
+        profileKey: msg.profileKey,
+      });
+      this.emit({
+        type: "read_provider_native_config_response",
+        payload: {
+          config,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_config_read_failed");
+    }
+  }
+
+  private async handleWriteProviderNativeConfigRequest(
+    msg: Extract<SessionInboundMessage, { type: "write_provider_native_config_request" }>,
+  ): Promise<void> {
+    try {
+      const config = await this.requireProviderNativeConfigService().writeAccountConfig({
+        provider: msg.provider,
+        profileKey: msg.profileKey,
+        content: msg.content,
+      });
+      this.emit({
+        type: "write_provider_native_config_response",
+        payload: {
+          config,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_config_write_failed");
+    }
+  }
+
+  private async handleListProviderNativeMcpServersRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_provider_native_mcp_servers_request" }>,
+  ): Promise<void> {
+    try {
+      const servers = await this.requireProviderNativeConfigService().listAccountMcpServers({
+        provider: msg.provider,
+        profileKey: msg.profileKey,
+      });
+      this.emit({
+        type: "list_provider_native_mcp_servers_response",
+        payload: {
+          provider: msg.provider,
+          profileKey: msg.profileKey,
+          servers,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_mcp_list_failed");
+    }
+  }
+
+  private async handleUpsertProviderNativeMcpServerRequest(
+    msg: Extract<SessionInboundMessage, { type: "upsert_provider_native_mcp_server_request" }>,
+  ): Promise<void> {
+    try {
+      const server = await this.requireProviderNativeConfigService().upsertAccountMcpServer({
+        provider: msg.provider,
+        profileKey: msg.profileKey,
+        id: msg.id,
+        config: msg.config,
+        enabled: msg.enabled,
+      });
+      this.emit({
+        type: "upsert_provider_native_mcp_server_response",
+        payload: {
+          provider: msg.provider,
+          profileKey: msg.profileKey,
+          server,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_mcp_upsert_failed");
+    }
+  }
+
+  private async handleRemoveProviderNativeMcpServerRequest(
+    msg: Extract<SessionInboundMessage, { type: "remove_provider_native_mcp_server_request" }>,
+  ): Promise<void> {
+    try {
+      const removed = await this.requireProviderNativeConfigService().removeAccountMcpServer({
+        provider: msg.provider,
+        profileKey: msg.profileKey,
+        id: msg.id,
+      });
+      this.emit({
+        type: "remove_provider_native_mcp_server_response",
+        payload: {
+          provider: msg.provider,
+          profileKey: msg.profileKey,
+          removed,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_mcp_remove_failed");
+    }
+  }
+
   private async handleListMcpRegistryEntriesRequest(
     msg: Extract<SessionInboundMessage, { type: "list_mcp_registry_entries_request" }>,
   ): Promise<void> {
@@ -4304,6 +4440,13 @@ export class Session {
     return this.mcpRegistryService;
   }
 
+  private requireProviderNativeConfigService(): ProviderNativeConfigService {
+    if (!this.providerNativeConfigService) {
+      throw new Error("Provider native config is not available");
+    }
+    return this.providerNativeConfigService;
+  }
+
   private emitProviderAuthRpcError(
     msg: Extract<
       SessionInboundMessage,
@@ -4403,6 +4546,34 @@ export class Session {
   ): void {
     const err = error instanceof Error ? error : new Error(String(error));
     this.sessionLogger.warn({ err, requestType: msg.type }, "MCP registry RPC failed");
+    this.emit({
+      type: "rpc_error",
+      payload: {
+        requestId: msg.requestId,
+        requestType: msg.type,
+        error: err.message,
+        code,
+      },
+    });
+  }
+
+  private emitProviderNativeConfigRpcError(
+    msg: Extract<
+      SessionInboundMessage,
+      {
+        type:
+          | "read_provider_native_config_request"
+          | "write_provider_native_config_request"
+          | "list_provider_native_mcp_servers_request"
+          | "upsert_provider_native_mcp_server_request"
+          | "remove_provider_native_mcp_server_request";
+      }
+    >,
+    error: unknown,
+    code: string,
+  ): void {
+    const err = error instanceof Error ? error : new Error(String(error));
+    this.sessionLogger.warn({ err, requestType: msg.type }, "Provider native config RPC failed");
     this.emit({
       type: "rpc_error",
       payload: {

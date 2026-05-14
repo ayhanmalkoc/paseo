@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, Switch, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight, Globe, Monitor, Pencil, RotateCw, Trash2 } from "lucide-react-native";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
@@ -19,10 +19,10 @@ import { settingsStyles } from "@/styles/settings";
 import { Button } from "@/components/ui/button";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { ProvidersSection } from "@/screens/settings/providers-section";
 import { RuntimeProfilesSection } from "@/screens/settings/runtime-profiles-section";
-import { McpRegistrySection } from "@/screens/settings/mcp-registry-section";
 import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { LocalDaemonSection } from "@/desktop/components/desktop-updates-section";
 
@@ -164,8 +164,6 @@ export function HostPage({ serverId, onHostRemoved }: HostPageProps) {
       <DaemonSection host={host} isLocalDaemon={isLocalDaemon} />
 
       <RuntimeProfilesSection serverId={serverId} />
-
-      <McpRegistrySection serverId={serverId} />
 
       <ProvidersSection serverId={serverId} />
 
@@ -454,6 +452,7 @@ function DaemonSection({ host, isLocalDaemon }: { host: HostProfile; isLocalDaem
     <>
       <SettingsSection title="Operations">
         <RestartDaemonCard host={host} />
+        <InjectPaseoToolsCard serverId={host.serverId} />
       </SettingsSection>
       {isLocalDaemon ? (
         <SettingsSection title="Pair devices">
@@ -590,6 +589,42 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
         >
           {isRestarting ? "Restarting..." : "Restart"}
         </Button>
+      </View>
+    </View>
+  );
+}
+
+function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const { config, patchConfig } = useDaemonConfig(serverId);
+
+  const handleValueChange = useCallback(
+    (next: boolean) => {
+      void patchConfig({
+        mcp: {
+          injectIntoAgents: next,
+        },
+      });
+    },
+    [patchConfig],
+  );
+
+  if (!isConnected) return null;
+
+  return (
+    <View style={settingsStyles.card} testID="host-page-inject-mcp-card">
+      <View style={settingsStyles.row}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>Inject Paseo tools</Text>
+          <Text style={settingsStyles.rowHint}>
+            Automatically inject Paseo MCP tools into new agents
+          </Text>
+        </View>
+        <Switch
+          value={config?.mcp.injectIntoAgents !== false}
+          onValueChange={handleValueChange}
+          accessibilityLabel="Inject Paseo tools"
+        />
       </View>
     </View>
   );

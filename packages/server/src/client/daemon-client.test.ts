@@ -123,6 +123,104 @@ afterEach(async () => {
   clients.length = 0;
 });
 
+test("sends provider-native MCP account requests", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const listPromise = client.listProviderNativeMcpServers({
+    provider: "codex",
+    profileKey: "account-a",
+  });
+  const listRequest = parseSentFrame(mock.sent[0]);
+  expect(listRequest).toMatchObject({
+    type: "list_provider_native_mcp_servers_request",
+    provider: "codex",
+    profileKey: "account-a",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "list_provider_native_mcp_servers_response",
+      payload: {
+        provider: "codex",
+        profileKey: "account-a",
+        servers: [],
+        requestId: listRequest.requestId,
+      },
+    }),
+  );
+  await expect(listPromise).resolves.toMatchObject({ servers: [] });
+
+  const config = { type: "stdio" as const, command: "context-mode" };
+  const upsertPromise = client.upsertProviderNativeMcpServer({
+    provider: "codex",
+    profileKey: "account-a",
+    id: "context-mode",
+    config,
+    enabled: false,
+  });
+  const upsertRequest = parseSentFrame(mock.sent[1]);
+  expect(upsertRequest).toMatchObject({
+    type: "upsert_provider_native_mcp_server_request",
+    provider: "codex",
+    profileKey: "account-a",
+    id: "context-mode",
+    config,
+    enabled: false,
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "upsert_provider_native_mcp_server_response",
+      payload: {
+        provider: "codex",
+        profileKey: "account-a",
+        server: { id: "context-mode", config, enabled: false },
+        requestId: upsertRequest.requestId,
+      },
+    }),
+  );
+  await expect(upsertPromise).resolves.toMatchObject({
+    server: { id: "context-mode", enabled: false },
+  });
+
+  const removePromise = client.removeProviderNativeMcpServer({
+    provider: "codex",
+    profileKey: "account-a",
+    id: "context-mode",
+  });
+  const removeRequest = parseSentFrame(mock.sent[2]);
+  expect(removeRequest).toMatchObject({
+    type: "remove_provider_native_mcp_server_request",
+    provider: "codex",
+    profileKey: "account-a",
+    id: "context-mode",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "remove_provider_native_mcp_server_response",
+      payload: {
+        provider: "codex",
+        profileKey: "account-a",
+        removed: true,
+        requestId: removeRequest.requestId,
+      },
+    }),
+  );
+  await expect(removePromise).resolves.toMatchObject({ removed: true });
+});
+
 test("sends MCP registry management requests", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
