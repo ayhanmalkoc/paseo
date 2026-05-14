@@ -238,6 +238,7 @@ function McpRegistryEntryRow({
   onToggle: (entry: McpRegistryEntry, enabled: boolean) => void;
   onRemove: (entry: McpRegistryEntry) => void;
 }) {
+  const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
   const rowStyle = useMemo(
     () => [
@@ -261,6 +262,14 @@ function McpRegistryEntryRow({
     [entry, onToggle],
   );
   const handleRemovePress = useCallback(() => onRemove(entry), [entry, onRemove]);
+  const editIcon = useMemo(
+    () => <Pencil size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted, theme.iconSize.sm],
+  );
+  const removeIcon = useMemo(
+    () => <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />,
+    [theme.colors.destructive, theme.iconSize.sm],
+  );
 
   const rowContent = (
     <View style={rowContentStyle}>
@@ -311,14 +320,39 @@ function McpRegistryEntryRow({
     </>
   );
 
+  const iconRowActions = (
+    <View style={styles.iconActionsCompact}>
+      <Button
+        variant="ghost"
+        size="xs"
+        leftIcon={editIcon}
+        onPress={handleEditPress}
+        disabled={disabled}
+        accessibilityLabel={`Edit ${entry.id} MCP server`}
+        testID={`mcp-registry-edit-${entry.id}`}
+      />
+      <Button
+        variant="ghost"
+        size="xs"
+        leftIcon={removeIcon}
+        onPress={handleRemovePress}
+        disabled={disabled}
+        accessibilityLabel={`Remove ${entry.id} MCP server`}
+        testID={`mcp-registry-remove-${entry.id}`}
+      />
+    </View>
+  );
+
   if (isCompact) {
     return (
       <View style={rowStyle}>
         <View style={styles.entryHeaderCompact}>
           {rowContent}
-          <View style={styles.entrySwitchSlot}>{enabledSwitch}</View>
+          <View style={styles.entryControlsCompact}>
+            {enabledSwitch}
+            {iconRowActions}
+          </View>
         </View>
-        <View style={rowActionsStyle}>{rowActions}</View>
       </View>
     );
   }
@@ -552,17 +586,24 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
   },
   entryHeaderCompact: {
-    alignItems: "center",
+    alignItems: "flex-start",
     flexDirection: "row",
     gap: theme.spacing[3],
     justifyContent: "space-between",
   },
-  entrySwitchSlot: {
+  entryControlsCompact: {
+    alignItems: "flex-end",
     flexShrink: 0,
     marginLeft: theme.spacing[2],
+    gap: theme.spacing[2],
   },
   rowContentCompact: {
     marginRight: 0,
+  },
+  iconActionsCompact: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: theme.spacing[1],
   },
   rowActions: {
     alignItems: "center",
