@@ -23,6 +23,7 @@ import {
   useProviderNativeConfig,
   useProviderNativeMcpServers,
   useProviderNativeConfigSupport,
+  useSyncProviderNativeConfigFromSource,
 } from "@/hooks/use-provider-native-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
@@ -330,17 +331,31 @@ function AuthProfileRow(props: {
   onRefresh: (profileKey: string) => void;
   onSetDefault: (profileKey: string) => void;
   onRemove: (profileKey: string) => void;
+  onSyncConfig?: (profileKey: string) => void;
   onEditConfig?: (profileKey: string) => void;
   onManageMcp?: (profileKey: string) => void;
 }) {
   const { theme } = useUnistyles();
-  const { profile, busy, onRefresh, onSetDefault, onRemove, onEditConfig, onManageMcp } = props;
+  const {
+    profile,
+    busy,
+    onRefresh,
+    onSetDefault,
+    onRemove,
+    onSyncConfig,
+    onEditConfig,
+    onManageMcp,
+  } = props;
   const handleRefresh = useCallback(() => onRefresh(profile.key), [onRefresh, profile.key]);
   const handleSetDefault = useCallback(
     () => onSetDefault(profile.key),
     [onSetDefault, profile.key],
   );
   const handleRemove = useCallback(() => onRemove(profile.key), [onRemove, profile.key]);
+  const handleSyncConfig = useCallback(
+    () => onSyncConfig?.(profile.key),
+    [onSyncConfig, profile.key],
+  );
   const handleEditConfig = useCallback(
     () => onEditConfig?.(profile.key),
     [onEditConfig, profile.key],
@@ -410,6 +425,19 @@ function AuthProfileRow(props: {
         >
           Refresh
         </Button>
+        {onSyncConfig ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            style={sheetStyles.profileActionButton}
+            textStyle={sheetStyles.profileActionButtonText}
+            onPress={handleSyncConfig}
+            disabled={busy}
+            accessibilityLabel={`Sync ${title} config from Codex`}
+          >
+            Sync config
+          </Button>
+        ) : null}
         {onEditConfig ? (
           <Button
             variant="ghost"
@@ -540,6 +568,7 @@ function ProviderAuthProfilesSection(props: {
   const providerId = provider as AgentProvider;
   const accountLogin = useAccountLogin(serverId, providerId);
   const canEditNativeConfig = useProviderNativeConfigSupport(serverId, providerId);
+  const nativeConfigSync = useSyncProviderNativeConfigFromSource(serverId, providerId);
   const loginSession = useMemo(
     () => accountLogin.sessions.find((session) => session.id === loginSessionId) ?? null,
     [accountLogin.sessions, loginSessionId],
@@ -600,6 +629,24 @@ function ProviderAuthProfilesSection(props: {
       void runAuthAction(() => remove(profileKey));
     },
     [remove, runAuthAction],
+  );
+  const handleSyncConfig = useCallback(
+    (profileKey: string) => {
+      void (async () => {
+        const profile = profiles.find((candidate) => candidate.key === profileKey);
+        const title = profile?.alias || profile?.email || "this account";
+        const confirmed = await confirmDialog({
+          title: "Sync config from Codex?",
+          message: `This replaces ${title}'s managed config.toml with the current native Codex config. Account auth and usage are not changed.`,
+          confirmLabel: "Sync config",
+        });
+        if (!confirmed) {
+          return;
+        }
+        await runAuthAction(() => nativeConfigSync.sync(profileKey));
+      })();
+    },
+    [nativeConfigSync, profiles, runAuthAction],
   );
 
   const refreshProfiles = useCallback(
@@ -725,10 +772,13 @@ function ProviderAuthProfilesSection(props: {
             <AuthProfileRow
               key={profile.key}
               profile={profile}
-              busy={isRefreshing}
+              busy={isRefreshing || nativeConfigSync.isSyncing}
               onRefresh={handleRefresh}
               onSetDefault={handleSetDefault}
               onRemove={handleRemove}
+              onSyncConfig={
+                nativeConfigSync.isSupported && canEditNativeConfig ? handleSyncConfig : undefined
+              }
               onEditConfig={canEditNativeConfig ? setNativeConfigProfileKey : undefined}
               onManageMcp={canEditNativeConfig ? setNativeMcpProfileKey : undefined}
             />

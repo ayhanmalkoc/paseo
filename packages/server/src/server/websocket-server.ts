@@ -1085,6 +1085,7 @@ export class VoiceAssistantWebSocketServer {
         providerNativeConfig: this.providerNativeConfigService !== null,
         providerNativeConfigProviders:
           this.providerNativeConfigService?.getSupportedProviders() ?? [],
+        providerNativeConfigSourceSync: this.providerNativeConfigService !== null,
       },
     };
   }

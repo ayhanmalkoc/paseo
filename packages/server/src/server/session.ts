@@ -2181,6 +2181,8 @@ export class Session {
         return this.handleReadProviderNativeConfigRequest(msg);
       case "write_provider_native_config_request":
         return this.handleWriteProviderNativeConfigRequest(msg);
+      case "sync_provider_native_config_from_source_request":
+        return this.handleSyncProviderNativeConfigFromSourceRequest(msg);
       case "list_provider_native_mcp_servers_request":
         return this.handleListProviderNativeMcpServersRequest(msg);
       case "upsert_provider_native_mcp_server_request":
@@ -4194,6 +4196,29 @@ export class Session {
     }
   }
 
+  private async handleSyncProviderNativeConfigFromSourceRequest(
+    msg: Extract<
+      SessionInboundMessage,
+      { type: "sync_provider_native_config_from_source_request" }
+    >,
+  ): Promise<void> {
+    try {
+      const config = await this.requireProviderNativeConfigService().syncAccountConfigFromNative({
+        provider: msg.provider,
+        profileKey: msg.profileKey,
+      });
+      this.emit({
+        type: "sync_provider_native_config_from_source_response",
+        payload: {
+          config,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_config_sync_failed");
+    }
+  }
+
   private async handleListProviderNativeMcpServersRequest(
     msg: Extract<SessionInboundMessage, { type: "list_provider_native_mcp_servers_request" }>,
   ): Promise<void> {
@@ -4381,6 +4406,7 @@ export class Session {
         type:
           | "read_provider_native_config_request"
           | "write_provider_native_config_request"
+          | "sync_provider_native_config_from_source_request"
           | "list_provider_native_mcp_servers_request"
           | "upsert_provider_native_mcp_server_request"
           | "remove_provider_native_mcp_server_request";

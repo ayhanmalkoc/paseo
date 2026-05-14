@@ -1465,6 +1465,13 @@ export const WriteProviderNativeConfigRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const SyncProviderNativeConfigFromSourceRequestMessageSchema = z.object({
+  type: z.literal("sync_provider_native_config_from_source_request"),
+  provider: AgentProviderSchema,
+  profileKey: z.string().trim().min(1),
+  requestId: z.string(),
+});
+
 export const ListProviderNativeMcpServersRequestMessageSchema = z.object({
   type: z.literal("list_provider_native_mcp_servers_request"),
   provider: AgentProviderSchema,
@@ -2199,6 +2206,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DeleteRuntimeProfileRequestMessageSchema,
   ReadProviderNativeConfigRequestMessageSchema,
   WriteProviderNativeConfigRequestMessageSchema,
+  SyncProviderNativeConfigFromSourceRequestMessageSchema,
   ListProviderNativeMcpServersRequestMessageSchema,
   UpsertProviderNativeMcpServerRequestMessageSchema,
   RemoveProviderNativeMcpServerRequestMessageSchema,
@@ -2457,6 +2465,7 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfileSnapshots: z.boolean().optional(),
         providerNativeConfig: z.boolean().optional(),
         providerNativeConfigProviders: z.array(AgentProviderSchema).optional(),
+        providerNativeConfigSourceSync: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3821,6 +3830,14 @@ export const WriteProviderNativeConfigResponseMessageSchema = z.object({
   }),
 });
 
+export const SyncProviderNativeConfigFromSourceResponseMessageSchema = z.object({
+  type: z.literal("sync_provider_native_config_from_source_response"),
+  payload: z.object({
+    config: ProviderNativeConfigSnapshotSchema,
+    requestId: z.string(),
+  }),
+});
+
 export const ListProviderNativeMcpServersResponseMessageSchema = z.object({
   type: z.literal("list_provider_native_mcp_servers_response"),
   payload: z.object({
@@ -4092,6 +4109,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RuntimeProfilesUpdateMessageSchema,
   ReadProviderNativeConfigResponseMessageSchema,
   WriteProviderNativeConfigResponseMessageSchema,
+  SyncProviderNativeConfigFromSourceResponseMessageSchema,
   ListProviderNativeMcpServersResponseMessageSchema,
   UpsertProviderNativeMcpServerResponseMessageSchema,
   RemoveProviderNativeMcpServerResponseMessageSchema,
@@ -4269,6 +4287,9 @@ export type ReadProviderNativeConfigResponseMessage = z.infer<
 export type WriteProviderNativeConfigResponseMessage = z.infer<
   typeof WriteProviderNativeConfigResponseMessageSchema
 >;
+export type SyncProviderNativeConfigFromSourceResponseMessage = z.infer<
+  typeof SyncProviderNativeConfigFromSourceResponseMessageSchema
+>;
 export type ListProviderNativeMcpServersResponseMessage = z.infer<
   typeof ListProviderNativeMcpServersResponseMessageSchema
 >;
@@ -4383,6 +4404,9 @@ export type ReadProviderNativeConfigRequestMessage = z.infer<
 >;
 export type WriteProviderNativeConfigRequestMessage = z.infer<
   typeof WriteProviderNativeConfigRequestMessageSchema
+>;
+export type SyncProviderNativeConfigFromSourceRequestMessage = z.infer<
+  typeof SyncProviderNativeConfigFromSourceRequestMessageSchema
 >;
 export type ListProviderNativeMcpServersRequestMessage = z.infer<
   typeof ListProviderNativeMcpServersRequestMessageSchema

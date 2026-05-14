@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import type { Logger } from "pino";
 
@@ -30,10 +31,16 @@ export interface ProviderNativeMcpServer {
 export class ProviderNativeConfigService {
   private readonly logger: Logger;
   private readonly providerAuthService: ProviderAuthService;
+  private readonly codexNativeHomeResolver: () => string;
 
-  constructor(options: { logger: Logger; providerAuthService: ProviderAuthService }) {
+  constructor(options: {
+    logger: Logger;
+    providerAuthService: ProviderAuthService;
+    codexNativeHomeResolver?: () => string;
+  }) {
     this.logger = options.logger.child({ module: "provider-native-config" });
     this.providerAuthService = options.providerAuthService;
+    this.codexNativeHomeResolver = options.codexNativeHomeResolver ?? resolveDefaultCodexHome;
   }
 
   getSupportedProviders(): AgentProvider[] {
@@ -83,6 +90,29 @@ export class ProviderNativeConfigService {
     const configPath = this.resolveConfigPath(input.provider, profile.providerHomePath);
     await fs.mkdir(path.dirname(configPath), { recursive: true });
     await fs.writeFile(configPath, normalizeConfigContent(input.content), "utf8");
+    return this.readAccountConfig(input);
+  }
+
+  async syncAccountConfigFromNative(input: {
+    provider: AgentProvider;
+    profileKey: string;
+  }): Promise<ProviderNativeConfigSnapshot> {
+    const profile = await this.requireProfile(input.provider, input.profileKey);
+    const targetPath = this.resolveConfigPath(input.provider, profile.providerHomePath);
+    const sourcePath = this.resolveNativeConfigPath(input.provider);
+    let content: string;
+    try {
+      content = await fs.readFile(sourcePath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`Native ${input.provider} config was not found at ${sourcePath}`, {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, normalizeConfigContent(content), "utf8");
     return this.readAccountConfig(input);
   }
 
@@ -172,8 +202,19 @@ export class ProviderNativeConfigService {
     }
     throw new Error(`Native config is not supported for provider '${provider}'`);
   }
+
+  private resolveNativeConfigPath(provider: AgentProvider): string {
+    if (provider === "codex") {
+      return path.join(this.codexNativeHomeResolver(), CODEX_CONFIG_FILENAME);
+    }
+    throw new Error(`Native config sync is not supported for provider '${provider}'`);
+  }
 }
 
 function normalizeConfigContent(content: string): string {
   return content.endsWith("\n") ? content : `${content}\n`;
+}
+
+function resolveDefaultCodexHome(): string {
+  return path.resolve(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"));
 }

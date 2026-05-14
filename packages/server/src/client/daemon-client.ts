@@ -74,6 +74,7 @@ import type {
   DeleteRuntimeProfileResponseMessage,
   ReadProviderNativeConfigResponseMessage,
   WriteProviderNativeConfigResponseMessage,
+  SyncProviderNativeConfigFromSourceResponseMessage,
   ListProviderNativeMcpServersResponseMessage,
   UpsertProviderNativeMcpServerResponseMessage,
   RemoveProviderNativeMcpServerResponseMessage,
@@ -369,6 +370,8 @@ type UpdateRuntimeProfilePayload = UpdateRuntimeProfileResponseMessage["payload"
 type DeleteRuntimeProfilePayload = DeleteRuntimeProfileResponseMessage["payload"];
 type ReadProviderNativeConfigPayload = ReadProviderNativeConfigResponseMessage["payload"];
 type WriteProviderNativeConfigPayload = WriteProviderNativeConfigResponseMessage["payload"];
+type SyncProviderNativeConfigFromSourcePayload =
+  SyncProviderNativeConfigFromSourceResponseMessage["payload"];
 type ListProviderNativeMcpServersPayload = ListProviderNativeMcpServersResponseMessage["payload"];
 type UpsertProviderNativeMcpServerPayload = UpsertProviderNativeMcpServerResponseMessage["payload"];
 type RemoveProviderNativeMcpServerPayload = RemoveProviderNativeMcpServerResponseMessage["payload"];
@@ -3741,6 +3744,23 @@ export class DaemonClient {
         content: options.content,
       },
       responseType: "write_provider_native_config_response",
+      timeout: 10000,
+    });
+  }
+
+  async syncProviderNativeConfigFromSource(options: {
+    provider: AgentProvider;
+    profileKey: string;
+    requestId?: string;
+  }): Promise<SyncProviderNativeConfigFromSourcePayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "sync_provider_native_config_from_source_request",
+        provider: options.provider,
+        profileKey: options.profileKey,
+      },
+      responseType: "sync_provider_native_config_from_source_response",
       timeout: 10000,
     });
   }

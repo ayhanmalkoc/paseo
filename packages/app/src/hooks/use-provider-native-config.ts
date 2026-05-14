@@ -41,6 +41,7 @@ export function isProviderNativeConfigSupported(
     | {
         providerNativeConfig?: boolean;
         providerNativeConfigProviders?: readonly AgentProvider[];
+        providerNativeConfigSourceSync?: boolean;
       }
     | null
     | undefined,
@@ -64,6 +65,41 @@ export function useProviderNativeConfigSupport(
       (state) =>
         serverId
           ? isProviderNativeConfigSupported(
+              state.sessions[serverId]?.serverInfo?.features,
+              provider,
+            )
+          : false,
+      [provider, serverId],
+    ),
+  );
+}
+
+export function isProviderNativeConfigSourceSyncSupported(
+  features:
+    | {
+        providerNativeConfig?: boolean;
+        providerNativeConfigProviders?: readonly AgentProvider[];
+        providerNativeConfigSourceSync?: boolean;
+      }
+    | null
+    | undefined,
+  provider?: AgentProvider | null,
+): boolean {
+  return (
+    features?.providerNativeConfigSourceSync === true &&
+    isProviderNativeConfigSupported(features, provider)
+  );
+}
+
+export function useProviderNativeConfigSourceSyncSupport(
+  serverId: string | null,
+  provider?: AgentProvider | null,
+): boolean {
+  return useSessionStore(
+    useCallback(
+      (state) =>
+        serverId
+          ? isProviderNativeConfigSourceSyncSupported(
               state.sessions[serverId]?.serverInfo?.features,
               provider,
             )
@@ -125,6 +161,44 @@ export function useProviderNativeConfig(
     refetch: async () => {
       await query.refetch();
     },
+  };
+}
+
+export function useSyncProviderNativeConfigFromSource(
+  serverId: string | null,
+  provider?: AgentProvider | null,
+) {
+  const client = useHostRuntimeClient(serverId ?? "");
+  const queryClient = useQueryClient();
+  const isSupported = useProviderNativeConfigSourceSyncSupport(serverId, provider);
+
+  const syncMutation = useMutation({
+    mutationFn: async (profileKey: string) => {
+      const response = await requireClient(client).syncProviderNativeConfigFromSource({
+        provider: requireProvider(provider),
+        profileKey: requireProfileKey(profileKey),
+      });
+      return {
+        profileKey,
+        config: response.config,
+      };
+    },
+    onSuccess: async ({ profileKey, config }) => {
+      const configQueryKey = providerNativeConfigQueryKey(serverId, provider, profileKey);
+      const mcpQueryKey = providerNativeMcpServersQueryKey(serverId, provider, profileKey);
+      queryClient.setQueryData<ProviderNativeConfigSnapshot>(configQueryKey, config);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: configQueryKey }),
+        queryClient.invalidateQueries({ queryKey: mcpQueryKey }),
+      ]);
+    },
+  });
+
+  return {
+    sync: syncMutation.mutateAsync,
+    isSyncing: syncMutation.isPending,
+    isSupported,
+    error: formatError(syncMutation.error),
   };
 }
 
