@@ -72,7 +72,7 @@ describe("CodexProviderAuthAdapter", () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-"));
     try {
       const sourceHome = path.join(root, "source-codex");
-      const providerBaseDir = path.join(root, "provider-auth", "codex");
+      const providerBaseDir = path.join(root, "providers", "codex");
       await fs.mkdir(sourceHome, { recursive: true });
       await fs.writeFile(
         path.join(sourceHome, "auth.json"),
@@ -91,7 +91,8 @@ describe("CodexProviderAuthAdapter", () => {
         createContext(providerBaseDir),
       );
 
-      expect(profile.providerHomePath).toContain(path.join("profiles", profile.key, "codex-home"));
+      expect(profile.providerHomePath).toContain(path.join("providers", "codex", "accounts"));
+      expect(profile.providerHomePath).toMatch(new RegExp(`${path.sep}home$`));
       expect(profile.usage).toBeUndefined();
       await expect(
         fs.readFile(path.join(profile.providerHomePath, "auth.json"), "utf8"),
@@ -126,7 +127,7 @@ describe("CodexProviderAuthAdapter", () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-"));
     try {
       const sourceHome = path.join(root, "source-codex");
-      const providerBaseDir = path.join(root, "provider-auth", "codex");
+      const providerBaseDir = path.join(root, "providers", "codex");
       await fs.mkdir(sourceHome, { recursive: true });
       await fs.writeFile(
         path.join(sourceHome, "auth.json"),
@@ -172,7 +173,7 @@ describe("CodexProviderAuthAdapter", () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-"));
     try {
       const sourceHome = path.join(root, "source-codex");
-      const providerBaseDir = path.join(root, "provider-auth", "codex");
+      const providerBaseDir = path.join(root, "providers", "codex");
       await fs.mkdir(sourceHome, { recursive: true });
       await fs.writeFile(
         path.join(sourceHome, "auth.json"),

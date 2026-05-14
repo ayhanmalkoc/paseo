@@ -15,6 +15,7 @@ import { findExecutable } from "../../utils/executable.js";
 import { spawnProcess } from "../../utils/spawn.js";
 import { CodexAppServerClient } from "./providers/codex/app-server-transport.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
+import { getProvidersRoot } from "./provider-layout.js";
 
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_AUTH_FILENAME = "auth.json";
@@ -45,7 +46,7 @@ export class AccountOnboardingService {
     runtimeSettings?: Partial<Record<AgentProvider, ProviderRuntimeSettings>>;
     now?: () => Date;
   }) {
-    this.baseDir = path.join(options.paseoHome, "provider-auth");
+    this.baseDir = getProvidersRoot(options.paseoHome);
     this.logger = options.logger.child({ module: "account-onboarding" });
     this.providerAuthService = options.providerAuthService;
     this.runtimeSettings = options.runtimeSettings;
@@ -133,7 +134,7 @@ export class AccountOnboardingService {
     options?: { setDefault?: boolean },
   ): Promise<void> {
     const stagingRoot = path.join(this.baseDir, CODEX_PROVIDER, "pending", sessionId);
-    const codexHome = path.join(stagingRoot, "codex-home");
+    const codexHome = path.join(stagingRoot, "home");
     await fs.mkdir(codexHome, { recursive: true });
     await copyOptionalCodexConfig(codexHome);
 

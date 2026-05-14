@@ -13,6 +13,7 @@ import type {
   ProviderAuthLaunchContext,
   StoredProviderAuthProfile,
 } from "./provider-auth-service.js";
+import { getProviderAccountHomePath, getProviderAccountRoot } from "./provider-layout.js";
 import { createManagedProviderHomeRef } from "./provider-home-ref.js";
 import {
   readCodexAppServerUsage,
@@ -73,17 +74,34 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
     const parsed = parseCodexAuthJson(data);
     const authFileHash = stableHash(data);
     const now = context.now().toISOString();
-    const profileRoot = path.join(context.providerBaseDir, "profiles", parsed.key);
-    const profileCodexHome = path.join(profileRoot, "codex-home");
+    const profileIdentity = {
+      key: parsed.key,
+      alias: normalizeAlias(options?.alias) ?? parsed.alias,
+      email: parsed.email,
+      accountName: undefined,
+    };
+    const profileRoot = getProviderAccountRoot(context.providerBaseDir, profileIdentity);
+    const profileCodexHome = getProviderAccountHomePath(context.providerBaseDir, profileIdentity);
 
     await fs.mkdir(profileCodexHome, { recursive: true });
     await copySensitiveFile(resolvedAuthPath, path.join(profileCodexHome, CODEX_AUTH_FILENAME));
     await copyOptionalCodexConfig(path.dirname(resolvedAuthPath), profileCodexHome);
+    await writeAccountMetadata(profileRoot, {
+      provider: CODEX_PROVIDER,
+      key: parsed.key,
+      alias: profileIdentity.alias,
+      email: parsed.email,
+      accountId: parsed.accountId,
+      userId: parsed.userId,
+      authMode: parsed.authMode,
+      plan: parsed.plan,
+      updatedAt: now,
+    });
 
     return {
       provider: CODEX_PROVIDER,
       key: parsed.key,
-      alias: normalizeAlias(options?.alias) ?? parsed.alias,
+      alias: profileIdentity.alias,
       email: parsed.email,
       accountId: parsed.accountId,
       userId: parsed.userId,
@@ -292,6 +310,10 @@ function normalizeAlias(value: string | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+function stripUndefined(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
 function normalizeEmail(value: string | null): string | undefined {
   const trimmed = value?.trim().toLowerCase();
   return trimmed || undefined;
@@ -322,6 +344,14 @@ async function copySensitiveFile(sourcePath: string, targetPath: string): Promis
   if (process.platform !== "win32") {
     await fs.chmod(targetPath, 0o600).catch(() => undefined);
   }
+}
+
+async function writeAccountMetadata(
+  profileRoot: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  const payload = `${JSON.stringify(stripUndefined(metadata), null, 2)}\n`;
+  await fs.writeFile(path.join(profileRoot, "metadata.json"), payload, "utf8");
 }
 
 async function copyOptionalCodexConfig(sourceDir: string, targetDir: string): Promise<void> {

@@ -236,7 +236,6 @@ function normalizeProfile(profile: LegacyRuntimeProfileInput): RuntimeProfile {
     systemPrompt: normalizeNullableString(profile.systemPrompt),
     featureValues,
     envOverlay: normalizeStringRecord(profile.envOverlay),
-    mcpServers: profile.mcpServers,
     concurrencyPolicy: normalizeConcurrencyPolicy(profile.concurrencyPolicy),
     sessionBehavior: normalizeSessionBehavior(profile.sessionBehavior),
     createdAt: normalizeRequiredString(profile.createdAt, "Runtime profile createdAt"),

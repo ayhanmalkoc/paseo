@@ -793,7 +793,7 @@ test("createAgent applies selected provider auth profile to config and launch en
         status: "ready",
         createdAt: now,
         updatedAt: now,
-        providerHomePath: join(context.providerBaseDir, "profiles", "profile-a", "codex-home"),
+        providerHomePath: join(context.providerBaseDir, "accounts", "profile-a", "home"),
       };
     }
 
@@ -865,7 +865,7 @@ test("createAgent applies selected provider auth profile to config and launch en
   expect(client.lastLaunchContext).toEqual({
     env: {
       PASEO_AGENT_ID: snapshot.id,
-      CODEX_HOME: join(workdir, "provider-auth", "codex", "profiles", "profile-a", "codex-home"),
+      CODEX_HOME: join(workdir, "providers", "codex", "accounts", "profile-a", "home"),
     },
   });
 
@@ -905,7 +905,7 @@ test("createAgent syncs current provider auth and launches with the default mana
         status: "ready",
         createdAt: now,
         updatedAt: now,
-        providerHomePath: join(context.providerBaseDir, "profiles", "profile-a", "codex-home"),
+        providerHomePath: join(context.providerBaseDir, "accounts", "profile-a", "home"),
       };
     }
 
@@ -973,7 +973,7 @@ test("createAgent syncs current provider auth and launches with the default mana
   expect(client.lastLaunchContext).toEqual({
     env: {
       PASEO_AGENT_ID: snapshot.id,
-      CODEX_HOME: join(workdir, "provider-auth", "codex", "profiles", "profile-a", "codex-home"),
+      CODEX_HOME: join(workdir, "providers", "codex", "accounts", "profile-a", "home"),
     },
   });
 
@@ -1064,7 +1064,7 @@ test("restartAgentWithAuthProfile creates a fresh provider session with the sele
         status: "ready",
         createdAt: now,
         updatedAt: now,
-        providerHomePath: join(context.providerBaseDir, "profiles", key, "codex-home"),
+        providerHomePath: join(context.providerBaseDir, "accounts", key, "home"),
       };
     }
   }
@@ -1128,7 +1128,7 @@ test("restartAgentWithAuthProfile creates a fresh provider session with the sele
   expect(client.lastLaunchContext).toEqual({
     env: {
       PASEO_AGENT_ID: snapshot.id,
-      CODEX_HOME: join(workdir, "provider-auth", "codex", "profiles", "profile-b", "codex-home"),
+      CODEX_HOME: join(workdir, "providers", "codex", "accounts", "profile-b", "home"),
     },
   });
 
