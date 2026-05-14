@@ -103,9 +103,5 @@ export type {
   AgentSnapshotPayload,
   AgentStreamEventPayload,
   AgentStreamMessage,
-  McpRegistryEntry,
-  McpRegistryEntryInput,
-  McpRegistryScope,
-  McpResolutionStep,
   McpServerConfig,
 } from "../shared/messages.js";

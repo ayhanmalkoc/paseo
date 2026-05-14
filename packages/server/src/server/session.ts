@@ -94,11 +94,7 @@ import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-sn
 import type { ProviderAuthService } from "./agent/provider-auth-service.js";
 import type { RuntimeProfileService } from "./agent/runtime-profile-service.js";
 import type { AccountOnboardingService } from "./agent/account-onboarding-service.js";
-import type { McpRegistryService } from "./agent/mcp-registry-service.js";
 import type { ProviderNativeConfigService } from "./agent/provider-native-config-service.js";
-import { readNativeMcpRegistryEntries } from "./agent/mcp-native-import.js";
-import { explainMcpResolution } from "./agent/mcp-resolver.js";
-import { createManagedProviderHomeRef } from "./agent/provider-home-ref.js";
 import type {
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
@@ -560,7 +556,6 @@ export interface SessionOptions {
   providerAuthService?: ProviderAuthService;
   runtimeProfileService?: RuntimeProfileService;
   accountOnboardingService?: AccountOnboardingService;
-  mcpRegistryService?: McpRegistryService;
   providerNativeConfigService?: ProviderNativeConfigService;
   scriptRouteStore?: ScriptRouteStore;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
@@ -803,7 +798,6 @@ export class Session {
   private readonly daemonAuthToken: string | null;
   private readonly runtimeProfileService: RuntimeProfileService | null;
   private readonly accountOnboardingService: AccountOnboardingService | null;
-  private readonly mcpRegistryService: McpRegistryService | null;
   private readonly providerNativeConfigService: ProviderNativeConfigService | null;
   private unsubscribeAccountLoginEvents: (() => void) | null = null;
   private unsubscribeRuntimeProfileEvents: (() => void) | null = null;
@@ -842,7 +836,6 @@ export class Session {
       providerAuthService,
       runtimeProfileService,
       accountOnboardingService,
-      mcpRegistryService,
       providerNativeConfigService,
       scriptRouteStore,
       scriptRuntimeStore,
@@ -899,7 +892,6 @@ export class Session {
     this.providerAuthService = providerAuthService ?? null;
     this.runtimeProfileService = runtimeProfileService ?? null;
     this.accountOnboardingService = accountOnboardingService ?? null;
-    this.mcpRegistryService = mcpRegistryService ?? null;
     this.providerNativeConfigService = providerNativeConfigService ?? null;
     this.scriptRouteStore = scriptRouteStore ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
@@ -2114,8 +2106,7 @@ export class Session {
       this.dispatchProviderRegistryMessage(msg) ??
       this.dispatchProviderAuthMessage(msg) ??
       this.dispatchProviderRuntimeProfileMessage(msg) ??
-      this.dispatchProviderNativeConfigMessage(msg) ??
-      this.dispatchMcpRegistryMessage(msg)
+      this.dispatchProviderNativeConfigMessage(msg)
     );
   }
 
@@ -2177,23 +2168,6 @@ export class Session {
         return this.handleUpdateRuntimeProfileRequest(msg);
       case "delete_runtime_profile_request":
         return this.handleDeleteRuntimeProfileRequest(msg);
-      default:
-        return undefined;
-    }
-  }
-
-  private dispatchMcpRegistryMessage(msg: SessionInboundMessage): Promise<void> | undefined {
-    switch (msg.type) {
-      case "list_mcp_registry_entries_request":
-        return this.handleListMcpRegistryEntriesRequest(msg);
-      case "upsert_mcp_registry_entry_request":
-        return this.handleUpsertMcpRegistryEntryRequest(msg);
-      case "remove_mcp_registry_entry_request":
-        return this.handleRemoveMcpRegistryEntryRequest(msg);
-      case "import_mcp_registry_entries_request":
-        return this.handleImportMcpRegistryEntriesRequest(msg);
-      case "explain_mcp_registry_request":
-        return this.handleExplainMcpRegistryRequest(msg);
       default:
         return undefined;
     }
@@ -4290,128 +4264,6 @@ export class Session {
     }
   }
 
-  private async handleListMcpRegistryEntriesRequest(
-    msg: Extract<SessionInboundMessage, { type: "list_mcp_registry_entries_request" }>,
-  ): Promise<void> {
-    try {
-      const entries = await this.requireMcpRegistryService().listEntries();
-      this.emit({
-        type: "list_mcp_registry_entries_response",
-        payload: {
-          entries,
-          requestId: msg.requestId,
-        },
-      });
-    } catch (error) {
-      this.emitMcpRegistryRpcError(msg, error, "mcp_registry_list_failed");
-    }
-  }
-
-  private async handleUpsertMcpRegistryEntryRequest(
-    msg: Extract<SessionInboundMessage, { type: "upsert_mcp_registry_entry_request" }>,
-  ): Promise<void> {
-    try {
-      const entry = await this.requireMcpRegistryService().upsertEntry(msg.entry);
-      this.emit({
-        type: "upsert_mcp_registry_entry_response",
-        payload: {
-          entry,
-          requestId: msg.requestId,
-        },
-      });
-    } catch (error) {
-      this.emitMcpRegistryRpcError(msg, error, "mcp_registry_upsert_failed");
-    }
-  }
-
-  private async handleRemoveMcpRegistryEntryRequest(
-    msg: Extract<SessionInboundMessage, { type: "remove_mcp_registry_entry_request" }>,
-  ): Promise<void> {
-    try {
-      const removed = await this.requireMcpRegistryService().removeEntry(msg.id, msg.scope);
-      this.emit({
-        type: "remove_mcp_registry_entry_response",
-        payload: {
-          removed,
-          requestId: msg.requestId,
-        },
-      });
-    } catch (error) {
-      this.emitMcpRegistryRpcError(msg, error, "mcp_registry_remove_failed");
-    }
-  }
-
-  private async handleImportMcpRegistryEntriesRequest(
-    msg: Extract<SessionInboundMessage, { type: "import_mcp_registry_entries_request" }>,
-  ): Promise<void> {
-    try {
-      const service = this.requireMcpRegistryService();
-      const imported = await readNativeMcpRegistryEntries({
-        provider: msg.provider,
-        path: msg.path,
-      });
-      const entries = [];
-      for (const entry of imported.entries) {
-        entries.push(await service.upsertEntry(entry));
-      }
-      this.emit({
-        type: "import_mcp_registry_entries_response",
-        payload: {
-          provider: imported.provider,
-          path: imported.path,
-          entries,
-          skipped: imported.skipped,
-          requestId: msg.requestId,
-        },
-      });
-    } catch (error) {
-      this.emitMcpRegistryRpcError(msg, error, "mcp_registry_import_failed");
-    }
-  }
-
-  private async handleExplainMcpRegistryRequest(
-    msg: Extract<SessionInboundMessage, { type: "explain_mcp_registry_request" }>,
-  ): Promise<void> {
-    try {
-      const accountKey = normalizeOptionalString(msg.accountKey);
-      const runtimeProfileId = normalizeOptionalString(msg.runtimeProfileId);
-      const entries = await this.requireMcpRegistryService().listEntries();
-      const includeSystem =
-        msg.includeSystem !== false &&
-        this.daemonConfigStore.get().mcp.injectIntoAgents !== false &&
-        this.mcpBaseUrl !== null;
-      const explanation = explainMcpResolution({
-        entries,
-        provider: msg.provider,
-        providerHomeRef: accountKey
-          ? createManagedProviderHomeRef({
-              provider: msg.provider,
-              profileKey: accountKey,
-            })
-          : null,
-        runtimeProfileId,
-        sessionMcpServers: msg.sessionMcpServers,
-        injectPaseoTools: includeSystem,
-        paseoMcpBaseUrl: this.mcpBaseUrl,
-        agentId: msg.agentId ?? "preview",
-      });
-      this.emit({
-        type: "explain_mcp_registry_response",
-        payload: {
-          provider: msg.provider,
-          accountKey,
-          runtimeProfileId,
-          servers: explanation.servers,
-          sources: explanation.sources,
-          steps: explanation.steps,
-          requestId: msg.requestId,
-        },
-      });
-    } catch (error) {
-      this.emitMcpRegistryRpcError(msg, error, "mcp_registry_explain_failed");
-    }
-  }
-
   private requireProviderAuthService(): ProviderAuthService {
     if (!this.providerAuthService) {
       throw new Error("Provider auth profiles are not available");
@@ -4431,13 +4283,6 @@ export class Session {
       throw new Error("Runtime profiles are not available");
     }
     return this.runtimeProfileService;
-  }
-
-  private requireMcpRegistryService(): McpRegistryService {
-    if (!this.mcpRegistryService) {
-      throw new Error("MCP registry is not available");
-    }
-    return this.mcpRegistryService;
   }
 
   private requireProviderNativeConfigService(): ProviderNativeConfigService {
@@ -4518,34 +4363,6 @@ export class Session {
   ): void {
     const err = error instanceof Error ? error : new Error(String(error));
     this.sessionLogger.warn({ err, requestType: msg.type }, "Runtime profile RPC failed");
-    this.emit({
-      type: "rpc_error",
-      payload: {
-        requestId: msg.requestId,
-        requestType: msg.type,
-        error: err.message,
-        code,
-      },
-    });
-  }
-
-  private emitMcpRegistryRpcError(
-    msg: Extract<
-      SessionInboundMessage,
-      {
-        type:
-          | "list_mcp_registry_entries_request"
-          | "upsert_mcp_registry_entry_request"
-          | "remove_mcp_registry_entry_request"
-          | "import_mcp_registry_entries_request"
-          | "explain_mcp_registry_request";
-      }
-    >,
-    error: unknown,
-    code: string,
-  ): void {
-    const err = error instanceof Error ? error : new Error(String(error));
-    this.sessionLogger.warn({ err, requestType: msg.type }, "MCP registry RPC failed");
     this.emit({
       type: "rpc_error",
       payload: {
@@ -9636,14 +9453,6 @@ function isValidPullRequestTimelineIdentity(options: {
 
 function isValidGitHubRepoSegment(value: string): boolean {
   return /^[A-Za-z0-9._-]+$/.test(value);
-}
-
-function normalizeOptionalString(value: string | null | undefined): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 }
 
 function toPullRequestTimelinePayloadItem(
