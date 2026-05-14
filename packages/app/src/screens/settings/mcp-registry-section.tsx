@@ -9,6 +9,7 @@ import type {
   McpRegistryScope,
   McpServerConfig,
 } from "@server/shared/messages";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -199,7 +200,7 @@ function McpSystemToolsRow({
     <View style={settingsStyles.row} testID="mcp-registry-system-paseo-tools">
       <View style={settingsStyles.rowContent}>
         <View style={styles.titleLine}>
-          <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          <Text style={styles.rowTitleText} numberOfLines={1}>
             Paseo tools
           </Text>
           <Text style={styles.sourcePill}>system</Text>
@@ -237,9 +238,22 @@ function McpRegistryEntryRow({
   onToggle: (entry: McpRegistryEntry, enabled: boolean) => void;
   onRemove: (entry: McpRegistryEntry) => void;
 }) {
+  const isCompact = useIsCompactFormFactor();
   const rowStyle = useMemo(
-    () => [settingsStyles.row, showBorder && settingsStyles.rowBorder],
-    [showBorder],
+    () => [
+      settingsStyles.row,
+      showBorder && settingsStyles.rowBorder,
+      isCompact && styles.entryRowCompact,
+    ],
+    [isCompact, showBorder],
+  );
+  const rowContentStyle = useMemo(
+    () => [settingsStyles.rowContent, isCompact && styles.rowContentCompact],
+    [isCompact],
+  );
+  const rowActionsStyle = useMemo(
+    () => [styles.rowActions, isCompact && styles.rowActionsCompact],
+    [isCompact],
   );
   const handleEditPress = useCallback(() => onEdit(entry), [entry, onEdit]);
   const handleEnabledChange = useCallback(
@@ -250,9 +264,9 @@ function McpRegistryEntryRow({
 
   return (
     <View style={rowStyle}>
-      <View style={settingsStyles.rowContent}>
+      <View style={rowContentStyle}>
         <View style={styles.titleLine}>
-          <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+          <Text style={styles.rowTitleText} numberOfLines={1}>
             {entry.id}
           </Text>
           <Text style={styles.sourcePill}>{formatEntrySource(entry)}</Text>
@@ -261,7 +275,7 @@ function McpRegistryEntryRow({
           {formatMcpConfigSummary(entry.config)}
         </Text>
       </View>
-      <View style={styles.rowActions}>
+      <View style={rowActionsStyle}>
         <Switch
           value={entry.enabled}
           onValueChange={handleEnabledChange}
@@ -489,14 +503,30 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     minWidth: 0,
   },
+  rowTitleText: {
+    color: theme.colors.foreground,
+    flexShrink: 1,
+    fontSize: theme.fontSize.base,
+    minWidth: 0,
+  },
   sourcePill: {
     backgroundColor: theme.colors.surface3,
     borderRadius: theme.borderRadius.sm,
     color: theme.colors.foregroundMuted,
+    flexShrink: 0,
     fontSize: theme.fontSize.xs,
+    lineHeight: theme.fontSize.xs * 1.25,
     overflow: "hidden",
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
+  },
+  entryRowCompact: {
+    alignItems: "stretch",
+    flexDirection: "column",
+    gap: theme.spacing[3],
+  },
+  rowContentCompact: {
+    marginRight: 0,
   },
   rowActions: {
     alignItems: "center",
@@ -504,6 +534,10 @@ const styles = StyleSheet.create((theme) => ({
     flexWrap: "wrap",
     gap: theme.spacing[2],
     justifyContent: "flex-end",
+  },
+  rowActionsCompact: {
+    alignSelf: "stretch",
+    justifyContent: "flex-start",
   },
   editorBody: {
     gap: theme.spacing[4],
