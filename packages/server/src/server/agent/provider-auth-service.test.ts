@@ -37,8 +37,8 @@ class FakeAuthAdapter implements ProviderAuthAdapter {
       throw error;
     }
     const now = context.now().toISOString();
-    const profileRoot = path.join(context.providerBaseDir, "profiles", this.currentKey);
-    const providerHomePath = path.join(profileRoot, "codex-home");
+    const profileRoot = path.join(context.providerBaseDir, "accounts", this.currentKey);
+    const providerHomePath = path.join(profileRoot, "home");
     await fs.mkdir(providerHomePath, { recursive: true });
     await fs.writeFile(path.join(providerHomePath, "auth.json"), this.currentKey, "utf8");
     return {
@@ -158,7 +158,7 @@ describe("ProviderAuthService", () => {
       providerHomeRef: profile.providerHomeRef,
     });
     expect(launchContext.profileKey).toBe("profile-a");
-    expect(launchContext.env?.CODEX_HOME).toContain(path.join("profiles", "profile-a"));
+    expect(launchContext.env?.CODEX_HOME).toContain(path.join("accounts", "profile-a"));
 
     const listed = await service.listProfiles("codex");
     expect(listed[0]?.lastUsedAt).toBe("2026-05-06T12:00:00.000Z");

@@ -15,6 +15,11 @@ import {
   createNativeDefaultProviderHomeRef,
   normalizeProviderHomeRef,
 } from "./provider-home-ref.js";
+import {
+  getProviderAccountHomePath,
+  getProviderAccountRoot,
+  getProvidersRoot,
+} from "./provider-layout.js";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderRuntimeSettings,
@@ -126,6 +131,8 @@ const CURRENT_SCHEMA_VERSION = 1;
 export class ProviderAuthService {
   private readonly registryPath: string;
   private readonly baseDir: string;
+  private readonly legacyBaseDir: string;
+  private readonly legacyRegistryPath: string;
   private readonly adapters: Map<AgentProvider, ProviderAuthAdapter>;
   private readonly runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private registry: StoredProviderAuthRegistry | null = null;
@@ -139,8 +146,10 @@ export class ProviderAuthService {
     runtimeSettings?: AgentProviderRuntimeSettingsMap;
     now?: () => Date;
   }) {
-    this.baseDir = path.join(options.paseoHome, "provider-auth");
-    this.registryPath = path.join(this.baseDir, "registry.json");
+    this.baseDir = getProvidersRoot(options.paseoHome);
+    this.registryPath = path.join(this.baseDir, "accounts.json");
+    this.legacyBaseDir = path.join(options.paseoHome, "provider-auth");
+    this.legacyRegistryPath = path.join(this.legacyBaseDir, "registry.json");
     this.logger = options.logger.child({ module: "provider-auth" });
     this.now = options.now ?? (() => new Date());
     this.adapters = new Map(options.adapters.map((adapter) => [adapter.provider, adapter]));
@@ -385,6 +394,7 @@ export class ProviderAuthService {
     const providerHomeRef = createManagedProviderHomeRef({
       provider: profile.provider,
       profileKey: profile.key,
+      homePath: profile.providerHomePath,
       label: profile.email ?? profile.accountName ?? profile.alias,
       accountFingerprint: profile.accountId ?? profile.userId ?? profile.email,
     });
@@ -504,10 +514,73 @@ export class ProviderAuthService {
       return normalizeRegistry(parsed);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        const migrated = await this.readLegacyRegistry();
+        if (migrated) {
+          await this.save(migrated);
+          return migrated;
+        }
         return emptyRegistry();
       }
       this.logger.warn({ err: error }, "Failed to read provider auth registry; starting empty");
       return emptyRegistry();
+    }
+  }
+
+  private async readLegacyRegistry(): Promise<StoredProviderAuthRegistry | null> {
+    try {
+      const data = await fs.readFile(this.legacyRegistryPath, "utf8");
+      const parsed = JSON.parse(data) as Partial<StoredProviderAuthRegistry>;
+      const registry = normalizeRegistry(parsed);
+      await this.migrateProviderHomesToReadableLayout(registry);
+      return registry;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      this.logger.warn({ err: error }, "Failed to read legacy provider auth registry");
+      return null;
+    }
+  }
+
+  private async migrateProviderHomesToReadableLayout(
+    registry: StoredProviderAuthRegistry,
+  ): Promise<void> {
+    for (const [provider, state] of Object.entries(registry.providers)) {
+      if (!state) {
+        continue;
+      }
+      const providerBaseDir = path.join(this.baseDir, provider);
+      for (const profile of Object.values(state.profiles ?? {})) {
+        const targetHome = getProviderAccountHomePath(providerBaseDir, profile);
+        const targetRoot = getProviderAccountRoot(providerBaseDir, profile);
+        if (path.resolve(profile.providerHomePath) !== path.resolve(targetHome)) {
+          await fs.mkdir(targetRoot, { recursive: true });
+          await fs
+            .cp(profile.providerHomePath, targetHome, {
+              recursive: true,
+              force: true,
+              errorOnExist: false,
+            })
+            .catch((error) => {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                throw error;
+              }
+            });
+          profile.providerHomePath = targetHome;
+        }
+        await writeJsonFile(path.join(targetRoot, "metadata.json"), {
+          provider,
+          key: profile.key,
+          alias: profile.alias,
+          email: profile.email,
+          accountName: profile.accountName,
+          accountId: profile.accountId,
+          userId: profile.userId,
+          authMode: profile.authMode,
+          plan: profile.plan,
+          updatedAt: profile.updatedAt,
+        });
+      }
     }
   }
 
@@ -760,4 +833,13 @@ async function writeFileAtomically(targetPath: string, payload: string) {
   );
   await fs.writeFile(tempPath, payload, "utf8");
   await fs.rename(tempPath, targetPath);
+}
+
+async function writeJsonFile(targetPath: string, value: Record<string, unknown>): Promise<void> {
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await writeFileAtomically(targetPath, `${JSON.stringify(stripUndefined(value), null, 2)}\n`);
+}
+
+function stripUndefined(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
