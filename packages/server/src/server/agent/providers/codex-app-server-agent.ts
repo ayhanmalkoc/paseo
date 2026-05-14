@@ -800,6 +800,8 @@ interface CodexMcpServerConfig {
   tool_timeout_sec?: number;
 }
 
+const CODEX_CONFIG_KEY_SEGMENT_RE = /^[A-Za-z0-9_-]+$/;
+
 function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
   switch (config.type) {
     case "stdio":
@@ -823,6 +825,64 @@ function toCodexMcpConfig(config: McpServerConfig): CodexMcpServerConfig {
       throw new Error(`Unsupported MCP config type: ${String(_exhaustive.type)}`);
     }
   }
+}
+
+function toTomlCliValue(value: string | number | boolean | string[]): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => JSON.stringify(item)).join(", ")}]`;
+  }
+  if (typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function toCodexConfigPath(...segments: string[]): string | null {
+  if (!segments.every((segment) => CODEX_CONFIG_KEY_SEGMENT_RE.test(segment))) {
+    return null;
+  }
+  return segments.join(".");
+}
+
+function appendCodexConfigArg(
+  args: string[],
+  pathSegments: string[],
+  value: string | number | boolean | string[] | undefined,
+): void {
+  if (value === undefined) {
+    return;
+  }
+  const configPath = toCodexConfigPath(...pathSegments);
+  if (!configPath) {
+    return;
+  }
+  args.push("-c", `${configPath}=${toTomlCliValue(value)}`);
+}
+
+function buildCodexAppServerMcpConfigArgs(config: AgentSessionConfig): string[] {
+  const args: string[] = [];
+  const mcpServers = config.mcpServers;
+  if (!mcpServers) {
+    return args;
+  }
+
+  for (const [serverName, serverConfig] of Object.entries(mcpServers)) {
+    const codexConfig = toCodexMcpConfig(serverConfig);
+    const basePath = ["mcp_servers", serverName];
+    appendCodexConfigArg(args, [...basePath, "command"], codexConfig.command);
+    appendCodexConfigArg(args, [...basePath, "args"], codexConfig.args);
+    appendCodexConfigArg(args, [...basePath, "url"], codexConfig.url);
+    appendCodexConfigArg(args, [...basePath, "tool_timeout_sec"], codexConfig.tool_timeout_sec);
+
+    for (const [key, value] of Object.entries(codexConfig.env ?? {})) {
+      appendCodexConfigArg(args, [...basePath, "env", key], value);
+    }
+    for (const [key, value] of Object.entries(codexConfig.http_headers ?? {})) {
+      appendCodexConfigArg(args, [...basePath, "http_headers", key], value);
+    }
+  }
+
+  return args;
 }
 function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
@@ -4750,9 +4810,13 @@ export class CodexAppServerAgentClient implements AgentClient {
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
     options?: { goalsEnabled?: boolean },
+    config?: AgentSessionConfig,
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
+    if (config) {
+      args.push(...buildCodexAppServerMcpConfigArgs(config));
+    }
     if (options?.goalsEnabled) {
       args.push("--enable", "goals");
     }
@@ -4793,7 +4857,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       sessionConfig,
       null,
       this.logger,
-      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
+      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }, sessionConfig),
       this.deps,
       options?.persistSession === false,
       goalsEnabled,
@@ -4820,7 +4884,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       merged,
       handle,
       this.logger,
-      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
+      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }, merged),
       this.deps,
       false,
       goalsEnabled,
@@ -5143,6 +5207,7 @@ function resolveSkillDescription(skill: Record<string, unknown>): string {
 }
 
 export const __codexAppServerInternals = {
+  buildCodexAppServerMcpConfigArgs,
   buildCodexAppServerEnv,
   CodexAppServerClient,
   codexModelSupportsFastMode,

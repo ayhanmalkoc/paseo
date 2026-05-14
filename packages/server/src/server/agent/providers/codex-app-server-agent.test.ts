@@ -716,6 +716,35 @@ describe("Codex app-server provider", () => {
     expect(env.PASEO_TEST_FLAG).toBe(launchContext.env?.PASEO_TEST_FLAG);
   });
 
+  test("builds process-level app-server MCP config args", () => {
+    const args = __codexAppServerInternals.buildCodexAppServerMcpConfigArgs(
+      createConfig({
+        mcpServers: {
+          "context-mode": {
+            type: "stdio",
+            command: "context-mode",
+            args: ["--stdio"],
+            env: { CONTEXT_MODE_HOME: "/tmp/context-mode" },
+          },
+          paseo: {
+            type: "http",
+            url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            headers: { Authorization: "Bearer token" },
+          },
+        },
+      }),
+    );
+
+    expect(args).toContain("-c");
+    expect(args).toContain('mcp_servers.context-mode.command="context-mode"');
+    expect(args).toContain('mcp_servers.context-mode.args=["--stdio"]');
+    expect(args).toContain('mcp_servers.context-mode.env.CONTEXT_MODE_HOME="/tmp/context-mode"');
+    expect(args).toContain(
+      'mcp_servers.paseo.url="http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1"',
+    );
+    expect(args).toContain('mcp_servers.paseo.http_headers.Authorization="Bearer token"');
+  });
+
   test("projects request_user_input into a question permission and running timeline tool call", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
