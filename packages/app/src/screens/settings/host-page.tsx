@@ -17,9 +17,7 @@ import { formatConnectionStatus, getConnectionStatusTone } from "@/utils/daemons
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { settingsStyles } from "@/styles/settings";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
-import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { ProvidersSection } from "@/screens/settings/providers-section";
@@ -456,7 +454,6 @@ function DaemonSection({ host, isLocalDaemon }: { host: HostProfile; isLocalDaem
     <>
       <SettingsSection title="Operations">
         <RestartDaemonCard host={host} />
-        <InjectPaseoToolsCard serverId={host.serverId} />
       </SettingsSection>
       {isLocalDaemon ? (
         <SettingsSection title="Pair devices">
@@ -593,42 +590,6 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
         >
           {isRestarting ? "Restarting..." : "Restart"}
         </Button>
-      </View>
-    </View>
-  );
-}
-
-function InjectPaseoToolsCard({ serverId }: { serverId: string }) {
-  const isConnected = useHostRuntimeIsConnected(serverId);
-  const { config, patchConfig } = useDaemonConfig(serverId);
-
-  const handleValueChange = useCallback(
-    (next: boolean) => {
-      void patchConfig({
-        mcp: {
-          injectIntoAgents: next,
-        },
-      });
-    },
-    [patchConfig],
-  );
-
-  if (!isConnected) return null;
-
-  return (
-    <View style={settingsStyles.card} testID="host-page-inject-mcp-card">
-      <View style={settingsStyles.row}>
-        <View style={settingsStyles.rowContent}>
-          <Text style={settingsStyles.rowTitle}>Inject Paseo tools</Text>
-          <Text style={settingsStyles.rowHint}>
-            Automatically inject Paseo MCP tools into new agents
-          </Text>
-        </View>
-        <Switch
-          value={config?.mcp.injectIntoAgents !== false}
-          onValueChange={handleValueChange}
-          accessibilityLabel="Inject Paseo tools"
-        />
       </View>
     </View>
   );

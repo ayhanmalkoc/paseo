@@ -9,9 +9,11 @@ import type {
   McpRegistryScope,
   McpServerConfig,
 } from "@server/shared/messages";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useMcpRegistry, toMcpRegistryEntryInput } from "@/hooks/use-mcp-registry";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
@@ -28,10 +30,14 @@ const DEFAULT_CONFIG_JSON = `{
 export function McpRegistrySection({ serverId }: { serverId: string }) {
   const { theme } = useUnistyles();
   const registry = useMcpRegistry(serverId);
+  const daemonConfig = useDaemonConfig(serverId);
   const [editingEntry, setEditingEntry] = useState<McpRegistryEntry | null>(null);
   const [isEditorVisible, setIsEditorVisible] = useState(false);
 
   const entries = useMemo(() => [...registry.entries].sort(compareMcpEntries), [registry.entries]);
+  const isPaseoToolsEnabled = daemonConfig.config?.mcp.injectIntoAgents !== false;
+  const isSystemRowDisabled = daemonConfig.isLoading || registry.isRefreshing;
+  const emptyExternalRowStyle = useMemo(() => [styles.emptyRow, settingsStyles.rowBorder], []);
 
   const handleCreate = useCallback(() => {
     setEditingEntry(null);
@@ -76,6 +82,17 @@ export function McpRegistrySection({ serverId }: { serverId: string }) {
       await registry.remove({ id: entry.id, scope: entry.scope });
     },
     [registry],
+  );
+
+  const handleTogglePaseoTools = useCallback(
+    (enabled: boolean) => {
+      void daemonConfig.patchConfig({
+        mcp: {
+          injectIntoAgents: enabled,
+        },
+      });
+    },
+    [daemonConfig],
   );
 
   const handleImportCodex = useCallback(async () => {
@@ -127,6 +144,11 @@ export function McpRegistrySection({ serverId }: { serverId: string }) {
   return (
     <SettingsSection title="MCP Servers" trailing={trailing} testID="host-page-mcp-registry">
       <View style={settingsStyles.card}>
+        <McpSystemToolsRow
+          enabled={isPaseoToolsEnabled}
+          disabled={isSystemRowDisabled}
+          onToggle={handleTogglePaseoTools}
+        />
         {registry.isLoading && entries.length === 0 ? (
           <View style={styles.emptyRow}>
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
@@ -134,17 +156,17 @@ export function McpRegistrySection({ serverId }: { serverId: string }) {
           </View>
         ) : null}
         {!registry.isLoading && entries.length === 0 ? (
-          <View style={styles.emptyRow}>
+          <View style={emptyExternalRowStyle}>
             <Text style={styles.mutedText}>
-              No MCP servers yet. Add one or import native Codex MCP servers.
+              No external MCP servers yet. Add one or import native Codex MCP servers.
             </Text>
           </View>
         ) : null}
-        {entries.map((entry, index) => (
+        {entries.map((entry) => (
           <McpRegistryEntryRow
             key={`${formatScopeKey(entry.scope)}:${entry.id}`}
             entry={entry}
-            showBorder={index > 0}
+            showBorder
             disabled={registry.isRefreshing}
             onEdit={handleEdit}
             onToggle={handleToggle}
@@ -165,6 +187,42 @@ export function McpRegistrySection({ serverId }: { serverId: string }) {
   );
 }
 
+function McpSystemToolsRow({
+  enabled,
+  disabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  disabled: boolean;
+  onToggle: (enabled: boolean) => void;
+}) {
+  return (
+    <View style={settingsStyles.row} testID="mcp-registry-system-paseo-tools">
+      <View style={settingsStyles.rowContent}>
+        <View style={styles.titleLine}>
+          <Text style={styles.rowTitleText} numberOfLines={1}>
+            Paseo tools
+          </Text>
+          <Text style={styles.sourcePill}>system</Text>
+          <Text style={styles.sourcePill}>managed</Text>
+        </View>
+        <Text style={settingsStyles.rowHint} numberOfLines={2}>
+          system · Paseo agent control tools
+        </Text>
+      </View>
+      <View style={styles.rowActions}>
+        <Switch
+          value={enabled}
+          onValueChange={onToggle}
+          disabled={disabled}
+          accessibilityLabel="Paseo tools enabled"
+          testID="mcp-registry-toggle-paseo-tools"
+        />
+      </View>
+    </View>
+  );
+}
+
 function McpRegistryEntryRow({
   entry,
   showBorder,
@@ -180,9 +238,23 @@ function McpRegistryEntryRow({
   onToggle: (entry: McpRegistryEntry, enabled: boolean) => void;
   onRemove: (entry: McpRegistryEntry) => void;
 }) {
+  const { theme } = useUnistyles();
+  const isCompact = useIsCompactFormFactor();
   const rowStyle = useMemo(
-    () => [settingsStyles.row, showBorder && settingsStyles.rowBorder],
-    [showBorder],
+    () => [
+      settingsStyles.row,
+      showBorder && settingsStyles.rowBorder,
+      isCompact && styles.entryRowCompact,
+    ],
+    [isCompact, showBorder],
+  );
+  const rowContentStyle = useMemo(
+    () => [settingsStyles.rowContent, isCompact && styles.rowContentCompact],
+    [isCompact],
+  );
+  const rowActionsStyle = useMemo(
+    () => [styles.rowActions, isCompact && styles.rowActionsCompact],
+    [isCompact],
   );
   const handleEditPress = useCallback(() => onEdit(entry), [entry, onEdit]);
   const handleEnabledChange = useCallback(
@@ -190,48 +262,107 @@ function McpRegistryEntryRow({
     [entry, onToggle],
   );
   const handleRemovePress = useCallback(() => onRemove(entry), [entry, onRemove]);
+  const editIcon = useMemo(
+    () => <Pencil size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />,
+    [theme.colors.foregroundMuted, theme.iconSize.sm],
+  );
+  const removeIcon = useMemo(
+    () => <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />,
+    [theme.colors.destructive, theme.iconSize.sm],
+  );
+
+  const rowContent = (
+    <View style={rowContentStyle}>
+      <View style={styles.titleLine}>
+        <Text style={styles.rowTitleText} numberOfLines={1}>
+          {entry.id}
+        </Text>
+        <Text style={styles.sourcePill}>{formatEntrySource(entry)}</Text>
+      </View>
+      <Text style={settingsStyles.rowHint} numberOfLines={2}>
+        {formatMcpConfigSummary(entry.config)}
+      </Text>
+    </View>
+  );
+
+  const enabledSwitch = (
+    <Switch
+      value={entry.enabled}
+      onValueChange={handleEnabledChange}
+      disabled={disabled}
+      accessibilityLabel={`${entry.id} enabled`}
+      testID={`mcp-registry-toggle-${entry.id}`}
+    />
+  );
+
+  const rowActions = (
+    <>
+      <Button
+        variant="ghost"
+        size="xs"
+        leftIcon={Pencil}
+        onPress={handleEditPress}
+        disabled={disabled}
+        testID={`mcp-registry-edit-${entry.id}`}
+      >
+        Edit JSON
+      </Button>
+      <Button
+        variant="ghost"
+        size="xs"
+        leftIcon={Trash2}
+        onPress={handleRemovePress}
+        disabled={disabled}
+        testID={`mcp-registry-remove-${entry.id}`}
+      >
+        Remove
+      </Button>
+    </>
+  );
+
+  const iconRowActions = (
+    <View style={styles.iconActionsCompact}>
+      <Button
+        variant="ghost"
+        size="xs"
+        leftIcon={editIcon}
+        onPress={handleEditPress}
+        disabled={disabled}
+        accessibilityLabel={`Edit ${entry.id} MCP server`}
+        testID={`mcp-registry-edit-${entry.id}`}
+      />
+      <Button
+        variant="ghost"
+        size="xs"
+        leftIcon={removeIcon}
+        onPress={handleRemovePress}
+        disabled={disabled}
+        accessibilityLabel={`Remove ${entry.id} MCP server`}
+        testID={`mcp-registry-remove-${entry.id}`}
+      />
+    </View>
+  );
+
+  if (isCompact) {
+    return (
+      <View style={rowStyle}>
+        <View style={styles.entryHeaderCompact}>
+          {rowContent}
+          <View style={styles.entryControlsCompact}>
+            {enabledSwitch}
+            {iconRowActions}
+          </View>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={rowStyle}>
-      <View style={settingsStyles.rowContent}>
-        <View style={styles.titleLine}>
-          <Text style={settingsStyles.rowTitle} numberOfLines={1}>
-            {entry.id}
-          </Text>
-          <Text style={styles.sourcePill}>{formatEntrySource(entry)}</Text>
-        </View>
-        <Text style={settingsStyles.rowHint} numberOfLines={2}>
-          {formatMcpConfigSummary(entry.config)}
-        </Text>
-      </View>
-      <View style={styles.rowActions}>
-        <Switch
-          value={entry.enabled}
-          onValueChange={handleEnabledChange}
-          disabled={disabled}
-          accessibilityLabel={`${entry.id} enabled`}
-          testID={`mcp-registry-toggle-${entry.id}`}
-        />
-        <Button
-          variant="ghost"
-          size="xs"
-          leftIcon={Pencil}
-          onPress={handleEditPress}
-          disabled={disabled}
-          testID={`mcp-registry-edit-${entry.id}`}
-        >
-          Edit JSON
-        </Button>
-        <Button
-          variant="ghost"
-          size="xs"
-          leftIcon={Trash2}
-          onPress={handleRemovePress}
-          disabled={disabled}
-          testID={`mcp-registry-remove-${entry.id}`}
-        >
-          Remove
-        </Button>
+      {rowContent}
+      <View style={rowActionsStyle}>
+        {enabledSwitch}
+        {rowActions}
       </View>
     </View>
   );
@@ -432,14 +563,47 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
     minWidth: 0,
   },
+  rowTitleText: {
+    color: theme.colors.foreground,
+    flexShrink: 1,
+    fontSize: theme.fontSize.base,
+    minWidth: 0,
+  },
   sourcePill: {
     backgroundColor: theme.colors.surface3,
     borderRadius: theme.borderRadius.sm,
     color: theme.colors.foregroundMuted,
+    flexShrink: 0,
     fontSize: theme.fontSize.xs,
+    lineHeight: theme.fontSize.xs * 1.25,
     overflow: "hidden",
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[1],
+  },
+  entryRowCompact: {
+    alignItems: "stretch",
+    flexDirection: "column",
+    gap: theme.spacing[3],
+  },
+  entryHeaderCompact: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: theme.spacing[3],
+    justifyContent: "space-between",
+  },
+  entryControlsCompact: {
+    alignItems: "flex-end",
+    flexShrink: 0,
+    marginLeft: theme.spacing[2],
+    gap: theme.spacing[2],
+  },
+  rowContentCompact: {
+    marginRight: 0,
+  },
+  iconActionsCompact: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: theme.spacing[1],
   },
   rowActions: {
     alignItems: "center",
@@ -447,6 +611,10 @@ const styles = StyleSheet.create((theme) => ({
     flexWrap: "wrap",
     gap: theme.spacing[2],
     justifyContent: "flex-end",
+  },
+  rowActionsCompact: {
+    alignSelf: "stretch",
+    justifyContent: "flex-start",
   },
   editorBody: {
     gap: theme.spacing[4],
