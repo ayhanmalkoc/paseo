@@ -39,6 +39,7 @@ import type { ProviderAuthService } from "./agent/provider-auth-service.js";
 import type { RuntimeProfileService } from "./agent/runtime-profile-service.js";
 import type { AccountOnboardingService } from "./agent/account-onboarding-service.js";
 import type { McpRegistryService } from "./agent/mcp-registry-service.js";
+import type { ProviderNativeConfigService } from "./agent/provider-native-config-service.js";
 import { buildProviderRegistry, createClientsFromRegistry } from "./agent/provider-registry.js";
 import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
 import { buildWorkspaceGitMetadataFromSnapshot } from "./workspace-git-metadata.js";
@@ -369,6 +370,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly providerAuthService: ProviderAuthService | null;
   private readonly mcpRegistryService: McpRegistryService | null;
+  private readonly providerNativeConfigService: ProviderNativeConfigService | null;
   private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
   private onBranchChanged!:
     | ((workspaceId: string, oldBranch: string | null, newBranch: string | null) => void)
@@ -426,6 +428,7 @@ export class VoiceAssistantWebSocketServer {
     accountOnboardingService?: AccountOnboardingService,
     pushNotificationSender?: PushNotificationSender,
     mcpRegistryService?: McpRegistryService,
+    providerNativeConfigService?: ProviderNativeConfigService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.serverId = serverId;
@@ -453,6 +456,7 @@ export class VoiceAssistantWebSocketServer {
     this.runtimeProfileService = runtimeProfileService ?? null;
     this.accountOnboardingService = accountOnboardingService ?? null;
     this.mcpRegistryService = mcpRegistryService ?? null;
+    this.providerNativeConfigService = providerNativeConfigService ?? null;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.daemonConfigStore = daemonConfigStore;
@@ -908,6 +912,7 @@ export class VoiceAssistantWebSocketServer {
       runtimeProfileService: this.runtimeProfileService ?? undefined,
       accountOnboardingService: this.accountOnboardingService ?? undefined,
       mcpRegistryService: this.mcpRegistryService ?? undefined,
+      providerNativeConfigService: this.providerNativeConfigService ?? undefined,
       scriptRouteStore: this.scriptRouteStore ?? undefined,
       scriptRuntimeStore: this.scriptRuntimeStore ?? undefined,
       workspaceSetupSnapshots: this.workspaceSetupSnapshots,
@@ -1083,6 +1088,9 @@ export class VoiceAssistantWebSocketServer {
         runtimeProfiles: this.runtimeProfileService !== null,
         agentProfileSnapshots: true,
         mcpRegistry: this.mcpRegistryService !== null,
+        providerNativeConfig: this.providerNativeConfigService !== null,
+        providerNativeConfigProviders:
+          this.providerNativeConfigService?.getSupportedProviders() ?? [],
       },
     };
   }

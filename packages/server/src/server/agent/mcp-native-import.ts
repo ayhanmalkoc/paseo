@@ -4,7 +4,7 @@ import path from "node:path";
 
 import type { AgentProvider, McpServerConfig } from "./agent-sdk-types.js";
 import type { McpRegistryEntryInput } from "./mcp-registry-service.js";
-import { isReservedMcpServerId } from "./mcp-resolver.js";
+import { isReservedMcpServerId, type McpRegistryEntry } from "./mcp-resolver.js";
 
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_CONFIG_FILENAME = "config.toml";
@@ -73,6 +73,47 @@ export async function readNativeMcpRegistryEntries(options: {
     })),
     skipped: parsed.skipped,
   };
+}
+
+export async function readProviderHomeNativeMcpRegistryEntries(options: {
+  provider: AgentProvider;
+  providerHomePath?: string | null;
+  accountKey?: string | null;
+  now?: () => Date;
+}): Promise<McpRegistryEntry[]> {
+  if (options.provider !== CODEX_PROVIDER || !options.providerHomePath || !options.accountKey) {
+    return [];
+  }
+  const configPath = resolveCodexNativeConfigPath(options.providerHomePath);
+  const content = await fs.readFile(configPath, "utf8").catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  });
+  if (content === null) {
+    return [];
+  }
+  const parsed = parseCodexNativeMcpConfigToml(content);
+  const importedAt = (options.now ?? (() => new Date()))().toISOString();
+  return parsed.servers.map((server) => ({
+    id: server.id,
+    scope: {
+      kind: "account",
+      provider: options.provider,
+      accountKey: options.accountKey ?? "",
+    },
+    config: server.config,
+    enabled: true,
+    source: "native-import",
+    importedFrom: {
+      provider: options.provider,
+      path: configPath,
+      importedAt,
+    },
+    createdAt: importedAt,
+    updatedAt: importedAt,
+  }));
 }
 
 export function resolveCodexNativeConfigPath(inputPath?: string): string {
