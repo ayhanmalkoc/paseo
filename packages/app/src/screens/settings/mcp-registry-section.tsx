@@ -12,6 +12,7 @@ import type {
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useMcpRegistry, toMcpRegistryEntryInput } from "@/hooks/use-mcp-registry";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
@@ -28,10 +29,14 @@ const DEFAULT_CONFIG_JSON = `{
 export function McpRegistrySection({ serverId }: { serverId: string }) {
   const { theme } = useUnistyles();
   const registry = useMcpRegistry(serverId);
+  const daemonConfig = useDaemonConfig(serverId);
   const [editingEntry, setEditingEntry] = useState<McpRegistryEntry | null>(null);
   const [isEditorVisible, setIsEditorVisible] = useState(false);
 
   const entries = useMemo(() => [...registry.entries].sort(compareMcpEntries), [registry.entries]);
+  const isPaseoToolsEnabled = daemonConfig.config?.mcp.injectIntoAgents !== false;
+  const isSystemRowDisabled = daemonConfig.isLoading || registry.isRefreshing;
+  const emptyExternalRowStyle = useMemo(() => [styles.emptyRow, settingsStyles.rowBorder], []);
 
   const handleCreate = useCallback(() => {
     setEditingEntry(null);
@@ -76,6 +81,17 @@ export function McpRegistrySection({ serverId }: { serverId: string }) {
       await registry.remove({ id: entry.id, scope: entry.scope });
     },
     [registry],
+  );
+
+  const handleTogglePaseoTools = useCallback(
+    (enabled: boolean) => {
+      void daemonConfig.patchConfig({
+        mcp: {
+          injectIntoAgents: enabled,
+        },
+      });
+    },
+    [daemonConfig],
   );
 
   const handleImportCodex = useCallback(async () => {
@@ -127,6 +143,11 @@ export function McpRegistrySection({ serverId }: { serverId: string }) {
   return (
     <SettingsSection title="MCP Servers" trailing={trailing} testID="host-page-mcp-registry">
       <View style={settingsStyles.card}>
+        <McpSystemToolsRow
+          enabled={isPaseoToolsEnabled}
+          disabled={isSystemRowDisabled}
+          onToggle={handleTogglePaseoTools}
+        />
         {registry.isLoading && entries.length === 0 ? (
           <View style={styles.emptyRow}>
             <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
@@ -134,17 +155,17 @@ export function McpRegistrySection({ serverId }: { serverId: string }) {
           </View>
         ) : null}
         {!registry.isLoading && entries.length === 0 ? (
-          <View style={styles.emptyRow}>
+          <View style={emptyExternalRowStyle}>
             <Text style={styles.mutedText}>
-              No MCP servers yet. Add one or import native Codex MCP servers.
+              No external MCP servers yet. Add one or import native Codex MCP servers.
             </Text>
           </View>
         ) : null}
-        {entries.map((entry, index) => (
+        {entries.map((entry) => (
           <McpRegistryEntryRow
             key={`${formatScopeKey(entry.scope)}:${entry.id}`}
             entry={entry}
-            showBorder={index > 0}
+            showBorder
             disabled={registry.isRefreshing}
             onEdit={handleEdit}
             onToggle={handleToggle}
@@ -162,6 +183,42 @@ export function McpRegistrySection({ serverId }: { serverId: string }) {
         onSubmit={handleSave}
       />
     </SettingsSection>
+  );
+}
+
+function McpSystemToolsRow({
+  enabled,
+  disabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  disabled: boolean;
+  onToggle: (enabled: boolean) => void;
+}) {
+  return (
+    <View style={settingsStyles.row} testID="mcp-registry-system-paseo-tools">
+      <View style={settingsStyles.rowContent}>
+        <View style={styles.titleLine}>
+          <Text style={settingsStyles.rowTitle} numberOfLines={1}>
+            Paseo tools
+          </Text>
+          <Text style={styles.sourcePill}>system</Text>
+          <Text style={styles.sourcePill}>managed</Text>
+        </View>
+        <Text style={settingsStyles.rowHint} numberOfLines={2}>
+          system · Paseo agent control tools
+        </Text>
+      </View>
+      <View style={styles.rowActions}>
+        <Switch
+          value={enabled}
+          onValueChange={onToggle}
+          disabled={disabled}
+          accessibilityLabel="Paseo tools enabled"
+          testID="mcp-registry-toggle-paseo-tools"
+        />
+      </View>
+    </View>
   );
 }
 
