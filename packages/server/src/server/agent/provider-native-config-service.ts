@@ -2,7 +2,12 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { Logger } from "pino";
 
-import type { AgentProvider } from "./agent-sdk-types.js";
+import type { AgentProvider, McpServerConfig } from "./agent-sdk-types.js";
+import {
+  parseCodexNativeMcpConfigToml,
+  removeCodexNativeMcpServerConfig,
+  writeCodexNativeMcpServerConfig,
+} from "./mcp-native-import.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
 
 const CODEX_CONFIG_FILENAME = "config.toml";
@@ -14,6 +19,12 @@ export interface ProviderNativeConfigSnapshot {
   content: string;
   exists: boolean;
   updatedAt?: string;
+}
+
+export interface ProviderNativeMcpServer {
+  id: string;
+  config: McpServerConfig;
+  enabled: boolean;
 }
 
 export class ProviderNativeConfigService {
@@ -73,6 +84,71 @@ export class ProviderNativeConfigService {
     await fs.mkdir(path.dirname(configPath), { recursive: true });
     await fs.writeFile(configPath, normalizeConfigContent(input.content), "utf8");
     return this.readAccountConfig(input);
+  }
+
+  async listAccountMcpServers(input: {
+    provider: AgentProvider;
+    profileKey: string;
+  }): Promise<ProviderNativeMcpServer[]> {
+    const config = await this.readAccountConfig(input);
+    if (!config.content.trim()) {
+      return [];
+    }
+    return parseCodexNativeMcpConfigToml(config.content).servers.map((server) => ({
+      id: server.id,
+      config: server.config,
+      enabled: server.enabled,
+    }));
+  }
+
+  async upsertAccountMcpServer(input: {
+    provider: AgentProvider;
+    profileKey: string;
+    id: string;
+    config: McpServerConfig;
+    enabled?: boolean;
+  }): Promise<ProviderNativeMcpServer> {
+    const snapshot = await this.readAccountConfig(input);
+    const enabled =
+      input.enabled ??
+      parseCodexNativeMcpConfigToml(snapshot.content).servers.find(
+        (server) => server.id === input.id,
+      )?.enabled ??
+      true;
+    const content = writeCodexNativeMcpServerConfig({
+      content: snapshot.content,
+      id: input.id,
+      config: input.config,
+      enabled,
+    });
+    await this.writeAccountConfig({
+      provider: input.provider,
+      profileKey: input.profileKey,
+      content,
+    });
+    return {
+      id: input.id,
+      config: input.config,
+      enabled,
+    };
+  }
+
+  async removeAccountMcpServer(input: {
+    provider: AgentProvider;
+    profileKey: string;
+    id: string;
+  }): Promise<boolean> {
+    const snapshot = await this.readAccountConfig(input);
+    const existed = parseCodexNativeMcpConfigToml(snapshot.content).servers.some(
+      (server) => server.id === input.id,
+    );
+    const content = removeCodexNativeMcpServerConfig(snapshot.content, input.id);
+    await this.writeAccountConfig({
+      provider: input.provider,
+      profileKey: input.profileKey,
+      content,
+    });
+    return existed;
   }
 
   private async requireProfile(provider: AgentProvider, profileKey: string) {

@@ -557,6 +557,12 @@ export const ProviderNativeConfigSnapshotSchema = z.object({
   updatedAt: z.string().optional(),
 });
 
+export const ProviderNativeMcpServerSchema = z.object({
+  id: z.string().trim().min(1),
+  config: McpServerConfigSchema,
+  enabled: z.boolean(),
+});
+
 const ResolvedMcpSourceInfoSchema = z.object({
   scope: z.enum(["global", "provider", "account", "runtimeProfile", "session", "system"]),
   source: z.enum(["user", "native-import", "session", "system"]),
@@ -1527,6 +1533,31 @@ export const WriteProviderNativeConfigRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ListProviderNativeMcpServersRequestMessageSchema = z.object({
+  type: z.literal("list_provider_native_mcp_servers_request"),
+  provider: AgentProviderSchema,
+  profileKey: z.string().trim().min(1),
+  requestId: z.string(),
+});
+
+export const UpsertProviderNativeMcpServerRequestMessageSchema = z.object({
+  type: z.literal("upsert_provider_native_mcp_server_request"),
+  provider: AgentProviderSchema,
+  profileKey: z.string().trim().min(1),
+  id: z.string().trim().min(1),
+  config: McpServerConfigSchema,
+  enabled: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+export const RemoveProviderNativeMcpServerRequestMessageSchema = z.object({
+  type: z.literal("remove_provider_native_mcp_server_request"),
+  provider: AgentProviderSchema,
+  profileKey: z.string().trim().min(1),
+  id: z.string().trim().min(1),
+  requestId: z.string(),
+});
+
 export const ListMcpRegistryEntriesRequestMessageSchema = z.object({
   type: z.literal("list_mcp_registry_entries_request"),
   requestId: z.string(),
@@ -2273,6 +2304,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DeleteRuntimeProfileRequestMessageSchema,
   ReadProviderNativeConfigRequestMessageSchema,
   WriteProviderNativeConfigRequestMessageSchema,
+  ListProviderNativeMcpServersRequestMessageSchema,
+  UpsertProviderNativeMcpServerRequestMessageSchema,
+  RemoveProviderNativeMcpServerRequestMessageSchema,
   ListMcpRegistryEntriesRequestMessageSchema,
   UpsertMcpRegistryEntryRequestMessageSchema,
   RemoveMcpRegistryEntryRequestMessageSchema,
@@ -3898,6 +3932,36 @@ export const WriteProviderNativeConfigResponseMessageSchema = z.object({
   }),
 });
 
+export const ListProviderNativeMcpServersResponseMessageSchema = z.object({
+  type: z.literal("list_provider_native_mcp_servers_response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    profileKey: z.string().trim().min(1),
+    servers: z.array(ProviderNativeMcpServerSchema),
+    requestId: z.string(),
+  }),
+});
+
+export const UpsertProviderNativeMcpServerResponseMessageSchema = z.object({
+  type: z.literal("upsert_provider_native_mcp_server_response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    profileKey: z.string().trim().min(1),
+    server: ProviderNativeMcpServerSchema,
+    requestId: z.string(),
+  }),
+});
+
+export const RemoveProviderNativeMcpServerResponseMessageSchema = z.object({
+  type: z.literal("remove_provider_native_mcp_server_response"),
+  payload: z.object({
+    provider: AgentProviderSchema,
+    profileKey: z.string().trim().min(1),
+    removed: z.boolean(),
+    requestId: z.string(),
+  }),
+});
+
 export const ListMcpRegistryEntriesResponseMessageSchema = z.object({
   type: z.literal("list_mcp_registry_entries_response"),
   payload: z.object({
@@ -4187,6 +4251,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   RuntimeProfilesUpdateMessageSchema,
   ReadProviderNativeConfigResponseMessageSchema,
   WriteProviderNativeConfigResponseMessageSchema,
+  ListProviderNativeMcpServersResponseMessageSchema,
+  UpsertProviderNativeMcpServerResponseMessageSchema,
+  RemoveProviderNativeMcpServerResponseMessageSchema,
   ListMcpRegistryEntriesResponseMessageSchema,
   UpsertMcpRegistryEntryResponseMessageSchema,
   RemoveMcpRegistryEntryResponseMessageSchema,
@@ -4241,6 +4308,7 @@ export type McpRegistryEntrySource = z.infer<typeof McpRegistryEntrySourceSchema
 export type McpRegistryEntry = z.infer<typeof McpRegistryEntrySchema>;
 export type McpRegistryEntryInput = z.infer<typeof McpRegistryEntryInputSchema>;
 export type McpRegistryImportSkipped = z.infer<typeof McpRegistryImportSkippedSchema>;
+export type ProviderNativeMcpServer = z.infer<typeof ProviderNativeMcpServerSchema>;
 export type ResolvedMcpSourceInfo = z.infer<typeof ResolvedMcpSourceInfoSchema>;
 export type McpResolutionStep = z.infer<typeof McpResolutionStepSchema>;
 export type RpcErrorMessage = z.infer<typeof RpcErrorMessageSchema>;
@@ -4372,6 +4440,15 @@ export type ReadProviderNativeConfigResponseMessage = z.infer<
 export type WriteProviderNativeConfigResponseMessage = z.infer<
   typeof WriteProviderNativeConfigResponseMessageSchema
 >;
+export type ListProviderNativeMcpServersResponseMessage = z.infer<
+  typeof ListProviderNativeMcpServersResponseMessageSchema
+>;
+export type UpsertProviderNativeMcpServerResponseMessage = z.infer<
+  typeof UpsertProviderNativeMcpServerResponseMessageSchema
+>;
+export type RemoveProviderNativeMcpServerResponseMessage = z.infer<
+  typeof RemoveProviderNativeMcpServerResponseMessageSchema
+>;
 export type ListMcpRegistryEntriesResponseMessage = z.infer<
   typeof ListMcpRegistryEntriesResponseMessageSchema
 >;
@@ -4492,6 +4569,15 @@ export type ReadProviderNativeConfigRequestMessage = z.infer<
 >;
 export type WriteProviderNativeConfigRequestMessage = z.infer<
   typeof WriteProviderNativeConfigRequestMessageSchema
+>;
+export type ListProviderNativeMcpServersRequestMessage = z.infer<
+  typeof ListProviderNativeMcpServersRequestMessageSchema
+>;
+export type UpsertProviderNativeMcpServerRequestMessage = z.infer<
+  typeof UpsertProviderNativeMcpServerRequestMessageSchema
+>;
+export type RemoveProviderNativeMcpServerRequestMessage = z.infer<
+  typeof RemoveProviderNativeMcpServerRequestMessageSchema
 >;
 export type ChatCreateRequest = z.infer<typeof ChatCreateRequestSchema>;
 export type ChatListRequest = z.infer<typeof ChatListRequestSchema>;

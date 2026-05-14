@@ -93,6 +93,52 @@ describe("ProviderNativeConfigService", () => {
     );
   });
 
+  it("manages Codex MCP servers inside account config", async () => {
+    const service = createService();
+
+    const created = await service.upsertAccountMcpServer({
+      provider: "codex",
+      profileKey: "work",
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode" },
+      enabled: false,
+    });
+
+    expect(created).toEqual({
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode" },
+      enabled: false,
+    });
+    await expect(
+      service.listAccountMcpServers({ provider: "codex", profileKey: "work" }),
+    ).resolves.toEqual([created]);
+
+    const updated = await service.upsertAccountMcpServer({
+      provider: "codex",
+      profileKey: "work",
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode", args: ["serve"] },
+    });
+
+    expect(updated.enabled).toBe(false);
+    expect(updated.config).toEqual({
+      type: "stdio",
+      command: "context-mode",
+      args: ["serve"],
+    });
+
+    await expect(
+      service.removeAccountMcpServer({
+        provider: "codex",
+        profileKey: "work",
+        id: "context-mode",
+      }),
+    ).resolves.toBe(true);
+    await expect(
+      service.listAccountMcpServers({ provider: "codex", profileKey: "work" }),
+    ).resolves.toEqual([]);
+  });
+
   it("rejects unsupported providers and accounts without managed homes", async () => {
     const service = createService([
       createProfile({

@@ -74,6 +74,9 @@ import type {
   DeleteRuntimeProfileResponseMessage,
   ReadProviderNativeConfigResponseMessage,
   WriteProviderNativeConfigResponseMessage,
+  ListProviderNativeMcpServersResponseMessage,
+  UpsertProviderNativeMcpServerResponseMessage,
+  RemoveProviderNativeMcpServerResponseMessage,
   ListMcpRegistryEntriesResponseMessage,
   UpsertMcpRegistryEntryResponseMessage,
   RemoveMcpRegistryEntryResponseMessage,
@@ -373,6 +376,9 @@ type UpdateRuntimeProfilePayload = UpdateRuntimeProfileResponseMessage["payload"
 type DeleteRuntimeProfilePayload = DeleteRuntimeProfileResponseMessage["payload"];
 type ReadProviderNativeConfigPayload = ReadProviderNativeConfigResponseMessage["payload"];
 type WriteProviderNativeConfigPayload = WriteProviderNativeConfigResponseMessage["payload"];
+type ListProviderNativeMcpServersPayload = ListProviderNativeMcpServersResponseMessage["payload"];
+type UpsertProviderNativeMcpServerPayload = UpsertProviderNativeMcpServerResponseMessage["payload"];
+type RemoveProviderNativeMcpServerPayload = RemoveProviderNativeMcpServerResponseMessage["payload"];
 type ListMcpRegistryEntriesPayload = ListMcpRegistryEntriesResponseMessage["payload"];
 type UpsertMcpRegistryEntryPayload = UpsertMcpRegistryEntryResponseMessage["payload"];
 type RemoveMcpRegistryEntryPayload = RemoveMcpRegistryEntryResponseMessage["payload"];
@@ -3747,6 +3753,65 @@ export class DaemonClient {
         content: options.content,
       },
       responseType: "write_provider_native_config_response",
+      timeout: 10000,
+    });
+  }
+
+  async listProviderNativeMcpServers(options: {
+    provider: AgentProvider;
+    profileKey: string;
+    requestId?: string;
+  }): Promise<ListProviderNativeMcpServersPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "list_provider_native_mcp_servers_request",
+        provider: options.provider,
+        profileKey: options.profileKey,
+      },
+      responseType: "list_provider_native_mcp_servers_response",
+      timeout: 10000,
+    });
+  }
+
+  async upsertProviderNativeMcpServer(options: {
+    provider: AgentProvider;
+    profileKey: string;
+    id: string;
+    config: McpServerConfig;
+    enabled?: boolean;
+    requestId?: string;
+  }): Promise<UpsertProviderNativeMcpServerPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "upsert_provider_native_mcp_server_request",
+        provider: options.provider,
+        profileKey: options.profileKey,
+        id: options.id,
+        config: options.config,
+        enabled: options.enabled,
+      },
+      responseType: "upsert_provider_native_mcp_server_response",
+      timeout: 10000,
+    });
+  }
+
+  async removeProviderNativeMcpServer(options: {
+    provider: AgentProvider;
+    profileKey: string;
+    id: string;
+    requestId?: string;
+  }): Promise<RemoveProviderNativeMcpServerPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "remove_provider_native_mcp_server_request",
+        provider: options.provider,
+        profileKey: options.profileKey,
+        id: options.id,
+      },
+      responseType: "remove_provider_native_mcp_server_response",
       timeout: 10000,
     });
   }

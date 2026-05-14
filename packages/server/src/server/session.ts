@@ -2207,6 +2207,12 @@ export class Session {
         return this.handleReadProviderNativeConfigRequest(msg);
       case "write_provider_native_config_request":
         return this.handleWriteProviderNativeConfigRequest(msg);
+      case "list_provider_native_mcp_servers_request":
+        return this.handleListProviderNativeMcpServersRequest(msg);
+      case "upsert_provider_native_mcp_server_request":
+        return this.handleUpsertProviderNativeMcpServerRequest(msg);
+      case "remove_provider_native_mcp_server_request":
+        return this.handleRemoveProviderNativeMcpServerRequest(msg);
       default:
         return undefined;
     }
@@ -4214,6 +4220,76 @@ export class Session {
     }
   }
 
+  private async handleListProviderNativeMcpServersRequest(
+    msg: Extract<SessionInboundMessage, { type: "list_provider_native_mcp_servers_request" }>,
+  ): Promise<void> {
+    try {
+      const servers = await this.requireProviderNativeConfigService().listAccountMcpServers({
+        provider: msg.provider,
+        profileKey: msg.profileKey,
+      });
+      this.emit({
+        type: "list_provider_native_mcp_servers_response",
+        payload: {
+          provider: msg.provider,
+          profileKey: msg.profileKey,
+          servers,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_mcp_list_failed");
+    }
+  }
+
+  private async handleUpsertProviderNativeMcpServerRequest(
+    msg: Extract<SessionInboundMessage, { type: "upsert_provider_native_mcp_server_request" }>,
+  ): Promise<void> {
+    try {
+      const server = await this.requireProviderNativeConfigService().upsertAccountMcpServer({
+        provider: msg.provider,
+        profileKey: msg.profileKey,
+        id: msg.id,
+        config: msg.config,
+        enabled: msg.enabled,
+      });
+      this.emit({
+        type: "upsert_provider_native_mcp_server_response",
+        payload: {
+          provider: msg.provider,
+          profileKey: msg.profileKey,
+          server,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_mcp_upsert_failed");
+    }
+  }
+
+  private async handleRemoveProviderNativeMcpServerRequest(
+    msg: Extract<SessionInboundMessage, { type: "remove_provider_native_mcp_server_request" }>,
+  ): Promise<void> {
+    try {
+      const removed = await this.requireProviderNativeConfigService().removeAccountMcpServer({
+        provider: msg.provider,
+        profileKey: msg.profileKey,
+        id: msg.id,
+      });
+      this.emit({
+        type: "remove_provider_native_mcp_server_response",
+        payload: {
+          provider: msg.provider,
+          profileKey: msg.profileKey,
+          removed,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_mcp_remove_failed");
+    }
+  }
+
   private async handleListMcpRegistryEntriesRequest(
     msg: Extract<SessionInboundMessage, { type: "list_mcp_registry_entries_request" }>,
   ): Promise<void> {
@@ -4485,7 +4561,12 @@ export class Session {
     msg: Extract<
       SessionInboundMessage,
       {
-        type: "read_provider_native_config_request" | "write_provider_native_config_request";
+        type:
+          | "read_provider_native_config_request"
+          | "write_provider_native_config_request"
+          | "list_provider_native_mcp_servers_request"
+          | "upsert_provider_native_mcp_server_request"
+          | "remove_provider_native_mcp_server_request";
       }
     >,
     error: unknown,
