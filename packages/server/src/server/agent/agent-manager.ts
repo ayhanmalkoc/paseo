@@ -62,8 +62,7 @@ import { IMPORTABLE_PROVIDERS } from "./provider-registry.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
 import type { RuntimeProfileService } from "./runtime-profile-service.js";
 import { LaunchResolver, type ResolvedAgentLaunch } from "./launch-resolver.js";
-import type { McpRegistryReader } from "./mcp-registry-service.js";
-import { readProviderHomeNativeMcpRegistryEntries } from "./mcp-native-import.js";
+import { readProviderHomeNativeMcpEntries } from "./mcp-native-import.js";
 import { resolveMcpServers } from "./mcp-resolver.js";
 import {
   createManagedProviderHomeRefFromProfile,
@@ -260,7 +259,6 @@ export interface AgentManagerOptions {
   mcpBaseUrl?: string;
   providerAuthService?: ProviderAuthService;
   runtimeProfileService?: RuntimeProfileService;
-  mcpRegistryService?: McpRegistryReader;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   logger: Logger;
@@ -3697,7 +3695,7 @@ export class AgentManager {
     agentId: string,
     config: AgentSessionConfig,
   ): Promise<AgentSessionConfig> {
-    const nativeEntries = await readProviderHomeNativeMcpRegistryEntries({
+    const nativeEntries = await readProviderHomeNativeMcpEntries({
       provider: config.provider,
       providerHomePath: config.providerHomeRef?.homePath,
       accountKey: getManagedProviderHomeProfileKey(config.providerHomeRef),
@@ -3706,7 +3704,6 @@ export class AgentManager {
       entries: nativeEntries,
       provider: config.provider,
       providerHomeRef: config.providerHomeRef,
-      runtimeProfileId: config.runtimeProfileId,
       sessionMcpServers: config.mcpServers,
       injectPaseoTools: this.mcpBaseUrl !== null,
       paseoMcpBaseUrl: this.mcpBaseUrl,

@@ -5,7 +5,6 @@ import { createChatCommand } from "./commands/chat/index.js";
 import { createLoopCommand } from "./commands/loop/index.js";
 import { createPermitCommand } from "./commands/permit/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
-import { createMcpCommand } from "./commands/mcp/index.js";
 import { createScheduleCommand } from "./commands/schedule/index.js";
 import { createSpeechCommand } from "./commands/speech/index.js";
 import { createTerminalCommand } from "./commands/terminal/index.js";
@@ -162,9 +161,6 @@ export function createCli(): Command {
 
   // Provider commands
   program.addCommand(createProviderCommand());
-
-  // MCP registry commands
-  program.addCommand(createMcpCommand());
 
   // Speech model commands
   program.addCommand(createSpeechCommand());

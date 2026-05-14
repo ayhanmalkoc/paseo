@@ -77,13 +77,6 @@ import type {
   ListProviderNativeMcpServersResponseMessage,
   UpsertProviderNativeMcpServerResponseMessage,
   RemoveProviderNativeMcpServerResponseMessage,
-  ListMcpRegistryEntriesResponseMessage,
-  UpsertMcpRegistryEntryResponseMessage,
-  RemoveMcpRegistryEntryResponseMessage,
-  ImportMcpRegistryEntriesResponseMessage,
-  ExplainMcpRegistryResponseMessage,
-  McpRegistryEntryInput,
-  McpRegistryScope,
   McpServerConfig,
   RestartAgentWithRuntimeProfileResponseMessage,
   ListTerminalsResponse,
@@ -379,11 +372,6 @@ type WriteProviderNativeConfigPayload = WriteProviderNativeConfigResponseMessage
 type ListProviderNativeMcpServersPayload = ListProviderNativeMcpServersResponseMessage["payload"];
 type UpsertProviderNativeMcpServerPayload = UpsertProviderNativeMcpServerResponseMessage["payload"];
 type RemoveProviderNativeMcpServerPayload = RemoveProviderNativeMcpServerResponseMessage["payload"];
-type ListMcpRegistryEntriesPayload = ListMcpRegistryEntriesResponseMessage["payload"];
-type UpsertMcpRegistryEntryPayload = UpsertMcpRegistryEntryResponseMessage["payload"];
-type RemoveMcpRegistryEntryPayload = RemoveMcpRegistryEntryResponseMessage["payload"];
-type ImportMcpRegistryEntriesPayload = ImportMcpRegistryEntriesResponseMessage["payload"];
-type ExplainMcpRegistryPayload = ExplainMcpRegistryResponseMessage["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -3812,95 +3800,6 @@ export class DaemonClient {
         id: options.id,
       },
       responseType: "remove_provider_native_mcp_server_response",
-      timeout: 10000,
-    });
-  }
-
-  async listMcpRegistryEntries(options?: {
-    requestId?: string;
-  }): Promise<ListMcpRegistryEntriesPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId: options?.requestId,
-      message: {
-        type: "list_mcp_registry_entries_request",
-      },
-      responseType: "list_mcp_registry_entries_response",
-      timeout: 10000,
-    });
-  }
-
-  async upsertMcpRegistryEntry(options: {
-    entry: McpRegistryEntryInput;
-    requestId?: string;
-  }): Promise<UpsertMcpRegistryEntryPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId: options.requestId,
-      message: {
-        type: "upsert_mcp_registry_entry_request",
-        entry: options.entry,
-      },
-      responseType: "upsert_mcp_registry_entry_response",
-      timeout: 10000,
-    });
-  }
-
-  async removeMcpRegistryEntry(options: {
-    id: string;
-    scope: McpRegistryScope;
-    requestId?: string;
-  }): Promise<RemoveMcpRegistryEntryPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId: options.requestId,
-      message: {
-        type: "remove_mcp_registry_entry_request",
-        id: options.id,
-        scope: options.scope,
-      },
-      responseType: "remove_mcp_registry_entry_response",
-      timeout: 10000,
-    });
-  }
-
-  async importMcpRegistryEntries(options: {
-    provider: AgentProvider;
-    source?: "native";
-    path?: string;
-    requestId?: string;
-  }): Promise<ImportMcpRegistryEntriesPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId: options.requestId,
-      message: {
-        type: "import_mcp_registry_entries_request",
-        provider: options.provider,
-        source: options.source ?? "native",
-        path: options.path,
-      },
-      responseType: "import_mcp_registry_entries_response",
-      timeout: 10000,
-    });
-  }
-
-  async explainMcpRegistry(options: {
-    provider: AgentProvider;
-    accountKey?: string;
-    runtimeProfileId?: string;
-    sessionMcpServers?: Record<string, McpServerConfig>;
-    includeSystem?: boolean;
-    agentId?: string;
-    requestId?: string;
-  }): Promise<ExplainMcpRegistryPayload> {
-    return this.sendCorrelatedSessionRequest({
-      requestId: options.requestId,
-      message: {
-        type: "explain_mcp_registry_request",
-        provider: options.provider,
-        accountKey: options.accountKey,
-        runtimeProfileId: options.runtimeProfileId,
-        sessionMcpServers: options.sessionMcpServers,
-        includeSystem: options.includeSystem,
-        agentId: options.agentId,
-      },
-      responseType: "explain_mcp_registry_response",
       timeout: 10000,
     });
   }

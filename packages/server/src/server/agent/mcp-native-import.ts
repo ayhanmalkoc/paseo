@@ -3,8 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import type { AgentProvider, McpServerConfig } from "./agent-sdk-types.js";
-import type { McpRegistryEntryInput } from "./mcp-registry-service.js";
-import { isReservedMcpServerId, type McpRegistryEntry } from "./mcp-resolver.js";
+import { isReservedMcpServerId, type McpLaunchEntry } from "./mcp-resolver.js";
 
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_CONFIG_FILENAME = "config.toml";
@@ -27,65 +26,17 @@ export interface NativeMcpImportParseResult {
   skipped: NativeMcpImportSkipped[];
 }
 
-export interface NativeMcpImportReadResult {
-  provider: AgentProvider;
-  path: string;
-  entries: McpRegistryEntryInput[];
-  skipped: NativeMcpImportSkipped[];
-}
-
 interface RawMcpTable {
   values: Record<string, unknown>;
   env: Record<string, string>;
   headers: Record<string, string>;
 }
 
-export async function readNativeMcpRegistryEntries(options: {
-  provider: AgentProvider;
-  path?: string;
-  now?: () => Date;
-}): Promise<NativeMcpImportReadResult> {
-  if (options.provider !== CODEX_PROVIDER) {
-    throw new Error(`Native MCP import is not supported for provider '${options.provider}'`);
-  }
-
-  const configPath = resolveCodexNativeConfigPath(options.path);
-  const content = await fs.readFile(configPath, "utf8").catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error(`Codex native config not found at ${configPath}`);
-    }
-    throw error;
-  });
-  const parsed = parseCodexNativeMcpConfigToml(content);
-  const importedAt = (options.now ?? (() => new Date()))().toISOString();
-
-  return {
-    provider: options.provider,
-    path: configPath,
-    entries: parsed.servers
-      .filter((server) => server.enabled)
-      .map((server) => ({
-        id: server.id,
-        scope: { kind: "provider", provider: options.provider },
-        config: server.config,
-        enabled: true,
-        source: "native-import",
-        importedFrom: {
-          provider: options.provider,
-          path: configPath,
-          importedAt,
-        },
-      })),
-    skipped: parsed.skipped,
-  };
-}
-
-export async function readProviderHomeNativeMcpRegistryEntries(options: {
+export async function readProviderHomeNativeMcpEntries(options: {
   provider: AgentProvider;
   providerHomePath?: string | null;
   accountKey?: string | null;
-  now?: () => Date;
-}): Promise<McpRegistryEntry[]> {
+}): Promise<McpLaunchEntry[]> {
   if (options.provider !== CODEX_PROVIDER || !options.providerHomePath || !options.accountKey) {
     return [];
   }
@@ -100,7 +51,6 @@ export async function readProviderHomeNativeMcpRegistryEntries(options: {
     return [];
   }
   const parsed = parseCodexNativeMcpConfigToml(content);
-  const importedAt = (options.now ?? (() => new Date()))().toISOString();
   return parsed.servers
     .filter((server) => server.enabled)
     .map((server) => ({
@@ -112,14 +62,7 @@ export async function readProviderHomeNativeMcpRegistryEntries(options: {
       },
       config: server.config,
       enabled: true,
-      source: "native-import",
-      importedFrom: {
-        provider: options.provider,
-        path: configPath,
-        importedAt,
-      },
-      createdAt: importedAt,
-      updatedAt: importedAt,
+      source: "native-config",
     }));
 }
 
