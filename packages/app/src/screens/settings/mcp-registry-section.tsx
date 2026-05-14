@@ -262,47 +262,73 @@ function McpRegistryEntryRow({
   );
   const handleRemovePress = useCallback(() => onRemove(entry), [entry, onRemove]);
 
+  const rowContent = (
+    <View style={rowContentStyle}>
+      <View style={styles.titleLine}>
+        <Text style={styles.rowTitleText} numberOfLines={1}>
+          {entry.id}
+        </Text>
+        <Text style={styles.sourcePill}>{formatEntrySource(entry)}</Text>
+      </View>
+      <Text style={settingsStyles.rowHint} numberOfLines={2}>
+        {formatMcpConfigSummary(entry.config)}
+      </Text>
+    </View>
+  );
+
+  const enabledSwitch = (
+    <Switch
+      value={entry.enabled}
+      onValueChange={handleEnabledChange}
+      disabled={disabled}
+      accessibilityLabel={`${entry.id} enabled`}
+      testID={`mcp-registry-toggle-${entry.id}`}
+    />
+  );
+
+  const rowActions = (
+    <>
+      <Button
+        variant="ghost"
+        size="xs"
+        leftIcon={Pencil}
+        onPress={handleEditPress}
+        disabled={disabled}
+        testID={`mcp-registry-edit-${entry.id}`}
+      >
+        Edit JSON
+      </Button>
+      <Button
+        variant="ghost"
+        size="xs"
+        leftIcon={Trash2}
+        onPress={handleRemovePress}
+        disabled={disabled}
+        testID={`mcp-registry-remove-${entry.id}`}
+      >
+        Remove
+      </Button>
+    </>
+  );
+
+  if (isCompact) {
+    return (
+      <View style={rowStyle}>
+        <View style={styles.entryHeaderCompact}>
+          {rowContent}
+          <View style={styles.entrySwitchSlot}>{enabledSwitch}</View>
+        </View>
+        <View style={rowActionsStyle}>{rowActions}</View>
+      </View>
+    );
+  }
+
   return (
     <View style={rowStyle}>
-      <View style={rowContentStyle}>
-        <View style={styles.titleLine}>
-          <Text style={styles.rowTitleText} numberOfLines={1}>
-            {entry.id}
-          </Text>
-          <Text style={styles.sourcePill}>{formatEntrySource(entry)}</Text>
-        </View>
-        <Text style={settingsStyles.rowHint} numberOfLines={2}>
-          {formatMcpConfigSummary(entry.config)}
-        </Text>
-      </View>
+      {rowContent}
       <View style={rowActionsStyle}>
-        <Switch
-          value={entry.enabled}
-          onValueChange={handleEnabledChange}
-          disabled={disabled}
-          accessibilityLabel={`${entry.id} enabled`}
-          testID={`mcp-registry-toggle-${entry.id}`}
-        />
-        <Button
-          variant="ghost"
-          size="xs"
-          leftIcon={Pencil}
-          onPress={handleEditPress}
-          disabled={disabled}
-          testID={`mcp-registry-edit-${entry.id}`}
-        >
-          Edit JSON
-        </Button>
-        <Button
-          variant="ghost"
-          size="xs"
-          leftIcon={Trash2}
-          onPress={handleRemovePress}
-          disabled={disabled}
-          testID={`mcp-registry-remove-${entry.id}`}
-        >
-          Remove
-        </Button>
+        {enabledSwitch}
+        {rowActions}
       </View>
     </View>
   );
@@ -524,6 +550,16 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "stretch",
     flexDirection: "column",
     gap: theme.spacing[3],
+  },
+  entryHeaderCompact: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: theme.spacing[3],
+    justifyContent: "space-between",
+  },
+  entrySwitchSlot: {
+    flexShrink: 0,
+    marginLeft: theme.spacing[2],
   },
   rowContentCompact: {
     marginRight: 0,
