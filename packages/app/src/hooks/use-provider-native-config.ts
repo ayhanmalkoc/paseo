@@ -2,7 +2,11 @@ import { useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@server/client/daemon-client";
 import type { AgentProvider } from "@server/server/agent/agent-sdk-types";
-import type { ProviderNativeConfigSnapshot } from "@server/shared/messages";
+import type {
+  McpServerConfig,
+  ProviderNativeConfigSnapshot,
+  ProviderNativeMcpServer,
+} from "@server/shared/messages";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 
@@ -13,6 +17,19 @@ export function providerNativeConfigQueryKey(
 ) {
   return [
     "providerNativeConfig",
+    serverId,
+    provider ?? "__none__",
+    profileKey ?? "__none__",
+  ] as const;
+}
+
+export function providerNativeMcpServersQueryKey(
+  serverId: string | null,
+  provider?: AgentProvider | null,
+  profileKey?: string | null,
+) {
+  return [
+    "providerNativeMcpServers",
     serverId,
     provider ?? "__none__",
     profileKey ?? "__none__",
@@ -109,6 +126,107 @@ export function useProviderNativeConfig(
       await query.refetch();
     },
   };
+}
+
+export function useProviderNativeMcpServers(
+  serverId: string | null,
+  provider?: AgentProvider | null,
+  profileKey?: string | null,
+) {
+  const client = useHostRuntimeClient(serverId ?? "");
+  const queryClient = useQueryClient();
+  const isSupported = useProviderNativeConfigSupport(serverId, provider);
+  const queryKey = useMemo(
+    () => providerNativeMcpServersQueryKey(serverId, provider, profileKey),
+    [profileKey, provider, serverId],
+  );
+  const configQueryKey = useMemo(
+    () => providerNativeConfigQueryKey(serverId, provider, profileKey),
+    [profileKey, provider, serverId],
+  );
+
+  const query = useQuery({
+    queryKey,
+    enabled: Boolean(client && serverId && provider && profileKey && isSupported),
+    queryFn: async () => {
+      const response = await requireClient(client).listProviderNativeMcpServers({
+        provider: requireProvider(provider),
+        profileKey: requireProfileKey(profileKey),
+      });
+      return response.servers;
+    },
+    staleTime: 5_000,
+  });
+
+  const upsertMutation = useMutation({
+    mutationFn: async (input: { id: string; config: McpServerConfig; enabled?: boolean }) => {
+      const response = await requireClient(client).upsertProviderNativeMcpServer({
+        provider: requireProvider(provider),
+        profileKey: requireProfileKey(profileKey),
+        id: input.id,
+        config: input.config,
+        enabled: input.enabled,
+      });
+      return response.server;
+    },
+    onSuccess: async (server: ProviderNativeMcpServer) => {
+      queryClient.setQueryData<ProviderNativeMcpServer[]>(queryKey, (servers) => {
+        const nextServers = servers ? [...servers] : [];
+        const index = nextServers.findIndex((candidate) => candidate.id === server.id);
+        if (index >= 0) {
+          nextServers[index] = server;
+        } else {
+          nextServers.push(server);
+        }
+        return nextServers.sort(compareProviderNativeMcpServers);
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey }),
+        queryClient.invalidateQueries({ queryKey: configQueryKey }),
+      ]);
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await requireClient(client).removeProviderNativeMcpServer({
+        provider: requireProvider(provider),
+        profileKey: requireProfileKey(profileKey),
+        id,
+      });
+      return id;
+    },
+    onSuccess: async (id: string) => {
+      queryClient.setQueryData<ProviderNativeMcpServer[]>(queryKey, (servers) =>
+        (servers ?? []).filter((server) => server.id !== id),
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey }),
+        queryClient.invalidateQueries({ queryKey: configQueryKey }),
+      ]);
+    },
+  });
+
+  return {
+    servers: query.data ?? [],
+    isLoading: query.isPending,
+    isRefreshing: query.isFetching || upsertMutation.isPending || removeMutation.isPending,
+    isSaving: upsertMutation.isPending || removeMutation.isPending,
+    isSupported,
+    error: formatError(query.error ?? upsertMutation.error ?? removeMutation.error),
+    upsert: upsertMutation.mutateAsync,
+    remove: removeMutation.mutateAsync,
+    refetch: async () => {
+      await query.refetch();
+    },
+  };
+}
+
+function compareProviderNativeMcpServers(
+  left: ProviderNativeMcpServer,
+  right: ProviderNativeMcpServer,
+): number {
+  return left.id.localeCompare(right.id);
 }
 
 function requireClient(client: DaemonClient | null): DaemonClient {

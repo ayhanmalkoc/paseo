@@ -17,6 +17,7 @@ export interface NativeMcpImportSkipped {
 export interface NativeMcpServerCandidate {
   id: string;
   config: McpServerConfig;
+  enabled: boolean;
 }
 
 export interface NativeMcpImportParseResult {
@@ -59,18 +60,20 @@ export async function readNativeMcpRegistryEntries(options: {
   return {
     provider: options.provider,
     path: configPath,
-    entries: parsed.servers.map((server) => ({
-      id: server.id,
-      scope: { kind: "provider", provider: options.provider },
-      config: server.config,
-      enabled: true,
-      source: "native-import",
-      importedFrom: {
-        provider: options.provider,
-        path: configPath,
-        importedAt,
-      },
-    })),
+    entries: parsed.servers
+      .filter((server) => server.enabled)
+      .map((server) => ({
+        id: server.id,
+        scope: { kind: "provider", provider: options.provider },
+        config: server.config,
+        enabled: true,
+        source: "native-import",
+        importedFrom: {
+          provider: options.provider,
+          path: configPath,
+          importedAt,
+        },
+      })),
     skipped: parsed.skipped,
   };
 }
@@ -96,24 +99,26 @@ export async function readProviderHomeNativeMcpRegistryEntries(options: {
   }
   const parsed = parseCodexNativeMcpConfigToml(content);
   const importedAt = (options.now ?? (() => new Date()))().toISOString();
-  return parsed.servers.map((server) => ({
-    id: server.id,
-    scope: {
-      kind: "account",
-      provider: options.provider,
-      accountKey: options.accountKey ?? "",
-    },
-    config: server.config,
-    enabled: true,
-    source: "native-import",
-    importedFrom: {
-      provider: options.provider,
-      path: configPath,
-      importedAt,
-    },
-    createdAt: importedAt,
-    updatedAt: importedAt,
-  }));
+  return parsed.servers
+    .filter((server) => server.enabled)
+    .map((server) => ({
+      id: server.id,
+      scope: {
+        kind: "account",
+        provider: options.provider,
+        accountKey: options.accountKey ?? "",
+      },
+      config: server.config,
+      enabled: true,
+      source: "native-import",
+      importedFrom: {
+        provider: options.provider,
+        path: configPath,
+        importedAt,
+      },
+      createdAt: importedAt,
+      updatedAt: importedAt,
+    }));
 }
 
 export function resolveCodexNativeConfigPath(inputPath?: string): string {
@@ -219,12 +224,14 @@ function buildNativeMcpServerCandidate(
   id: string,
   table: RawMcpTable,
 ): NativeMcpServerCandidate | null {
+  const enabled = asBoolean(table.values.enabled) ?? true;
   const command = asString(table.values.command);
   if (command) {
     const args = asStringArray(table.values.args);
     const env = mergeStringRecords(asStringRecord(table.values.env), table.env);
     return {
       id,
+      enabled,
       config: {
         type: "stdio",
         command,
@@ -248,6 +255,7 @@ function buildNativeMcpServerCandidate(
     );
     return {
       id,
+      enabled,
       config: {
         type: transport === "sse" ? "sse" : "http",
         url,
@@ -257,6 +265,96 @@ function buildNativeMcpServerCandidate(
   }
 
   return null;
+}
+
+export function writeCodexNativeMcpServerConfig(input: {
+  content: string;
+  id: string;
+  config: McpServerConfig;
+  enabled?: boolean;
+}): string {
+  const withoutExisting = removeCodexNativeMcpServerConfig(input.content, input.id);
+  const block = formatCodexNativeMcpServerBlock({
+    id: input.id,
+    config: input.config,
+    enabled: input.enabled ?? true,
+  });
+  return normalizeTomlDocument([withoutExisting.trimEnd(), block].filter(Boolean).join("\n\n"));
+}
+
+export function removeCodexNativeMcpServerConfig(content: string, id: string): string {
+  const lines = content.split(/\r?\n/);
+  const nextLines: string[] = [];
+  let skipping = false;
+
+  for (const rawLine of lines) {
+    const header = parseTomlTableHeader(stripTomlComment(rawLine).trim());
+    if (header) {
+      skipping = isCodexNativeMcpTableForId(header, id);
+    }
+    if (!skipping) {
+      nextLines.push(rawLine);
+    }
+  }
+
+  return normalizeTomlDocument(nextLines.join("\n").trimEnd());
+}
+
+function isCodexNativeMcpTableForId(parts: string[], id: string): boolean {
+  return parts[0] === "mcp_servers" && parts[1] === id;
+}
+
+function formatCodexNativeMcpServerBlock(input: {
+  id: string;
+  config: McpServerConfig;
+  enabled: boolean;
+}): string {
+  const keyPath = `mcp_servers.${formatTomlKey(input.id)}`;
+  const lines: string[] = [`[${keyPath}]`];
+
+  if (input.config.type === "stdio") {
+    lines.push(`command = ${formatTomlValue(input.config.command)}`);
+    if (input.config.args && input.config.args.length > 0) {
+      lines.push(`args = ${formatTomlValue(input.config.args)}`);
+    }
+    lines.push(`enabled = ${input.enabled ? "true" : "false"}`);
+    if (input.config.env && Object.keys(input.config.env).length > 0) {
+      lines.push("", `[${keyPath}.env]`);
+      for (const [key, value] of Object.entries(input.config.env).sort()) {
+        lines.push(`${formatTomlKey(key)} = ${formatTomlValue(value)}`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  lines.push(`url = ${formatTomlValue(input.config.url)}`);
+  if (input.config.type === "sse") {
+    lines.push(`transport = "sse"`);
+  }
+  lines.push(`enabled = ${input.enabled ? "true" : "false"}`);
+  if (input.config.headers && Object.keys(input.config.headers).length > 0) {
+    lines.push("", `[${keyPath}.http_headers]`);
+    for (const [key, value] of Object.entries(input.config.headers).sort()) {
+      lines.push(`${formatTomlKey(key)} = ${formatTomlValue(value)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatTomlKey(value: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+function formatTomlValue(value: string | string[]): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => JSON.stringify(item)).join(", ")}]`;
+  }
+  return JSON.stringify(value);
+}
+
+function normalizeTomlDocument(content: string): string {
+  const trimmed = content.trimEnd();
+  return trimmed ? `${trimmed}\n` : "";
 }
 
 function stripTomlComment(line: string): string {
@@ -476,6 +574,10 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((part): part is string => typeof part === "string")
     : [];
+}
+
+function asBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 function asStringRecord(value: unknown): Record<string, string> {

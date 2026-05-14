@@ -1428,7 +1428,7 @@ test("createAgent passes injected MCP auth headers only to provider launch confi
   rmSync(workdir, { recursive: true, force: true });
 });
 
-test("createAgent resolves registry MCP servers before session and system MCP", async () => {
+test("createAgent resolves session MCP before system MCP", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -1450,48 +1450,6 @@ test("createAgent resolves registry MCP servers before session and system MCP", 
     registry: storage,
     logger,
     mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
-    mcpRegistryService: {
-      async listEntries() {
-        return [
-          {
-            id: "shared",
-            scope: { kind: "global" },
-            config: {
-              type: "stdio",
-              command: "global-mcp",
-            },
-            enabled: true,
-            source: "user",
-            createdAt: "2026-05-13T10:00:00.000Z",
-            updatedAt: "2026-05-13T10:00:00.000Z",
-          },
-          {
-            id: "provider-only",
-            scope: { kind: "provider", provider: "codex" },
-            config: {
-              type: "stdio",
-              command: "provider-mcp",
-            },
-            enabled: true,
-            source: "user",
-            createdAt: "2026-05-13T10:00:00.000Z",
-            updatedAt: "2026-05-13T10:00:00.000Z",
-          },
-          {
-            id: "paseo",
-            scope: { kind: "global" },
-            config: {
-              type: "http",
-              url: "https://example.com/fake-paseo",
-            },
-            enabled: true,
-            source: "user",
-            createdAt: "2026-05-13T10:00:00.000Z",
-            updatedAt: "2026-05-13T10:00:00.000Z",
-          },
-        ];
-      },
-    },
     idFactory: () => "00000000-0000-4000-8000-000000000106",
   });
 
@@ -1518,10 +1476,6 @@ test("createAgent resolves registry MCP servers before session and system MCP", 
     shared: {
       type: "stdio",
       command: "session-mcp",
-    },
-    "provider-only": {
-      type: "stdio",
-      command: "provider-mcp",
     },
     "session-only": {
       type: "stdio",

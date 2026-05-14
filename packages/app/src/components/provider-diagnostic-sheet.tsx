@@ -1,4 +1,4 @@
-import { AlertCircle, Check, RotateCw, Search, Trash2 } from "lucide-react-native";
+import { AlertCircle, Check, Pencil, RotateCw, Search, Trash2 } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -13,6 +13,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet, AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Switch } from "@/components/ui/switch";
 import { isWeb } from "@/constants/platform";
 import { Fonts } from "@/constants/theme";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
@@ -20,12 +21,14 @@ import { useAccountLogin } from "@/hooks/use-account-login";
 import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import {
   useProviderNativeConfig,
+  useProviderNativeMcpServers,
   useProviderNativeConfigSupport,
 } from "@/hooks/use-provider-native-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
 import {
   formatProviderAuthUsageSummary,
@@ -38,6 +41,7 @@ import type {
   ProviderAuthProfile,
 } from "@server/server/agent/agent-sdk-types";
 import type { ProviderProfileModel } from "@server/server/agent/provider-launch-config";
+import type { McpServerConfig, ProviderNativeMcpServer } from "@server/shared/messages";
 
 interface ProviderDiagnosticSheetProps {
   provider: string;
@@ -327,9 +331,10 @@ function AuthProfileRow(props: {
   onSetDefault: (profileKey: string) => void;
   onRemove: (profileKey: string) => void;
   onEditConfig?: (profileKey: string) => void;
+  onManageMcp?: (profileKey: string) => void;
 }) {
   const { theme } = useUnistyles();
-  const { profile, busy, onRefresh, onSetDefault, onRemove, onEditConfig } = props;
+  const { profile, busy, onRefresh, onSetDefault, onRemove, onEditConfig, onManageMcp } = props;
   const handleRefresh = useCallback(() => onRefresh(profile.key), [onRefresh, profile.key]);
   const handleSetDefault = useCallback(
     () => onSetDefault(profile.key),
@@ -340,6 +345,7 @@ function AuthProfileRow(props: {
     () => onEditConfig?.(profile.key),
     [onEditConfig, profile.key],
   );
+  const handleManageMcp = useCallback(() => onManageMcp?.(profile.key), [onManageMcp, profile.key]);
   const title = profile.alias || profile.email || "Account";
   const subtitle = formatAuthProfileSubtitle(profile);
   const timeline = formatAuthProfileTimeline(profile);
@@ -417,6 +423,19 @@ function AuthProfileRow(props: {
             Config
           </Button>
         ) : null}
+        {onManageMcp ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            style={sheetStyles.profileActionButton}
+            textStyle={sheetStyles.profileActionButtonText}
+            onPress={handleManageMcp}
+            disabled={busy}
+            accessibilityLabel={`Manage ${title} MCP servers`}
+          >
+            MCP
+          </Button>
+        ) : null}
         <Button
           variant="ghost"
           size="xs"
@@ -445,6 +464,55 @@ function formatUsageRefreshError(error: ProviderAuthProfile["usageRefreshError"]
   return `Usage refresh failed${suffix}: ${error.message}`;
 }
 
+function parseNativeMcpConfig(value: string): McpServerConfig {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("Config JSON is invalid.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Config must be a JSON object.");
+  }
+  const config = parsed as Partial<McpServerConfig>;
+  if (config.type === "stdio") {
+    if (typeof config.command !== "string" || config.command.trim().length === 0) {
+      throw new Error("Stdio MCP config requires command.");
+    }
+    return config as McpServerConfig;
+  }
+  if (config.type === "http" || config.type === "sse") {
+    if (typeof config.url !== "string" || config.url.trim().length === 0) {
+      throw new Error(`${config.type.toUpperCase()} MCP config requires url.`);
+    }
+    return config as McpServerConfig;
+  }
+  throw new Error("Config type must be stdio, http, or sse.");
+}
+
+function formatNativeMcpConfigSummary(config: McpServerConfig): string {
+  if (config.type === "stdio") {
+    const args = config.args?.length ? ` · ${config.args.length} args` : "";
+    const env = config.env && Object.keys(config.env).length > 0 ? " · env" : "";
+    return `stdio · ${config.command}${args}${env}`;
+  }
+  return `${config.type} · ${config.url}`;
+}
+
+function compareProviderNativeMcpServers(
+  left: ProviderNativeMcpServer,
+  right: ProviderNativeMcpServer,
+): number {
+  return left.id.localeCompare(right.id);
+}
+
+function formatNativeMcpError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
 function ProviderAuthProfilesSection(props: {
   provider: string;
   serverId: string;
@@ -465,6 +533,7 @@ function ProviderAuthProfilesSection(props: {
   const [error, setError] = useState<string | null>(null);
   const [loginSessionId, setLoginSessionId] = useState<string | null>(null);
   const [nativeConfigProfileKey, setNativeConfigProfileKey] = useState<string | null>(null);
+  const [nativeMcpProfileKey, setNativeMcpProfileKey] = useState<string | null>(null);
   const autoRefreshedKeysRef = useRef<Set<string>>(new Set());
   const autoRefreshInFlightRef = useRef(false);
   const lastForcedRefreshNonceRef = useRef(0);
@@ -480,7 +549,12 @@ function ProviderAuthProfilesSection(props: {
     () => sortedProfiles.find((profile) => profile.key === nativeConfigProfileKey) ?? null,
     [nativeConfigProfileKey, sortedProfiles],
   );
+  const nativeMcpProfile = useMemo(
+    () => sortedProfiles.find((profile) => profile.key === nativeMcpProfileKey) ?? null,
+    [nativeMcpProfileKey, sortedProfiles],
+  );
   const handleCloseNativeConfig = useCallback(() => setNativeConfigProfileKey(null), []);
+  const handleCloseNativeMcp = useCallback(() => setNativeMcpProfileKey(null), []);
 
   const runAuthAction = useCallback(async (action: () => Promise<unknown>) => {
     setError(null);
@@ -656,6 +730,7 @@ function ProviderAuthProfilesSection(props: {
               onSetDefault={handleSetDefault}
               onRemove={handleRemove}
               onEditConfig={canEditNativeConfig ? setNativeConfigProfileKey : undefined}
+              onManageMcp={canEditNativeConfig ? setNativeMcpProfileKey : undefined}
             />
           ))}
         </View>
@@ -672,6 +747,13 @@ function ProviderAuthProfilesSection(props: {
         profile={nativeConfigProfile}
         visible={!!nativeConfigProfile}
         onClose={handleCloseNativeConfig}
+      />
+      <ProviderNativeMcpSheet
+        provider={providerId}
+        serverId={serverId}
+        profile={nativeMcpProfile}
+        visible={!!nativeMcpProfile}
+        onClose={handleCloseNativeMcp}
       />
     </>
   );
@@ -769,6 +851,302 @@ function ProviderNativeConfigSheet(props: {
       snapPoints={NATIVE_CONFIG_SNAP_POINTS}
     >
       <View style={sheetStyles.nativeConfigSheetContent}>{renderContent()}</View>
+    </AdaptiveModalSheet>
+  );
+}
+
+function ProviderNativeMcpSheet(props: {
+  provider: AgentProvider;
+  serverId: string;
+  profile: ProviderAuthProfile | null;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { provider, serverId, profile, visible, onClose } = props;
+  const [editingServer, setEditingServer] = useState<ProviderNativeMcpServer | null>(null);
+  const [editorVisible, setEditorVisible] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const { servers, isLoading, isSaving, isSupported, error, upsert, remove } =
+    useProviderNativeMcpServers(serverId, provider, profile?.key ?? null);
+
+  useEffect(() => {
+    if (!visible) {
+      setEditingServer(null);
+      setEditorVisible(false);
+      setLocalError(null);
+    }
+  }, [visible]);
+
+  const title = profile?.alias || profile?.email || "Account";
+  const sortedServers = useMemo(
+    () => [...servers].sort(compareProviderNativeMcpServers),
+    [servers],
+  );
+
+  const handleAdd = useCallback(() => {
+    setEditingServer(null);
+    setEditorVisible(true);
+  }, []);
+
+  const handleEdit = useCallback((server: ProviderNativeMcpServer) => {
+    setEditingServer(server);
+    setEditorVisible(true);
+  }, []);
+
+  const handleCloseEditor = useCallback(() => {
+    setEditingServer(null);
+    setEditorVisible(false);
+  }, []);
+
+  const handleSubmit = useCallback(
+    async (input: { id: string; config: McpServerConfig; enabled: boolean }) => {
+      setLocalError(null);
+      await upsert(input);
+      handleCloseEditor();
+    },
+    [handleCloseEditor, upsert],
+  );
+
+  const handleToggle = useCallback(
+    (server: ProviderNativeMcpServer, enabled: boolean) => {
+      setLocalError(null);
+      void upsert({ id: server.id, config: server.config, enabled }).catch((toggleError) => {
+        setLocalError(formatNativeMcpError(toggleError));
+      });
+    },
+    [upsert],
+  );
+
+  const handleRemove = useCallback(
+    (server: ProviderNativeMcpServer) => {
+      void (async () => {
+        const confirmed = await confirmDialog({
+          title: `Remove ${server.id}?`,
+          message: "This removes the MCP server from this provider account config.",
+          confirmLabel: "Remove",
+          destructive: true,
+        });
+        if (!confirmed) {
+          return;
+        }
+        setLocalError(null);
+        await remove(server.id);
+      })().catch((removeError) => {
+        setLocalError(formatNativeMcpError(removeError));
+      });
+    },
+    [remove],
+  );
+
+  const trailing = useMemo(
+    () => (
+      <Button variant="ghost" size="sm" onPress={handleAdd} disabled={!isSupported || isSaving}>
+        Add MCP
+      </Button>
+    ),
+    [handleAdd, isSaving, isSupported],
+  );
+
+  function renderBody() {
+    if (!isSupported) {
+      return <Text style={sheetStyles.errorText}>Native MCP editing is not available.</Text>;
+    }
+    if (isLoading && sortedServers.length === 0) {
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <ActivityIndicator size="small" />
+          <Text style={sheetStyles.mutedText}>Loading MCP servers…</Text>
+        </View>
+      );
+    }
+    if (sortedServers.length === 0) {
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <Text style={sheetStyles.mutedText}>No MCP servers in this account config.</Text>
+        </View>
+      );
+    }
+    return sortedServers.map((server) => (
+      <ProviderNativeMcpRow
+        key={server.id}
+        server={server}
+        busy={isSaving}
+        onToggle={handleToggle}
+        onEdit={handleEdit}
+        onRemove={handleRemove}
+      />
+    ));
+  }
+
+  return (
+    <>
+      <AdaptiveModalSheet
+        title={`${title} MCP`}
+        visible={visible}
+        onClose={onClose}
+        snapPoints={NATIVE_MCP_SNAP_POINTS}
+      >
+        <SettingsSection title="MCP Servers" trailing={trailing}>
+          <View style={settingsStyles.card}>{renderBody()}</View>
+          {error || localError ? (
+            <Text style={sheetStyles.errorText}>{localError ?? error}</Text>
+          ) : null}
+        </SettingsSection>
+      </AdaptiveModalSheet>
+      <ProviderNativeMcpEditor
+        visible={editorVisible}
+        server={editingServer}
+        isSaving={isSaving}
+        onClose={handleCloseEditor}
+        onSubmit={handleSubmit}
+      />
+    </>
+  );
+}
+
+function ProviderNativeMcpRow(props: {
+  server: ProviderNativeMcpServer;
+  busy: boolean;
+  onToggle: (server: ProviderNativeMcpServer, enabled: boolean) => void;
+  onEdit: (server: ProviderNativeMcpServer) => void;
+  onRemove: (server: ProviderNativeMcpServer) => void;
+}) {
+  const { server, busy, onToggle, onEdit, onRemove } = props;
+  const { theme } = useUnistyles();
+  const handleToggle = useCallback(
+    (enabled: boolean) => onToggle(server, enabled),
+    [onToggle, server],
+  );
+  const handleEdit = useCallback(() => onEdit(server), [onEdit, server]);
+  const handleRemove = useCallback(() => onRemove(server), [onRemove, server]);
+
+  return (
+    <View style={MCP_SERVER_ROW_STYLE}>
+      <View style={sheetStyles.mcpServerHeader}>
+        <View style={sheetStyles.mcpServerContent}>
+          <View style={sheetStyles.profileTitleRow}>
+            <Text style={sheetStyles.mcpServerTitle} numberOfLines={1}>
+              {server.id}
+            </Text>
+            <Text style={sheetStyles.nativeMcpBadge}>native</Text>
+          </View>
+          <Text style={sheetStyles.monoHint}>{formatNativeMcpConfigSummary(server.config)}</Text>
+        </View>
+        <Switch
+          value={server.enabled}
+          onValueChange={handleToggle}
+          disabled={busy}
+          accessibilityLabel={`${server.enabled ? "Disable" : "Enable"} ${server.id}`}
+        />
+      </View>
+      <View style={sheetStyles.mcpServerActions}>
+        <Pressable
+          onPress={handleEdit}
+          disabled={busy}
+          hitSlop={8}
+          style={sheetStyles.mcpIconButton}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${server.id} MCP config`}
+        >
+          <Pencil size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+        </Pressable>
+        <Pressable
+          onPress={handleRemove}
+          disabled={busy}
+          hitSlop={8}
+          style={sheetStyles.mcpIconButton}
+          accessibilityRole="button"
+          accessibilityLabel={`Remove ${server.id} MCP server`}
+        >
+          <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function ProviderNativeMcpEditor(props: {
+  visible: boolean;
+  server: ProviderNativeMcpServer | null;
+  isSaving: boolean;
+  onClose: () => void;
+  onSubmit: (input: { id: string; config: McpServerConfig; enabled: boolean }) => Promise<void>;
+}) {
+  const { visible, server, isSaving, onClose, onSubmit } = props;
+  const [id, setId] = useState("");
+  const [configJson, setConfigJson] = useState(DEFAULT_MCP_CONFIG_JSON);
+  const [error, setError] = useState<string | null>(null);
+  const isEditing = Boolean(server);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    setId(server?.id ?? "");
+    setConfigJson(server ? JSON.stringify(server.config, null, 2) : DEFAULT_MCP_CONFIG_JSON);
+    setError(null);
+  }, [server, visible]);
+
+  const handleSave = useCallback(async () => {
+    const nextId = id.trim();
+    if (!nextId) {
+      setError("MCP id is required.");
+      return;
+    }
+    try {
+      const config = parseNativeMcpConfig(configJson);
+      setError(null);
+      await onSubmit({ id: server?.id ?? nextId, config, enabled: server?.enabled ?? true });
+    } catch (saveError) {
+      setError(formatNativeMcpError(saveError));
+    }
+  }, [configJson, id, onSubmit, server]);
+
+  return (
+    <AdaptiveModalSheet
+      title={isEditing ? "Edit MCP JSON" : "Add MCP"}
+      visible={visible}
+      onClose={onClose}
+      desktopMaxWidth={620}
+    >
+      <View style={sheetStyles.nativeConfigSheetContent}>
+        <View style={sheetStyles.fieldGroup}>
+          <Text style={sheetStyles.fieldLabel}>ID</Text>
+          <AdaptiveTextInput
+            value={id}
+            onChangeText={setId}
+            editable={!isEditing}
+            placeholder="context-mode"
+            autoCapitalize="none"
+            autoCorrect={false}
+            // @ts-expect-error - outlineStyle is web-only
+            style={MCP_TEXT_INPUT_STYLE}
+          />
+        </View>
+        <View style={sheetStyles.fieldGroup}>
+          <Text style={sheetStyles.fieldLabel}>Config JSON</Text>
+          <AdaptiveTextInput
+            value={configJson}
+            onChangeText={setConfigJson}
+            placeholder={DEFAULT_MCP_CONFIG_JSON}
+            autoCapitalize="none"
+            autoCorrect={false}
+            multiline
+            textAlignVertical="top"
+            // @ts-expect-error - outlineStyle is web-only
+            style={MCP_JSON_INPUT_STYLE}
+          />
+        </View>
+        {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
+        <View style={sheetStyles.nativeConfigActions}>
+          <Button variant="secondary" onPress={onClose} disabled={isSaving}>
+            Cancel
+          </Button>
+          <Button variant="default" onPress={handleSave} loading={isSaving}>
+            {isEditing ? "Save JSON" : "Save MCP"}
+          </Button>
+        </View>
+      </View>
     </AdaptiveModalSheet>
   );
 }
@@ -1319,10 +1697,65 @@ const sheetStyles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[3],
   },
+  mcpJsonInput: {
+    minHeight: 220,
+  },
+  mcpTextInput: {
+    minHeight: 44,
+  },
   nativeConfigActions: {
     flexDirection: "row",
     justifyContent: "flex-end",
     gap: theme.spacing[2],
+  },
+  fieldGroup: {
+    gap: theme.spacing[2],
+  },
+  fieldLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+  },
+  mcpServerRow: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    justifyContent: "flex-start",
+    gap: theme.spacing[3],
+  },
+  mcpServerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[3],
+  },
+  mcpServerContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mcpServerTitle: {
+    color: theme.colors.foreground,
+    flexShrink: 1,
+    fontSize: theme.fontSize.lg,
+    fontWeight: theme.fontWeight.medium,
+  },
+  nativeMcpBadge: {
+    backgroundColor: theme.colors.surface3,
+    borderRadius: theme.borderRadius.sm,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    overflow: "hidden",
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+  },
+  mcpServerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[4],
+  },
+  mcpIconButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 30,
+    minWidth: 30,
   },
   deviceCode: {
     fontFamily: Fonts.mono,
@@ -1352,15 +1785,40 @@ const sheetStyles = StyleSheet.create((theme) => ({
 const DIAGNOSTIC_SHEET_SNAP_POINTS = ["50%", "85%"];
 const ACCOUNT_LOGIN_SNAP_POINTS = ["45%", "70%"];
 const NATIVE_CONFIG_SNAP_POINTS = ["65%", "90%"];
+const NATIVE_MCP_SNAP_POINTS = ["55%", "85%"];
 const AUTO_USAGE_REFRESH_MAX_AGE_MS = 5 * 60_000;
 const EMPTY_PROVIDER_MODELS: AgentModelDefinition[] = [];
+const DEFAULT_MCP_CONFIG_JSON = JSON.stringify(
+  {
+    type: "stdio",
+    command: "npx",
+    args: ["-y", "example-mcp-server"],
+  },
+  null,
+  2,
+);
 const DIAGNOSTIC_SEARCH_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
 const DIAGNOSTIC_INLINE_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
 const NATIVE_CONFIG_INPUT_STYLE = [
   sheetStyles.nativeConfigInput,
   isWeb && { outlineStyle: "none" },
 ];
+const MCP_TEXT_INPUT_STYLE = [
+  sheetStyles.nativeConfigInput,
+  sheetStyles.mcpTextInput,
+  isWeb && { outlineStyle: "none" },
+];
+const MCP_JSON_INPUT_STYLE = [
+  sheetStyles.nativeConfigInput,
+  sheetStyles.mcpJsonInput,
+  isWeb && { outlineStyle: "none" },
+];
 const MODEL_ROW_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
+const MCP_SERVER_ROW_STYLE = [
+  settingsStyles.row,
+  settingsStyles.rowBorder,
+  sheetStyles.mcpServerRow,
+];
 const AUTH_PROFILE_ROW_STYLE = [
   settingsStyles.row,
   settingsStyles.rowBorder,

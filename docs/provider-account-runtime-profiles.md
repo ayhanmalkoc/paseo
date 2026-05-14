@@ -76,6 +76,10 @@ Implemented surfaces:
   The provider adapter launches Codex with that account home, so native MCP,
   plugin, hook, and other Codex-owned config stays provider-owned and is resolved
   by Codex at launch.
+- Provider account settings expose MCP convenience controls backed by the same
+  account-native config. Toggling, editing, adding, or removing an MCP server
+  updates that account `config.toml`; there is no separate Paseo MCP registry in
+  the active user surface.
 - Active agents can switch account/runtime profile through an explicit restart
   confirmation.
 - Import session sheet can import native provider sessions with source account
@@ -139,6 +143,9 @@ Settings:
 - Add provider installs/configures provider definitions.
 - Accounts manages provider accounts for the selected provider.
 - Accounts owns provider default account selection.
+- Accounts owns provider-native MCP management. The full config editor remains
+  the power-user view; the MCP controls are a focused editor for the
+  `[mcp_servers.*]` blocks in the same provider account config.
 - Runtime profiles manages reusable launch presets. Account selection is
   explicit: Provider default, Native default, or a specific managed account.
 
@@ -218,8 +225,9 @@ Provider-specific follow-up:
 UI invariants:
 
 - Keep feature values structured and provider-defined.
-- Keep environment and MCP server settings as JSON unless a future provider
-  exposes a narrower schema.
+- Keep environment settings as JSON unless a future provider exposes a narrower
+  schema. Keep MCP server controls account-native and backed by provider config,
+  with JSON editing only for an individual MCP server payload.
 - Keep Add provider, Add account, and Runtime profile copy visually distinct:
   provider installs/enables a tool, account authenticates that provider, runtime
   profile saves a reusable launch preset.
