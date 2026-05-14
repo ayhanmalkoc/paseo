@@ -548,6 +548,15 @@ export const McpRegistryImportSkippedSchema = z.object({
   reason: z.string(),
 });
 
+export const ProviderNativeConfigSnapshotSchema = z.object({
+  provider: AgentProviderSchema,
+  profileKey: z.string().trim().min(1),
+  path: z.string(),
+  content: z.string(),
+  exists: z.boolean(),
+  updatedAt: z.string().optional(),
+});
+
 const ResolvedMcpSourceInfoSchema = z.object({
   scope: z.enum(["global", "provider", "account", "runtimeProfile", "session", "system"]),
   source: z.enum(["user", "native-import", "session", "system"]),
@@ -1503,6 +1512,21 @@ export const DeleteRuntimeProfileRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const ReadProviderNativeConfigRequestMessageSchema = z.object({
+  type: z.literal("read_provider_native_config_request"),
+  provider: AgentProviderSchema,
+  profileKey: z.string().trim().min(1),
+  requestId: z.string(),
+});
+
+export const WriteProviderNativeConfigRequestMessageSchema = z.object({
+  type: z.literal("write_provider_native_config_request"),
+  provider: AgentProviderSchema,
+  profileKey: z.string().trim().min(1),
+  content: z.string(),
+  requestId: z.string(),
+});
+
 export const ListMcpRegistryEntriesRequestMessageSchema = z.object({
   type: z.literal("list_mcp_registry_entries_request"),
   requestId: z.string(),
@@ -2247,6 +2271,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CreateRuntimeProfileRequestMessageSchema,
   UpdateRuntimeProfileRequestMessageSchema,
   DeleteRuntimeProfileRequestMessageSchema,
+  ReadProviderNativeConfigRequestMessageSchema,
+  WriteProviderNativeConfigRequestMessageSchema,
   ListMcpRegistryEntriesRequestMessageSchema,
   UpsertMcpRegistryEntryRequestMessageSchema,
   RemoveMcpRegistryEntryRequestMessageSchema,
@@ -2506,6 +2532,8 @@ export const ServerInfoStatusPayloadSchema = z
         runtimeProfiles: z.boolean().optional(),
         agentProfileSnapshots: z.boolean().optional(),
         mcpRegistry: z.boolean().optional(),
+        providerNativeConfig: z.boolean().optional(),
+        providerNativeConfigProviders: z.array(AgentProviderSchema).optional(),
       })
       .optional(),
   })
@@ -3854,6 +3882,22 @@ export const RuntimeProfilesUpdateMessageSchema = z.object({
   }),
 });
 
+export const ReadProviderNativeConfigResponseMessageSchema = z.object({
+  type: z.literal("read_provider_native_config_response"),
+  payload: z.object({
+    config: ProviderNativeConfigSnapshotSchema,
+    requestId: z.string(),
+  }),
+});
+
+export const WriteProviderNativeConfigResponseMessageSchema = z.object({
+  type: z.literal("write_provider_native_config_response"),
+  payload: z.object({
+    config: ProviderNativeConfigSnapshotSchema,
+    requestId: z.string(),
+  }),
+});
+
 export const ListMcpRegistryEntriesResponseMessageSchema = z.object({
   type: z.literal("list_mcp_registry_entries_response"),
   payload: z.object({
@@ -4141,6 +4185,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   UpdateRuntimeProfileResponseMessageSchema,
   DeleteRuntimeProfileResponseMessageSchema,
   RuntimeProfilesUpdateMessageSchema,
+  ReadProviderNativeConfigResponseMessageSchema,
+  WriteProviderNativeConfigResponseMessageSchema,
   ListMcpRegistryEntriesResponseMessageSchema,
   UpsertMcpRegistryEntryResponseMessageSchema,
   RemoveMcpRegistryEntryResponseMessageSchema,
@@ -4319,6 +4365,13 @@ export type DeleteRuntimeProfileResponseMessage = z.infer<
   typeof DeleteRuntimeProfileResponseMessageSchema
 >;
 export type RuntimeProfilesUpdateMessage = z.infer<typeof RuntimeProfilesUpdateMessageSchema>;
+export type ProviderNativeConfigSnapshot = z.infer<typeof ProviderNativeConfigSnapshotSchema>;
+export type ReadProviderNativeConfigResponseMessage = z.infer<
+  typeof ReadProviderNativeConfigResponseMessageSchema
+>;
+export type WriteProviderNativeConfigResponseMessage = z.infer<
+  typeof WriteProviderNativeConfigResponseMessageSchema
+>;
 export type ListMcpRegistryEntriesResponseMessage = z.infer<
   typeof ListMcpRegistryEntriesResponseMessageSchema
 >;
@@ -4433,6 +4486,12 @@ export type UpdateRuntimeProfileRequestMessage = z.infer<
 >;
 export type DeleteRuntimeProfileRequestMessage = z.infer<
   typeof DeleteRuntimeProfileRequestMessageSchema
+>;
+export type ReadProviderNativeConfigRequestMessage = z.infer<
+  typeof ReadProviderNativeConfigRequestMessageSchema
+>;
+export type WriteProviderNativeConfigRequestMessage = z.infer<
+  typeof WriteProviderNativeConfigRequestMessageSchema
 >;
 export type ChatCreateRequest = z.infer<typeof ChatCreateRequestSchema>;
 export type ChatListRequest = z.infer<typeof ChatListRequestSchema>;

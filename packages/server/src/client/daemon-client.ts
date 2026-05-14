@@ -72,6 +72,8 @@ import type {
   CreateRuntimeProfileResponseMessage,
   UpdateRuntimeProfileResponseMessage,
   DeleteRuntimeProfileResponseMessage,
+  ReadProviderNativeConfigResponseMessage,
+  WriteProviderNativeConfigResponseMessage,
   ListMcpRegistryEntriesResponseMessage,
   UpsertMcpRegistryEntryResponseMessage,
   RemoveMcpRegistryEntryResponseMessage,
@@ -369,6 +371,8 @@ type ListRuntimeProfilesPayload = ListRuntimeProfilesResponseMessage["payload"];
 type CreateRuntimeProfilePayload = CreateRuntimeProfileResponseMessage["payload"];
 type UpdateRuntimeProfilePayload = UpdateRuntimeProfileResponseMessage["payload"];
 type DeleteRuntimeProfilePayload = DeleteRuntimeProfileResponseMessage["payload"];
+type ReadProviderNativeConfigPayload = ReadProviderNativeConfigResponseMessage["payload"];
+type WriteProviderNativeConfigPayload = WriteProviderNativeConfigResponseMessage["payload"];
 type ListMcpRegistryEntriesPayload = ListMcpRegistryEntriesResponseMessage["payload"];
 type UpsertMcpRegistryEntryPayload = UpsertMcpRegistryEntryResponseMessage["payload"];
 type RemoveMcpRegistryEntryPayload = RemoveMcpRegistryEntryResponseMessage["payload"];
@@ -3707,6 +3711,42 @@ export class DaemonClient {
         profileId: options.profileId,
       },
       responseType: "delete_runtime_profile_response",
+      timeout: 10000,
+    });
+  }
+
+  async readProviderNativeConfig(options: {
+    provider: AgentProvider;
+    profileKey: string;
+    requestId?: string;
+  }): Promise<ReadProviderNativeConfigPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "read_provider_native_config_request",
+        provider: options.provider,
+        profileKey: options.profileKey,
+      },
+      responseType: "read_provider_native_config_response",
+      timeout: 10000,
+    });
+  }
+
+  async writeProviderNativeConfig(options: {
+    provider: AgentProvider;
+    profileKey: string;
+    content: string;
+    requestId?: string;
+  }): Promise<WriteProviderNativeConfigPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "write_provider_native_config_request",
+        provider: options.provider,
+        profileKey: options.profileKey,
+        content: options.content,
+      },
+      responseType: "write_provider_native_config_response",
       timeout: 10000,
     });
   }

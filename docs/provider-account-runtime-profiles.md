@@ -72,6 +72,10 @@ Implemented surfaces:
   JSON because it is open-ended power-user configuration. MCP and provider-native
   details live in provider settings/native config, not in runtime profile
   presets.
+- Codex account settings can read and write the managed account `config.toml`.
+  The provider adapter launches Codex with that account home, so native MCP,
+  plugin, hook, and other Codex-owned config stays provider-owned and is resolved
+  by Codex at launch.
 - Active agents can switch account/runtime profile through an explicit restart
   confirmation.
 - Import session sheet can import native provider sessions with source account

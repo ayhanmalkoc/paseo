@@ -18,6 +18,10 @@ import { Fonts } from "@/constants/theme";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useAccountLogin } from "@/hooks/use-account-login";
 import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
+import {
+  useProviderNativeConfig,
+  useProviderNativeConfigSupport,
+} from "@/hooks/use-provider-native-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { SettingsSection } from "@/screens/settings/settings-section";
@@ -322,15 +326,20 @@ function AuthProfileRow(props: {
   onRefresh: (profileKey: string) => void;
   onSetDefault: (profileKey: string) => void;
   onRemove: (profileKey: string) => void;
+  onEditConfig?: (profileKey: string) => void;
 }) {
   const { theme } = useUnistyles();
-  const { profile, busy, onRefresh, onSetDefault, onRemove } = props;
+  const { profile, busy, onRefresh, onSetDefault, onRemove, onEditConfig } = props;
   const handleRefresh = useCallback(() => onRefresh(profile.key), [onRefresh, profile.key]);
   const handleSetDefault = useCallback(
     () => onSetDefault(profile.key),
     [onSetDefault, profile.key],
   );
   const handleRemove = useCallback(() => onRemove(profile.key), [onRemove, profile.key]);
+  const handleEditConfig = useCallback(
+    () => onEditConfig?.(profile.key),
+    [onEditConfig, profile.key],
+  );
   const title = profile.alias || profile.email || "Account";
   const subtitle = formatAuthProfileSubtitle(profile);
   const timeline = formatAuthProfileTimeline(profile);
@@ -395,6 +404,19 @@ function AuthProfileRow(props: {
         >
           Refresh
         </Button>
+        {onEditConfig ? (
+          <Button
+            variant="ghost"
+            size="xs"
+            style={sheetStyles.profileActionButton}
+            textStyle={sheetStyles.profileActionButtonText}
+            onPress={handleEditConfig}
+            disabled={busy}
+            accessibilityLabel={`Edit ${title} native config`}
+          >
+            Config
+          </Button>
+        ) : null}
         <Button
           variant="ghost"
           size="xs"
@@ -442,15 +464,23 @@ function ProviderAuthProfilesSection(props: {
   } = useProviderAuthProfiles(serverId, provider as AgentProvider);
   const [error, setError] = useState<string | null>(null);
   const [loginSessionId, setLoginSessionId] = useState<string | null>(null);
+  const [nativeConfigProfileKey, setNativeConfigProfileKey] = useState<string | null>(null);
   const autoRefreshedKeysRef = useRef<Set<string>>(new Set());
   const autoRefreshInFlightRef = useRef(false);
   const lastForcedRefreshNonceRef = useRef(0);
-  const accountLogin = useAccountLogin(serverId, provider as AgentProvider);
+  const providerId = provider as AgentProvider;
+  const accountLogin = useAccountLogin(serverId, providerId);
+  const canEditNativeConfig = useProviderNativeConfigSupport(serverId, providerId);
   const loginSession = useMemo(
     () => accountLogin.sessions.find((session) => session.id === loginSessionId) ?? null,
     [accountLogin.sessions, loginSessionId],
   );
   const sortedProfiles = useMemo(() => sortAuthProfiles(profiles), [profiles]);
+  const nativeConfigProfile = useMemo(
+    () => sortedProfiles.find((profile) => profile.key === nativeConfigProfileKey) ?? null,
+    [nativeConfigProfileKey, sortedProfiles],
+  );
+  const handleCloseNativeConfig = useCallback(() => setNativeConfigProfileKey(null), []);
 
   const runAuthAction = useCallback(async (action: () => Promise<unknown>) => {
     setError(null);
@@ -625,6 +655,7 @@ function ProviderAuthProfilesSection(props: {
               onRefresh={handleRefresh}
               onSetDefault={handleSetDefault}
               onRemove={handleRemove}
+              onEditConfig={canEditNativeConfig ? setNativeConfigProfileKey : undefined}
             />
           ))}
         </View>
@@ -635,7 +666,110 @@ function ProviderAuthProfilesSection(props: {
         visible={!!loginSession}
         onClose={handleCloseLogin}
       />
+      <ProviderNativeConfigSheet
+        provider={providerId}
+        serverId={serverId}
+        profile={nativeConfigProfile}
+        visible={!!nativeConfigProfile}
+        onClose={handleCloseNativeConfig}
+      />
     </>
+  );
+}
+
+function ProviderNativeConfigSheet(props: {
+  provider: AgentProvider;
+  serverId: string;
+  profile: ProviderAuthProfile | null;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { provider, serverId, profile, visible, onClose } = props;
+  const { theme } = useUnistyles();
+  const [draft, setDraft] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+  const { config, isLoading, isSaving, isSupported, error, save } = useProviderNativeConfig(
+    serverId,
+    provider,
+    profile?.key ?? null,
+  );
+
+  useEffect(() => {
+    if (!visible) {
+      setDraft("");
+      setLocalError(null);
+      return;
+    }
+    if (config) {
+      setDraft(config.content);
+      setLocalError(null);
+    }
+  }, [config, visible]);
+
+  const title = profile?.alias || profile?.email || "Account";
+  const handleSave = useCallback(async () => {
+    setLocalError(null);
+    try {
+      await save(draft);
+      onClose();
+    } catch (saveError) {
+      setLocalError(saveError instanceof Error ? saveError.message : String(saveError));
+    }
+  }, [draft, onClose, save]);
+
+  const renderContent = () => {
+    if (!isSupported) {
+      return <Text style={sheetStyles.errorText}>Native config editing is not available.</Text>;
+    }
+    if (isLoading && !config) {
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <ActivityIndicator size="small" />
+          <Text style={sheetStyles.mutedText}>Loading config…</Text>
+        </View>
+      );
+    }
+    return (
+      <>
+        <Text style={sheetStyles.monoHint} selectable>
+          {config?.path ?? "config.toml"}
+        </Text>
+        <AdaptiveTextInput
+          value={draft}
+          onChangeText={setDraft}
+          placeholder="[mcp_servers.example]"
+          placeholderTextColor={theme.colors.foregroundMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          multiline
+          textAlignVertical="top"
+          // @ts-expect-error - outlineStyle is web-only
+          style={NATIVE_CONFIG_INPUT_STYLE}
+        />
+        {error || localError ? (
+          <Text style={sheetStyles.errorText}>{localError ?? error}</Text>
+        ) : null}
+        <View style={sheetStyles.nativeConfigActions}>
+          <Button variant="secondary" onPress={onClose} disabled={isSaving}>
+            Cancel
+          </Button>
+          <Button variant="default" onPress={handleSave} loading={isSaving}>
+            Save config
+          </Button>
+        </View>
+      </>
+    );
+  };
+
+  return (
+    <AdaptiveModalSheet
+      title={`${title} config`}
+      visible={visible}
+      onClose={onClose}
+      snapPoints={NATIVE_CONFIG_SNAP_POINTS}
+    >
+      <View style={sheetStyles.nativeConfigSheetContent}>{renderContent()}</View>
+    </AdaptiveModalSheet>
   );
 }
 
@@ -1170,6 +1304,26 @@ const sheetStyles = StyleSheet.create((theme) => ({
   loginSheetContent: {
     gap: theme.spacing[4],
   },
+  nativeConfigSheetContent: {
+    gap: theme.spacing[3],
+  },
+  nativeConfigInput: {
+    minHeight: 260,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    color: theme.colors.foreground,
+    fontFamily: Fonts.mono,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 18,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[3],
+  },
+  nativeConfigActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+  },
   deviceCode: {
     fontFamily: Fonts.mono,
     fontSize: theme.fontSize.xl,
@@ -1197,10 +1351,15 @@ const sheetStyles = StyleSheet.create((theme) => ({
 
 const DIAGNOSTIC_SHEET_SNAP_POINTS = ["50%", "85%"];
 const ACCOUNT_LOGIN_SNAP_POINTS = ["45%", "70%"];
+const NATIVE_CONFIG_SNAP_POINTS = ["65%", "90%"];
 const AUTO_USAGE_REFRESH_MAX_AGE_MS = 5 * 60_000;
 const EMPTY_PROVIDER_MODELS: AgentModelDefinition[] = [];
 const DIAGNOSTIC_SEARCH_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
 const DIAGNOSTIC_INLINE_INPUT_STYLE = [sheetStyles.inlineInput, isWeb && { outlineStyle: "none" }];
+const NATIVE_CONFIG_INPUT_STYLE = [
+  sheetStyles.nativeConfigInput,
+  isWeb && { outlineStyle: "none" },
+];
 const MODEL_ROW_STYLE = [settingsStyles.row, settingsStyles.rowBorder];
 const AUTH_PROFILE_ROW_STYLE = [
   settingsStyles.row,

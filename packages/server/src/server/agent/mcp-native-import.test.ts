@@ -1,6 +1,11 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import {
   parseCodexNativeMcpConfigToml,
+  readProviderHomeNativeMcpRegistryEntries,
   resolveCodexNativeConfigPath,
 } from "./mcp-native-import.js";
 
@@ -96,5 +101,68 @@ describe("resolveCodexNativeConfigPath", () => {
   test("accepts a Codex home directory or config file path", () => {
     expect(resolveCodexNativeConfigPath("/tmp/codex")).toBe("/tmp/codex/config.toml");
     expect(resolveCodexNativeConfigPath("/tmp/codex/config.toml")).toBe("/tmp/codex/config.toml");
+  });
+});
+
+describe("readProviderHomeNativeMcpRegistryEntries", () => {
+  const tempRoots: string[] = [];
+
+  afterEach(() => {
+    for (const root of tempRoots.splice(0)) {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("reads account-scoped MCP entries from a managed Codex home", async () => {
+    const providerHomePath = mkdtempSync(path.join(tmpdir(), "paseo-codex-home-"));
+    tempRoots.push(providerHomePath);
+    await fs.writeFile(
+      path.join(providerHomePath, "config.toml"),
+      `[mcp_servers.context_mode]
+command = "context-mode"
+`,
+      "utf8",
+    );
+
+    const entries = await readProviderHomeNativeMcpRegistryEntries({
+      provider: "codex",
+      providerHomePath,
+      accountKey: "work",
+      now: () => new Date("2026-05-14T10:00:00.000Z"),
+    });
+
+    expect(entries).toEqual([
+      {
+        id: "context_mode",
+        scope: { kind: "account", provider: "codex", accountKey: "work" },
+        config: { type: "stdio", command: "context-mode" },
+        enabled: true,
+        source: "native-import",
+        importedFrom: {
+          provider: "codex",
+          path: path.join(providerHomePath, "config.toml"),
+          importedAt: "2026-05-14T10:00:00.000Z",
+        },
+        createdAt: "2026-05-14T10:00:00.000Z",
+        updatedAt: "2026-05-14T10:00:00.000Z",
+      },
+    ]);
+  });
+
+  test("ignores unsupported providers and missing config files during launch resolution", async () => {
+    await expect(
+      readProviderHomeNativeMcpRegistryEntries({
+        provider: "claude",
+        providerHomePath: "/tmp/missing",
+        accountKey: "work",
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      readProviderHomeNativeMcpRegistryEntries({
+        provider: "codex",
+        providerHomePath: "/tmp/missing",
+        accountKey: "work",
+      }),
+    ).resolves.toEqual([]);
   });
 });

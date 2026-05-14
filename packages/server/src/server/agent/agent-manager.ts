@@ -63,6 +63,7 @@ import type { ProviderAuthService } from "./provider-auth-service.js";
 import type { RuntimeProfileService } from "./runtime-profile-service.js";
 import { LaunchResolver, type ResolvedAgentLaunch } from "./launch-resolver.js";
 import type { McpRegistryReader } from "./mcp-registry-service.js";
+import { readProviderHomeNativeMcpRegistryEntries } from "./mcp-native-import.js";
 import { resolveMcpServers } from "./mcp-resolver.js";
 import {
   createManagedProviderHomeRefFromProfile,
@@ -3698,9 +3699,16 @@ export class AgentManager {
     agentId: string,
     config: AgentSessionConfig,
   ): Promise<AgentSessionConfig> {
-    const entries = this.mcpRegistryService ? await this.mcpRegistryService.listEntries() : [];
+    const [nativeEntries, registryEntries] = await Promise.all([
+      readProviderHomeNativeMcpRegistryEntries({
+        provider: config.provider,
+        providerHomePath: config.providerHomeRef?.homePath,
+        accountKey: getManagedProviderHomeProfileKey(config.providerHomeRef),
+      }),
+      this.mcpRegistryService ? this.mcpRegistryService.listEntries() : [],
+    ]);
     const resolved = resolveMcpServers({
-      entries,
+      entries: [...nativeEntries, ...registryEntries],
       provider: config.provider,
       providerHomeRef: config.providerHomeRef,
       runtimeProfileId: config.runtimeProfileId,
