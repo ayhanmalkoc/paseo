@@ -17,6 +17,16 @@
     },
     "typecheck": {
       "command": "npm run typecheck"
+    },
+    "tailnet dev daemon": {
+      "type": "service",
+      "port": 7777,
+      "command": "TS_HOST=\"$(tailscale status --json | node -e 'let s=\"\";process.stdin.on(\"data\",d=>s+=d);process.stdin.on(\"end\",()=>{const j=JSON.parse(s);console.log((j.Self.DNSName||\"\").replace(/\\.$/,\"\"));});')\" && export PASEO_HOME=\"${PASEO_HOME:-$HOME/paseo-dev-local}\" && mkdir -p \"$PASEO_HOME\" && PASSWORD_FILE=\"${PASEO_DEV_PASSWORD_FILE:-$HOME/.paseo-dev-password}\" && if [ ! -r \"$PASSWORD_FILE\" ]; then echo \"Missing password file: $PASSWORD_FILE\" >&2; exit 1; fi && export PASEO_PASSWORD=\"$(tr -d '\\r\\n' < \"$PASSWORD_FILE\")\" && PASEO_LISTEN=\"127.0.0.1:${PASEO_PORT}\" PASEO_HOSTNAMES=\"$TS_HOST\" PASEO_CORS_ORIGINS=\"http://$TS_HOST:${PASEO_SERVICE_TAILNET_DEV_APP_PORT},https://$TS_HOST,https://$TS_HOST:${PASEO_SERVICE_TAILNET_DEV_APP_PORT}\" ./scripts/dev-daemon.sh"
+    },
+    "tailnet dev app": {
+      "type": "service",
+      "port": 8081,
+      "command": "TS_HOST=\"$(tailscale status --json | node -e 'let s=\"\";process.stdin.on(\"data\",d=>s+=d);process.stdin.on(\"end\",()=>{const j=JSON.parse(s);console.log((j.Self.DNSName||\"\").replace(/\\.$/,\"\"));});')\" && cd packages/app && BROWSER=none APP_VARIANT=development EXPO_PUBLIC_LOCAL_DAEMON=\"$TS_HOST:${PASEO_SERVICE_TAILNET_DEV_DAEMON_PORT}\" npx expo start --host lan --port \"$PASEO_PORT\" --clear"
     }
   }
 }
