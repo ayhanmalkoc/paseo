@@ -79,7 +79,25 @@ describe("CodexProviderAuthAdapter", () => {
         JSON.stringify({ OPENAI_API_KEY: "sk-test-secret" }),
         "utf8",
       );
-      await fs.writeFile(path.join(sourceHome, "config.toml"), 'model = "gpt-5.4"\n', "utf8");
+      await fs.writeFile(
+        path.join(sourceHome, "config.toml"),
+        `[hooks.state."${path.join(sourceHome, "hooks.json")}:stop:0:0"]\ntrusted_hash = "abc"\n\nmodel = "gpt-5.4"\n`,
+        "utf8",
+      );
+      await fs.writeFile(
+        path.join(sourceHome, "hooks.json"),
+        JSON.stringify({
+          hooks: {
+            Stop: [
+              {
+                matcher: "",
+                hooks: [{ type: "command", command: "context-mode hook codex stop" }],
+              },
+            ],
+          },
+        }),
+        "utf8",
+      );
 
       const adapter = new CodexProviderAuthAdapter({
         usageReader: async () => {
@@ -100,6 +118,14 @@ describe("CodexProviderAuthAdapter", () => {
       await expect(
         fs.readFile(path.join(profile.providerHomePath, "config.toml"), "utf8"),
       ).resolves.toContain("gpt-5.4");
+      await expect(
+        fs.readFile(path.join(profile.providerHomePath, "config.toml"), "utf8"),
+      ).resolves.toContain(
+        `[hooks.state."${path.join(profile.providerHomePath, "hooks.json")}:stop:0:0"]`,
+      );
+      await expect(
+        fs.readFile(path.join(profile.providerHomePath, "hooks.json"), "utf8"),
+      ).resolves.toContain("context-mode hook codex stop");
       expect(adapter.resolveLaunchContext(profile)).toEqual({
         profileKey: profile.key,
         providerHomeRef: {
@@ -123,7 +149,7 @@ describe("CodexProviderAuthAdapter", () => {
     }
   });
 
-  it("does not overwrite an existing managed Codex config during refresh", async () => {
+  it("does not overwrite an existing provider-managed Codex config during re-import", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-codex-auth-refresh-"));
     try {
       const sourceHome = path.join(root, "source-codex");
@@ -145,8 +171,9 @@ describe("CodexProviderAuthAdapter", () => {
         path.join(sourceHome, "auth.json"),
         createContext(providerBaseDir),
       );
+      const providerConfigPath = path.join(providerBaseDir, "config", "config.toml");
       await fs.writeFile(
-        path.join(profile.providerHomePath, "config.toml"),
+        providerConfigPath,
         '# paseo-disabled-mcp-server "context-mode"\n# [mcp_servers.context-mode]\n# command = "context-mode"\n# /paseo-disabled-mcp-server\n',
         "utf8",
       );
@@ -161,6 +188,12 @@ describe("CodexProviderAuthAdapter", () => {
         createContext(providerBaseDir),
       );
 
+      await expect(fs.readFile(providerConfigPath, "utf8")).resolves.toContain(
+        "# paseo-disabled-mcp-server",
+      );
+      await expect(fs.readFile(providerConfigPath, "utf8")).resolves.not.toContain(
+        "new-source-model",
+      );
       await expect(
         fs.readFile(path.join(profile.providerHomePath, "config.toml"), "utf8"),
       ).resolves.toContain("# paseo-disabled-mcp-server");
