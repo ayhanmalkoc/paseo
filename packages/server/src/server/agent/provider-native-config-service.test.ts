@@ -13,12 +13,14 @@ describe("ProviderNativeConfigService", () => {
   let tempRoot: string;
   let providerHomePath: string;
   let providerConfigPath: string;
+  let providerHooksPath: string;
   let nativeCodexHome: string;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(path.join(tmpdir(), "paseo-provider-native-config-"));
     providerHomePath = path.join(tempRoot, "providers", "codex", "accounts", "work", "home");
     providerConfigPath = path.join(tempRoot, "providers", "codex", "config", "config.toml");
+    providerHooksPath = path.join(tempRoot, "providers", "codex", "config", "hooks.json");
     nativeCodexHome = path.join(tempRoot, "native-codex");
     await fs.mkdir(providerHomePath, { recursive: true });
     await fs.mkdir(nativeCodexHome, { recursive: true });
@@ -103,9 +105,25 @@ describe("ProviderNativeConfigService", () => {
     const service = createService();
     await fs.mkdir(path.dirname(providerConfigPath), { recursive: true });
     await fs.writeFile(providerConfigPath, '[mcp_servers.old]\ncommand = "old"\n');
+    await fs.writeFile(providerHooksPath, '{"hooks":{"Stop":[]}}\n');
+    const nativeHooksPath = path.join(nativeCodexHome, "hooks.json");
+    const accountHooksPath = path.join(providerHomePath, "hooks.json");
     await fs.writeFile(
       path.join(nativeCodexHome, "config.toml"),
-      '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
+      `[hooks.state."${nativeHooksPath}:stop:0:0"]\ntrusted_hash = "abc"\n\n[mcp_servers.context-mode]\ncommand = "context-mode"\n`,
+    );
+    await fs.writeFile(
+      nativeHooksPath,
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              matcher: "",
+              hooks: [{ type: "command", command: "context-mode hook codex stop" }],
+            },
+          ],
+        },
+      }),
     );
 
     const snapshot = await service.syncProviderConfigFromNative({
@@ -115,13 +133,22 @@ describe("ProviderNativeConfigService", () => {
     expect(snapshot).toMatchObject({
       provider: "codex",
       exists: true,
-      content: '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
     });
-    await expect(fs.readFile(providerConfigPath, "utf8")).resolves.toBe(
-      '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
+    await expect(fs.readFile(providerConfigPath, "utf8")).resolves.toContain(
+      `[hooks.state."${providerHooksPath}:stop:0:0"]`,
     );
-    await expect(fs.readFile(path.join(providerHomePath, "config.toml"), "utf8")).resolves.toBe(
-      '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
+    await expect(fs.readFile(providerConfigPath, "utf8")).resolves.not.toContain(nativeHooksPath);
+    await expect(fs.readFile(providerHooksPath, "utf8")).resolves.toContain(
+      "context-mode hook codex stop",
+    );
+    await expect(
+      fs.readFile(path.join(providerHomePath, "config.toml"), "utf8"),
+    ).resolves.toContain(`[hooks.state."${accountHooksPath}:stop:0:0"]`);
+    await expect(
+      fs.readFile(path.join(providerHomePath, "config.toml"), "utf8"),
+    ).resolves.not.toContain(providerHooksPath);
+    await expect(fs.readFile(accountHooksPath, "utf8")).resolves.toContain(
+      "context-mode hook codex stop",
     );
   });
 

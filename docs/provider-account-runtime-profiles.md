@@ -100,12 +100,16 @@ Provider-owned state uses a readable provider tree:
 ```text
 $PASEO_HOME/providers/
   codex/
+    config/
+      config.toml
+      hooks.json
     accounts/
       <account-alias-key>/
         metadata.json
         home/
           auth.json
           config.toml
+          hooks.json
     pending/
       <login-session-id>/
         home/
@@ -118,8 +122,9 @@ first time the new registry is created. New code reads and writes
 
 Runtime profiles remain launch presets. They select provider/account/model and
 runtime behavior. Provider-native configuration such as Codex `config.toml`,
-MCP server details, plugins, hooks, and future provider extras stays with the
-provider/account home and is resolved at launch.
+`hooks.json`, MCP server details, plugins, hooks, and future provider extras is
+owned by the provider config tree and materialized into the selected account
+home at launch.
 
 ## Codex Session Continuity
 
@@ -147,9 +152,9 @@ Settings:
 - Add provider installs/configures provider definitions.
 - Accounts manages provider accounts for the selected provider.
 - Accounts owns provider default account selection.
-- Accounts owns provider-native MCP management. The full config editor remains
+- Provider config owns provider-native MCP management. The full config editor remains
   the power-user view; the MCP controls are a focused editor for the
-  `[mcp_servers.*]` blocks in the same provider account config.
+  `[mcp_servers.*]` blocks in the same provider config.
 - Runtime profiles manages reusable launch presets. Account selection is
   explicit: Provider default, Native default, or a specific managed account.
 
@@ -230,7 +235,7 @@ UI invariants:
 
 - Keep feature values structured and provider-defined.
 - Keep environment settings as JSON unless a future provider exposes a narrower
-  schema. Keep MCP server controls account-native and backed by provider config,
+  schema. Keep MCP server controls provider-native and backed by provider config,
   with JSON editing only for an individual MCP server payload.
 - Keep Add provider, Add account, and Runtime profile copy visually distinct:
   provider installs/enables a tool, account authenticates that provider, runtime

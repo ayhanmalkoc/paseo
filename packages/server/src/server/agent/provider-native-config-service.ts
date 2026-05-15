@@ -13,8 +13,10 @@ import type { ProviderAuthService } from "./provider-auth-service.js";
 import {
   materializeProviderNativeConfigToHome,
   normalizeConfigContent,
+  normalizeProviderNativeConfigContentFromHome,
   resolveProviderHomeNativeConfigPath,
   resolveProviderNativeConfigPath,
+  syncProviderNativeHooksFromHome,
 } from "./provider-native-config-files.js";
 import { getProviderRoot } from "./provider-layout.js";
 
@@ -112,7 +114,21 @@ export class ProviderNativeConfigService {
       throw error;
     }
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.writeFile(targetPath, normalizeConfigContent(content), "utf8");
+    await fs.writeFile(
+      targetPath,
+      normalizeProviderNativeConfigContentFromHome({
+        content,
+        provider: input.provider,
+        providerRoot: this.resolveProviderRoot(input.provider),
+        sourceHomePath: path.dirname(sourcePath),
+      }),
+      "utf8",
+    );
+    await syncProviderNativeHooksFromHome({
+      provider: input.provider,
+      providerRoot: this.resolveProviderRoot(input.provider),
+      sourceHomePath: path.dirname(sourcePath),
+    });
     await this.materializeProviderConfigToAccounts(input.provider);
     return this.readProviderConfig(input);
   }
