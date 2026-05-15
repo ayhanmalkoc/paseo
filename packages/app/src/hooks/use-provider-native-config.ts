@@ -13,27 +13,15 @@ import { useSessionStore } from "@/stores/session-store";
 export function providerNativeConfigQueryKey(
   serverId: string | null,
   provider?: AgentProvider | null,
-  profileKey?: string | null,
 ) {
-  return [
-    "providerNativeConfig",
-    serverId,
-    provider ?? "__none__",
-    profileKey ?? "__none__",
-  ] as const;
+  return ["providerNativeConfig", serverId, provider ?? "__none__"] as const;
 }
 
 export function providerNativeMcpServersQueryKey(
   serverId: string | null,
   provider?: AgentProvider | null,
-  profileKey?: string | null,
 ) {
-  return [
-    "providerNativeMcpServers",
-    serverId,
-    provider ?? "__none__",
-    profileKey ?? "__none__",
-  ] as const;
+  return ["providerNativeMcpServers", serverId, provider ?? "__none__"] as const;
 }
 
 export function isProviderNativeConfigSupported(
@@ -109,26 +97,21 @@ export function useProviderNativeConfigSourceSyncSupport(
   );
 }
 
-export function useProviderNativeConfig(
-  serverId: string | null,
-  provider?: AgentProvider | null,
-  profileKey?: string | null,
-) {
+export function useProviderNativeConfig(serverId: string | null, provider?: AgentProvider | null) {
   const client = useHostRuntimeClient(serverId ?? "");
   const queryClient = useQueryClient();
   const isSupported = useProviderNativeConfigSupport(serverId, provider);
   const queryKey = useMemo(
-    () => providerNativeConfigQueryKey(serverId, provider, profileKey),
-    [profileKey, provider, serverId],
+    () => providerNativeConfigQueryKey(serverId, provider),
+    [provider, serverId],
   );
 
   const query = useQuery({
     queryKey,
-    enabled: Boolean(client && serverId && provider && profileKey && isSupported),
+    enabled: Boolean(client && serverId && provider && isSupported),
     queryFn: async () => {
       const response = await requireClient(client).readProviderNativeConfig({
         provider: requireProvider(provider),
-        profileKey: requireProfileKey(profileKey),
       });
       return response.config;
     },
@@ -139,7 +122,6 @@ export function useProviderNativeConfig(
     mutationFn: async (content: string) => {
       const response = await requireClient(client).writeProviderNativeConfig({
         provider: requireProvider(provider),
-        profileKey: requireProfileKey(profileKey),
         content,
       });
       return response.config;
@@ -173,19 +155,15 @@ export function useSyncProviderNativeConfigFromSource(
   const isSupported = useProviderNativeConfigSourceSyncSupport(serverId, provider);
 
   const syncMutation = useMutation({
-    mutationFn: async (profileKey: string) => {
+    mutationFn: async () => {
       const response = await requireClient(client).syncProviderNativeConfigFromSource({
         provider: requireProvider(provider),
-        profileKey: requireProfileKey(profileKey),
       });
-      return {
-        profileKey,
-        config: response.config,
-      };
+      return response.config;
     },
-    onSuccess: async ({ profileKey, config }) => {
-      const configQueryKey = providerNativeConfigQueryKey(serverId, provider, profileKey);
-      const mcpQueryKey = providerNativeMcpServersQueryKey(serverId, provider, profileKey);
+    onSuccess: async (config) => {
+      const configQueryKey = providerNativeConfigQueryKey(serverId, provider);
+      const mcpQueryKey = providerNativeMcpServersQueryKey(serverId, provider);
       queryClient.setQueryData<ProviderNativeConfigSnapshot>(configQueryKey, config);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: configQueryKey }),
@@ -205,27 +183,25 @@ export function useSyncProviderNativeConfigFromSource(
 export function useProviderNativeMcpServers(
   serverId: string | null,
   provider?: AgentProvider | null,
-  profileKey?: string | null,
 ) {
   const client = useHostRuntimeClient(serverId ?? "");
   const queryClient = useQueryClient();
   const isSupported = useProviderNativeConfigSupport(serverId, provider);
   const queryKey = useMemo(
-    () => providerNativeMcpServersQueryKey(serverId, provider, profileKey),
-    [profileKey, provider, serverId],
+    () => providerNativeMcpServersQueryKey(serverId, provider),
+    [provider, serverId],
   );
   const configQueryKey = useMemo(
-    () => providerNativeConfigQueryKey(serverId, provider, profileKey),
-    [profileKey, provider, serverId],
+    () => providerNativeConfigQueryKey(serverId, provider),
+    [provider, serverId],
   );
 
   const query = useQuery({
     queryKey,
-    enabled: Boolean(client && serverId && provider && profileKey && isSupported),
+    enabled: Boolean(client && serverId && provider && isSupported),
     queryFn: async () => {
       const response = await requireClient(client).listProviderNativeMcpServers({
         provider: requireProvider(provider),
-        profileKey: requireProfileKey(profileKey),
       });
       return response.servers;
     },
@@ -236,7 +212,6 @@ export function useProviderNativeMcpServers(
     mutationFn: async (input: { id: string; config: McpServerConfig; enabled?: boolean }) => {
       const response = await requireClient(client).upsertProviderNativeMcpServer({
         provider: requireProvider(provider),
-        profileKey: requireProfileKey(profileKey),
         id: input.id,
         config: input.config,
         enabled: input.enabled,
@@ -265,7 +240,6 @@ export function useProviderNativeMcpServers(
     mutationFn: async (id: string) => {
       await requireClient(client).removeProviderNativeMcpServer({
         provider: requireProvider(provider),
-        profileKey: requireProfileKey(profileKey),
         id,
       });
       return id;
@@ -315,13 +289,6 @@ function requireProvider(provider?: AgentProvider | null): AgentProvider {
     throw new Error("Provider is required");
   }
   return provider;
-}
-
-function requireProfileKey(profileKey?: string | null): string {
-  if (!profileKey) {
-    throw new Error("Account is required");
-  }
-  return profileKey;
 }
 
 function formatError(error: unknown): string | null {

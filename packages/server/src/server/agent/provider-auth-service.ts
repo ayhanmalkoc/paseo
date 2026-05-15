@@ -20,6 +20,7 @@ import {
   getProviderAccountRoot,
   getProvidersRoot,
 } from "./provider-layout.js";
+import { materializeProviderNativeConfigToHome } from "./provider-native-config-files.js";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderRuntimeSettings,
@@ -354,6 +355,13 @@ export class ProviderAuthService {
     }
     selected.lastUsedAt = this.now().toISOString();
     await this.save(registry);
+    if (selection.provider === "codex") {
+      await materializeProviderNativeConfigToHome({
+        provider: selection.provider,
+        providerRoot: path.join(this.baseDir, selection.provider),
+        providerHomePath: selected.providerHomePath,
+      });
+    }
     return adapter.resolveLaunchContext(selected);
   }
 

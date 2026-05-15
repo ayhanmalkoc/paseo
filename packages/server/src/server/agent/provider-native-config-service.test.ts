@@ -12,11 +12,13 @@ import { ProviderNativeConfigService } from "./provider-native-config-service.js
 describe("ProviderNativeConfigService", () => {
   let tempRoot: string;
   let providerHomePath: string;
+  let providerConfigPath: string;
   let nativeCodexHome: string;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(path.join(tmpdir(), "paseo-provider-native-config-"));
     providerHomePath = path.join(tempRoot, "providers", "codex", "accounts", "work", "home");
+    providerConfigPath = path.join(tempRoot, "providers", "codex", "config", "config.toml");
     nativeCodexHome = path.join(tempRoot, "native-codex");
     await fs.mkdir(providerHomePath, { recursive: true });
     await fs.mkdir(nativeCodexHome, { recursive: true });
@@ -32,6 +34,7 @@ describe("ProviderNativeConfigService", () => {
         profiles.filter((profile) => !provider || profile.provider === provider),
     } as unknown as ProviderAuthService;
     return new ProviderNativeConfigService({
+      paseoHome: tempRoot,
       logger: createTestLogger(),
       providerAuthService,
       codexNativeHomeResolver: () => nativeCodexHome,
@@ -61,75 +64,72 @@ describe("ProviderNativeConfigService", () => {
   it("reads missing Codex config as an empty snapshot", async () => {
     const service = createService();
 
-    const snapshot = await service.readAccountConfig({
+    const snapshot = await service.readProviderConfig({
       provider: "codex",
-      profileKey: "work",
     });
 
     expect(snapshot).toMatchObject({
       provider: "codex",
-      profileKey: "work",
-      path: path.join(providerHomePath, "config.toml"),
+      path: providerConfigPath,
       content: "",
       exists: false,
     });
     expect(snapshot.updatedAt).toBeUndefined();
   });
 
-  it("writes Codex config.toml into the managed account home", async () => {
+  it("writes Codex config.toml into the provider config and materializes account homes", async () => {
     const service = createService();
 
-    const snapshot = await service.writeAccountConfig({
+    const snapshot = await service.writeProviderConfig({
       provider: "codex",
-      profileKey: "work",
       content: '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
     });
 
     expect(snapshot).toMatchObject({
       provider: "codex",
-      profileKey: "work",
       exists: true,
       content: '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
     });
     expect(snapshot.updatedAt).toBeDefined();
+    await expect(fs.readFile(providerConfigPath, "utf8")).resolves.toBe(
+      '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
+    );
     await expect(fs.readFile(path.join(providerHomePath, "config.toml"), "utf8")).resolves.toBe(
       '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
     );
   });
 
-  it("syncs Codex config.toml from the native Codex home into the managed account home", async () => {
+  it("syncs Codex config.toml from the native Codex home into provider config", async () => {
     const service = createService();
-    await fs.writeFile(
-      path.join(providerHomePath, "config.toml"),
-      '[mcp_servers.old]\ncommand = "old"\n',
-    );
+    await fs.mkdir(path.dirname(providerConfigPath), { recursive: true });
+    await fs.writeFile(providerConfigPath, '[mcp_servers.old]\ncommand = "old"\n');
     await fs.writeFile(
       path.join(nativeCodexHome, "config.toml"),
       '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
     );
 
-    const snapshot = await service.syncAccountConfigFromNative({
+    const snapshot = await service.syncProviderConfigFromNative({
       provider: "codex",
-      profileKey: "work",
     });
 
     expect(snapshot).toMatchObject({
       provider: "codex",
-      profileKey: "work",
       exists: true,
       content: '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
     });
+    await expect(fs.readFile(providerConfigPath, "utf8")).resolves.toBe(
+      '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
+    );
     await expect(fs.readFile(path.join(providerHomePath, "config.toml"), "utf8")).resolves.toBe(
       '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
     );
   });
 
-  it("manages Codex MCP servers inside account config", async () => {
+  it("manages Codex MCP servers inside provider config", async () => {
     const service = createService();
 
-    const created = await service.upsertAccountMcpServer({
+    const created = await service.upsertProviderMcpServer({
       provider: "codex",
-      profileKey: "work",
       id: "context-mode",
       config: { type: "stdio", command: "context-mode" },
       enabled: false,
@@ -140,19 +140,16 @@ describe("ProviderNativeConfigService", () => {
       config: { type: "stdio", command: "context-mode" },
       enabled: false,
     });
-    await expect(
-      service.listAccountMcpServers({ provider: "codex", profileKey: "work" }),
-    ).resolves.toEqual([created]);
-    await expect(
-      fs.readFile(path.join(providerHomePath, "config.toml"), "utf8"),
-    ).resolves.toContain("# [mcp_servers.context-mode]");
-    await expect(
-      fs.readFile(path.join(providerHomePath, "config.toml"), "utf8"),
-    ).resolves.not.toContain("\n[mcp_servers.context-mode]");
+    await expect(service.listProviderMcpServers({ provider: "codex" })).resolves.toEqual([created]);
+    await expect(fs.readFile(providerConfigPath, "utf8")).resolves.toContain(
+      "# [mcp_servers.context-mode]",
+    );
+    await expect(fs.readFile(providerConfigPath, "utf8")).resolves.not.toContain(
+      "\n[mcp_servers.context-mode]",
+    );
 
-    const updated = await service.upsertAccountMcpServer({
+    const updated = await service.upsertProviderMcpServer({
       provider: "codex",
-      profileKey: "work",
       id: "context-mode",
       config: { type: "stdio", command: "context-mode", args: ["serve"] },
     });
@@ -165,31 +162,21 @@ describe("ProviderNativeConfigService", () => {
     });
 
     await expect(
-      service.removeAccountMcpServer({
+      service.removeProviderMcpServer({
         provider: "codex",
-        profileKey: "work",
         id: "context-mode",
       }),
     ).resolves.toBe(true);
-    await expect(
-      service.listAccountMcpServers({ provider: "codex", profileKey: "work" }),
-    ).resolves.toEqual([]);
+    await expect(service.listProviderMcpServers({ provider: "codex" })).resolves.toEqual([]);
   });
 
-  it("rejects unsupported providers and accounts without managed homes", async () => {
-    const service = createService([
-      createProfile({
-        provider: "claude",
-        key: "claude-work",
-        providerHomeRef: undefined,
-      }),
-    ]);
+  it("rejects unsupported providers", async () => {
+    const service = createService();
 
     await expect(
-      service.readAccountConfig({
+      service.readProviderConfig({
         provider: "claude",
-        profileKey: "claude-work",
       }),
-    ).rejects.toThrow("does not have a managed provider home");
+    ).rejects.toThrow("Native config is not supported");
   });
 });

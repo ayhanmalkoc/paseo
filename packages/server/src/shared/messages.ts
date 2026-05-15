@@ -501,7 +501,7 @@ export const McpServerConfigSchema = z.discriminatedUnion("type", [
 
 export const ProviderNativeConfigSnapshotSchema = z.object({
   provider: AgentProviderSchema,
-  profileKey: z.string().trim().min(1),
+  profileKey: z.string().trim().min(1).optional(),
   path: z.string(),
   content: z.string(),
   exists: z.boolean(),
@@ -1453,14 +1453,14 @@ export const DeleteRuntimeProfileRequestMessageSchema = z.object({
 export const ReadProviderNativeConfigRequestMessageSchema = z.object({
   type: z.literal("read_provider_native_config_request"),
   provider: AgentProviderSchema,
-  profileKey: z.string().trim().min(1),
+  profileKey: z.string().trim().min(1).optional(),
   requestId: z.string(),
 });
 
 export const WriteProviderNativeConfigRequestMessageSchema = z.object({
   type: z.literal("write_provider_native_config_request"),
   provider: AgentProviderSchema,
-  profileKey: z.string().trim().min(1),
+  profileKey: z.string().trim().min(1).optional(),
   content: z.string(),
   requestId: z.string(),
 });
@@ -1468,21 +1468,21 @@ export const WriteProviderNativeConfigRequestMessageSchema = z.object({
 export const SyncProviderNativeConfigFromSourceRequestMessageSchema = z.object({
   type: z.literal("sync_provider_native_config_from_source_request"),
   provider: AgentProviderSchema,
-  profileKey: z.string().trim().min(1),
+  profileKey: z.string().trim().min(1).optional(),
   requestId: z.string(),
 });
 
 export const ListProviderNativeMcpServersRequestMessageSchema = z.object({
   type: z.literal("list_provider_native_mcp_servers_request"),
   provider: AgentProviderSchema,
-  profileKey: z.string().trim().min(1),
+  profileKey: z.string().trim().min(1).optional(),
   requestId: z.string(),
 });
 
 export const UpsertProviderNativeMcpServerRequestMessageSchema = z.object({
   type: z.literal("upsert_provider_native_mcp_server_request"),
   provider: AgentProviderSchema,
-  profileKey: z.string().trim().min(1),
+  profileKey: z.string().trim().min(1).optional(),
   id: z.string().trim().min(1),
   config: McpServerConfigSchema,
   enabled: z.boolean().optional(),
@@ -1492,7 +1492,7 @@ export const UpsertProviderNativeMcpServerRequestMessageSchema = z.object({
 export const RemoveProviderNativeMcpServerRequestMessageSchema = z.object({
   type: z.literal("remove_provider_native_mcp_server_request"),
   provider: AgentProviderSchema,
-  profileKey: z.string().trim().min(1),
+  profileKey: z.string().trim().min(1).optional(),
   id: z.string().trim().min(1),
   requestId: z.string(),
 });
@@ -3842,7 +3842,7 @@ export const ListProviderNativeMcpServersResponseMessageSchema = z.object({
   type: z.literal("list_provider_native_mcp_servers_response"),
   payload: z.object({
     provider: AgentProviderSchema,
-    profileKey: z.string().trim().min(1),
+    profileKey: z.string().trim().min(1).optional(),
     servers: z.array(ProviderNativeMcpServerSchema),
     requestId: z.string(),
   }),
@@ -3852,7 +3852,7 @@ export const UpsertProviderNativeMcpServerResponseMessageSchema = z.object({
   type: z.literal("upsert_provider_native_mcp_server_response"),
   payload: z.object({
     provider: AgentProviderSchema,
-    profileKey: z.string().trim().min(1),
+    profileKey: z.string().trim().min(1).optional(),
     server: ProviderNativeMcpServerSchema,
     requestId: z.string(),
   }),
@@ -3862,7 +3862,7 @@ export const RemoveProviderNativeMcpServerResponseMessageSchema = z.object({
   type: z.literal("remove_provider_native_mcp_server_response"),
   payload: z.object({
     provider: AgentProviderSchema,
-    profileKey: z.string().trim().min(1),
+    profileKey: z.string().trim().min(1).optional(),
     removed: z.boolean(),
     requestId: z.string(),
   }),
