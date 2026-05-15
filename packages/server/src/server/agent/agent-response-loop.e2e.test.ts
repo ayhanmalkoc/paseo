@@ -31,8 +31,8 @@ async function startAgentMcpServer(logger: pino.Logger): Promise<AgentMcpServerH
   app.use(express.json());
   const httpServer = createServer(app);
 
-  const registryDir = mkdtempSync(path.join(tmpdir(), "agent-mcp-registry-"));
-  const storagePath = path.join(registryDir, "agents");
+  const runtimeDir = mkdtempSync(path.join(tmpdir(), "agent-mcp-runtime-"));
+  const storagePath = path.join(runtimeDir, "agents");
   const agentStorage = new AgentStorage(storagePath, logger);
   const agentManager = new AgentManager({
     clients: {},

@@ -12,11 +12,14 @@ import { ProviderNativeConfigService } from "./provider-native-config-service.js
 describe("ProviderNativeConfigService", () => {
   let tempRoot: string;
   let providerHomePath: string;
+  let nativeCodexHome: string;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(path.join(tmpdir(), "paseo-provider-native-config-"));
     providerHomePath = path.join(tempRoot, "providers", "codex", "accounts", "work", "home");
+    nativeCodexHome = path.join(tempRoot, "native-codex");
     await fs.mkdir(providerHomePath, { recursive: true });
+    await fs.mkdir(nativeCodexHome, { recursive: true });
   });
 
   afterEach(() => {
@@ -31,6 +34,7 @@ describe("ProviderNativeConfigService", () => {
     return new ProviderNativeConfigService({
       logger: createTestLogger(),
       providerAuthService,
+      codexNativeHomeResolver: () => nativeCodexHome,
     });
   }
 
@@ -88,6 +92,33 @@ describe("ProviderNativeConfigService", () => {
       content: '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
     });
     expect(snapshot.updatedAt).toBeDefined();
+    await expect(fs.readFile(path.join(providerHomePath, "config.toml"), "utf8")).resolves.toBe(
+      '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
+    );
+  });
+
+  it("syncs Codex config.toml from the native Codex home into the managed account home", async () => {
+    const service = createService();
+    await fs.writeFile(
+      path.join(providerHomePath, "config.toml"),
+      '[mcp_servers.old]\ncommand = "old"\n',
+    );
+    await fs.writeFile(
+      path.join(nativeCodexHome, "config.toml"),
+      '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
+    );
+
+    const snapshot = await service.syncAccountConfigFromNative({
+      provider: "codex",
+      profileKey: "work",
+    });
+
+    expect(snapshot).toMatchObject({
+      provider: "codex",
+      profileKey: "work",
+      exists: true,
+      content: '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
+    });
     await expect(fs.readFile(path.join(providerHomePath, "config.toml"), "utf8")).resolves.toBe(
       '[mcp_servers.context-mode]\ncommand = "context-mode"\n',
     );

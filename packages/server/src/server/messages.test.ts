@@ -1,11 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "./agent/agent-sdk-types.js";
-import {
-  serializeAgentStreamEvent,
-  SessionInboundMessageSchema,
-  SessionOutboundMessageSchema,
-} from "./messages.js";
+import { serializeAgentStreamEvent } from "./messages.js";
 
 describe("serializeAgentStreamEvent", () => {
   test("preserves user_message text as-is", () => {
@@ -126,105 +122,5 @@ describe("serializeAgentStreamEvent", () => {
     ];
 
     expect(events.map((event) => serializeAgentStreamEvent(event))).toEqual([null, null, null]);
-  });
-});
-
-describe("MCP registry protocol messages", () => {
-  test("parses registry management requests and responses", () => {
-    const scope = { kind: "provider", provider: "codex" } as const;
-    const entry = {
-      id: "context-mode",
-      scope,
-      config: { type: "stdio", command: "context-mode", args: ["serve"] },
-      enabled: true,
-      source: "user",
-      createdAt: "2026-05-13T12:00:00.000Z",
-      updatedAt: "2026-05-13T12:00:00.000Z",
-    } as const;
-
-    expect(
-      SessionInboundMessageSchema.parse({
-        type: "upsert_mcp_registry_entry_request",
-        entry: {
-          id: entry.id,
-          scope,
-          config: entry.config,
-        },
-        requestId: "req_1",
-      }).type,
-    ).toBe("upsert_mcp_registry_entry_request");
-
-    expect(
-      SessionOutboundMessageSchema.parse({
-        type: "list_mcp_registry_entries_response",
-        payload: {
-          entries: [entry],
-          requestId: "req_1",
-        },
-      }).type,
-    ).toBe("list_mcp_registry_entries_response");
-
-    expect(
-      SessionInboundMessageSchema.parse({
-        type: "import_mcp_registry_entries_request",
-        provider: "codex",
-        source: "native",
-        requestId: "req_2",
-      }).type,
-    ).toBe("import_mcp_registry_entries_request");
-
-    expect(
-      SessionOutboundMessageSchema.parse({
-        type: "import_mcp_registry_entries_response",
-        payload: {
-          provider: "codex",
-          path: "/root/.codex/config.toml",
-          entries: [entry],
-          skipped: [],
-          requestId: "req_2",
-        },
-      }).type,
-    ).toBe("import_mcp_registry_entries_response");
-
-    expect(
-      SessionInboundMessageSchema.parse({
-        type: "explain_mcp_registry_request",
-        provider: "codex",
-        accountKey: "account-a",
-        runtimeProfileId: "profile-a",
-        sessionMcpServers: {
-          session: { type: "stdio", command: "session-tool" },
-        },
-        includeSystem: true,
-        agentId: "agent-1",
-        requestId: "req_3",
-      }).type,
-    ).toBe("explain_mcp_registry_request");
-
-    expect(
-      SessionOutboundMessageSchema.parse({
-        type: "explain_mcp_registry_response",
-        payload: {
-          provider: "codex",
-          accountKey: "account-a",
-          runtimeProfileId: "profile-a",
-          servers: {
-            session: { type: "stdio", command: "session-tool" },
-          },
-          sources: {
-            session: { scope: "session", source: "session" },
-          },
-          steps: [
-            {
-              id: "session",
-              action: "selected",
-              source: { scope: "session", source: "session" },
-              config: { type: "stdio", command: "session-tool" },
-            },
-          ],
-          requestId: "req_3",
-        },
-      }).type,
-    ).toBe("explain_mcp_registry_response");
   });
 });

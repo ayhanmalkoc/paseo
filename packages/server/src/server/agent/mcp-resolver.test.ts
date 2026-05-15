@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { McpServerConfig, ProviderHomeRef } from "./agent-sdk-types.js";
-import { explainMcpResolution, resolveMcpServers, type McpRegistryEntry } from "./mcp-resolver.js";
+import { explainMcpResolution, resolveMcpServers, type McpLaunchEntry } from "./mcp-resolver.js";
 
 function stdio(command: string): McpServerConfig {
   return { type: "stdio", command };
@@ -9,23 +9,21 @@ function stdio(command: string): McpServerConfig {
 
 function entry(input: {
   id: string;
-  scope: McpRegistryEntry["scope"];
+  scope: McpLaunchEntry["scope"];
   command: string;
   enabled?: boolean;
-}): McpRegistryEntry {
+}): McpLaunchEntry {
   return {
     id: input.id,
     scope: input.scope,
     config: stdio(input.command),
     enabled: input.enabled ?? true,
-    source: "user",
-    createdAt: "2026-05-13T00:00:00.000Z",
-    updatedAt: "2026-05-13T00:00:00.000Z",
+    source: "native-config",
   };
 }
 
 describe("resolveMcpServers", () => {
-  it("merges registry scopes, session overrides, and protected system MCP in order", () => {
+  it("merges account native MCP, session overrides, and protected system MCP in order", () => {
     const providerHomeRef: ProviderHomeRef = {
       kind: "managed-profile",
       provider: "codex",
@@ -35,20 +33,13 @@ describe("resolveMcpServers", () => {
     const resolved = resolveMcpServers({
       provider: "codex",
       providerHomeRef,
-      runtimeProfileId: "profile-a",
       agentId: "agent-1",
       paseoMcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
       injectPaseoTools: true,
       entries: [
-        entry({ id: "shared", scope: { kind: "global" }, command: "global" }),
-        entry({
-          id: "provider-only",
-          scope: { kind: "provider", provider: "codex" },
-          command: "provider",
-        }),
         entry({
           id: "ignored-provider",
-          scope: { kind: "provider", provider: "claude" },
+          scope: { kind: "account", provider: "claude", accountKey: "account-a" },
           command: "claude",
         }),
         entry({
@@ -57,12 +48,21 @@ describe("resolveMcpServers", () => {
           command: "account",
         }),
         entry({
-          id: "runtime-only",
-          scope: { kind: "runtimeProfile", profileId: "profile-a" },
-          command: "runtime",
+          id: "shared",
+          scope: { kind: "account", provider: "codex", accountKey: "account-a" },
+          command: "account-shared",
         }),
-        entry({ id: "disabled", scope: { kind: "global" }, command: "disabled", enabled: false }),
-        entry({ id: "paseo", scope: { kind: "global" }, command: "fake-paseo" }),
+        entry({
+          id: "disabled",
+          scope: { kind: "account", provider: "codex", accountKey: "account-a" },
+          command: "disabled",
+          enabled: false,
+        }),
+        entry({
+          id: "paseo",
+          scope: { kind: "account", provider: "codex", accountKey: "account-a" },
+          command: "fake-paseo",
+        }),
       ],
       sessionMcpServers: {
         shared: stdio("session"),
@@ -73,9 +73,7 @@ describe("resolveMcpServers", () => {
 
     expect(resolved.servers).toEqual({
       shared: stdio("session"),
-      "provider-only": stdio("provider"),
       "account-only": stdio("account"),
-      "runtime-only": stdio("runtime"),
       "session-only": stdio("session-only"),
       paseo: {
         type: "http",
@@ -100,24 +98,31 @@ describe("resolveMcpServers", () => {
     const explanation = explainMcpResolution({
       provider: "codex",
       providerHomeRef,
-      runtimeProfileId: "profile-a",
       agentId: "agent-1",
       paseoMcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
       injectPaseoTools: true,
       entries: [
-        entry({ id: "shared", scope: { kind: "global" }, command: "global" }),
         entry({
           id: "shared",
-          scope: { kind: "provider", provider: "codex" },
-          command: "provider",
+          scope: { kind: "account", provider: "codex", accountKey: "account-a" },
+          command: "account",
         }),
-        entry({ id: "disabled", scope: { kind: "global" }, command: "disabled", enabled: false }),
+        entry({
+          id: "disabled",
+          scope: { kind: "account", provider: "codex", accountKey: "account-a" },
+          command: "disabled",
+          enabled: false,
+        }),
         entry({
           id: "other-provider",
-          scope: { kind: "provider", provider: "claude" },
+          scope: { kind: "account", provider: "claude", accountKey: "account-a" },
           command: "claude",
         }),
-        entry({ id: "paseo", scope: { kind: "global" }, command: "fake-paseo" }),
+        entry({
+          id: "paseo",
+          scope: { kind: "account", provider: "codex", accountKey: "account-a" },
+          command: "fake-paseo",
+        }),
       ],
       sessionMcpServers: {
         shared: stdio("session"),
@@ -127,7 +132,6 @@ describe("resolveMcpServers", () => {
     expect(explanation.servers?.shared).toEqual(stdio("session"));
     expect(explanation.sources.shared).toEqual({ scope: "session", source: "session" });
     expect(explanation.steps.map((step) => [step.id, step.action, step.reason])).toEqual([
-      ["shared", "overridden", "overridden-by-later-scope"],
       ["shared", "overridden", "overridden-by-session"],
       ["disabled", "ignored", "disabled"],
       ["other-provider", "ignored", "scope-mismatch"],
@@ -144,7 +148,7 @@ describe("resolveMcpServers", () => {
       entries: [
         entry({
           id: "claude-only",
-          scope: { kind: "provider", provider: "claude" },
+          scope: { kind: "account", provider: "claude", accountKey: "account-a" },
           command: "claude",
         }),
       ],

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   parseCodexNativeMcpConfigToml,
-  readProviderHomeNativeMcpRegistryEntries,
+  readProviderHomeNativeMcpEntries,
   removeCodexNativeMcpServerConfig,
   resolveCodexNativeConfigPath,
   writeCodexNativeMcpServerConfig,
@@ -155,9 +155,51 @@ describe("Codex native MCP config writers", () => {
     expect(removed).toContain('model = "gpt-5.5"');
     expect(removed).not.toContain("context-mode");
   });
+
+  test("preserves provider-specific MCP subtables while toggling", () => {
+    const content = `model = "gpt-5.5"
+
+[mcp_servers."context-mode"]
+command = "context-mode"
+
+[mcp_servers."context-mode".tools.ctx_batch_execute]
+approval_mode = "approve"
+
+[mcp_servers."context-mode".tools.ctx_search]
+approval_mode = "approve"
+
+[mcp_servers.notebooklm]
+command = "npx"
+`;
+
+    const disabled = writeCodexNativeMcpServerConfig({
+      content,
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode" },
+      enabled: false,
+    });
+
+    expect(disabled).toContain('# [mcp_servers."context-mode".tools.ctx_batch_execute]');
+    expect(disabled).toContain('# approval_mode = "approve"');
+    expect(disabled).toContain("[mcp_servers.notebooklm]");
+    expect(disabled).not.toContain("\n[mcp_servers.context-mode]\n");
+
+    const enabled = writeCodexNativeMcpServerConfig({
+      content: disabled,
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode" },
+      enabled: true,
+    });
+
+    expect(enabled).toContain('[mcp_servers."context-mode"]');
+    expect(enabled).toContain('[mcp_servers."context-mode".tools.ctx_batch_execute]');
+    expect(enabled).toContain('[mcp_servers."context-mode".tools.ctx_search]');
+    expect(enabled).toContain("[mcp_servers.notebooklm]");
+    expect(enabled).not.toContain("paseo-disabled-mcp-server");
+  });
 });
 
-describe("readProviderHomeNativeMcpRegistryEntries", () => {
+describe("readProviderHomeNativeMcpEntries", () => {
   const tempRoots: string[] = [];
 
   afterEach(() => {
@@ -177,11 +219,10 @@ command = "context-mode"
       "utf8",
     );
 
-    const entries = await readProviderHomeNativeMcpRegistryEntries({
+    const entries = await readProviderHomeNativeMcpEntries({
       provider: "codex",
       providerHomePath,
       accountKey: "work",
-      now: () => new Date("2026-05-14T10:00:00.000Z"),
     });
 
     expect(entries).toEqual([
@@ -190,28 +231,21 @@ command = "context-mode"
         scope: { kind: "account", provider: "codex", accountKey: "work" },
         config: { type: "stdio", command: "context-mode" },
         enabled: true,
-        source: "native-import",
-        importedFrom: {
-          provider: "codex",
-          path: path.join(providerHomePath, "config.toml"),
-          importedAt: "2026-05-14T10:00:00.000Z",
-        },
-        createdAt: "2026-05-14T10:00:00.000Z",
-        updatedAt: "2026-05-14T10:00:00.000Z",
+        source: "native-config",
       },
     ]);
   });
 
-  test("ignores unsupported providers and missing config files during launch resolution", async () => {
+  test("ignores non-Codex providers and missing config files during launch resolution", async () => {
     await expect(
-      readProviderHomeNativeMcpRegistryEntries({
+      readProviderHomeNativeMcpEntries({
         provider: "claude",
         providerHomePath: "/tmp/missing",
         accountKey: "work",
       }),
     ).resolves.toEqual([]);
     await expect(
-      readProviderHomeNativeMcpRegistryEntries({
+      readProviderHomeNativeMcpEntries({
         provider: "codex",
         providerHomePath: "/tmp/missing",
         accountKey: "work",
