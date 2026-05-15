@@ -331,36 +331,15 @@ function AuthProfileRow(props: {
   onRefresh: (profileKey: string) => void;
   onSetDefault: (profileKey: string) => void;
   onRemove: (profileKey: string) => void;
-  onSyncConfig?: (profileKey: string) => void;
-  onEditConfig?: (profileKey: string) => void;
-  onManageMcp?: (profileKey: string) => void;
 }) {
   const { theme } = useUnistyles();
-  const {
-    profile,
-    busy,
-    onRefresh,
-    onSetDefault,
-    onRemove,
-    onSyncConfig,
-    onEditConfig,
-    onManageMcp,
-  } = props;
+  const { profile, busy, onRefresh, onSetDefault, onRemove } = props;
   const handleRefresh = useCallback(() => onRefresh(profile.key), [onRefresh, profile.key]);
   const handleSetDefault = useCallback(
     () => onSetDefault(profile.key),
     [onSetDefault, profile.key],
   );
   const handleRemove = useCallback(() => onRemove(profile.key), [onRemove, profile.key]);
-  const handleSyncConfig = useCallback(
-    () => onSyncConfig?.(profile.key),
-    [onSyncConfig, profile.key],
-  );
-  const handleEditConfig = useCallback(
-    () => onEditConfig?.(profile.key),
-    [onEditConfig, profile.key],
-  );
-  const handleManageMcp = useCallback(() => onManageMcp?.(profile.key), [onManageMcp, profile.key]);
   const title = profile.alias || profile.email || "Account";
   const subtitle = formatAuthProfileSubtitle(profile);
   const timeline = formatAuthProfileTimeline(profile);
@@ -425,45 +404,6 @@ function AuthProfileRow(props: {
         >
           Refresh
         </Button>
-        {onSyncConfig ? (
-          <Button
-            variant="ghost"
-            size="xs"
-            style={sheetStyles.profileActionButton}
-            textStyle={sheetStyles.profileActionButtonText}
-            onPress={handleSyncConfig}
-            disabled={busy}
-            accessibilityLabel={`Sync ${title} config from Codex`}
-          >
-            Sync config
-          </Button>
-        ) : null}
-        {onEditConfig ? (
-          <Button
-            variant="ghost"
-            size="xs"
-            style={sheetStyles.profileActionButton}
-            textStyle={sheetStyles.profileActionButtonText}
-            onPress={handleEditConfig}
-            disabled={busy}
-            accessibilityLabel={`Edit ${title} native config`}
-          >
-            Config
-          </Button>
-        ) : null}
-        {onManageMcp ? (
-          <Button
-            variant="ghost"
-            size="xs"
-            style={sheetStyles.profileActionButton}
-            textStyle={sheetStyles.profileActionButtonText}
-            onPress={handleManageMcp}
-            disabled={busy}
-            accessibilityLabel={`Manage ${title} MCP servers`}
-          >
-            MCP
-          </Button>
-        ) : null}
         <Button
           variant="ghost"
           size="xs"
@@ -543,11 +483,12 @@ function formatNativeMcpError(error: unknown): string {
 
 function ProviderAuthProfilesSection(props: {
   provider: string;
+  providerLabel: string;
   serverId: string;
   visible: boolean;
   refreshNonce: number;
 }) {
-  const { provider, serverId, visible, refreshNonce } = props;
+  const { provider, providerLabel, serverId, visible, refreshNonce } = props;
   const {
     profiles = [],
     isLoading,
@@ -560,8 +501,8 @@ function ProviderAuthProfilesSection(props: {
   } = useProviderAuthProfiles(serverId, provider as AgentProvider);
   const [error, setError] = useState<string | null>(null);
   const [loginSessionId, setLoginSessionId] = useState<string | null>(null);
-  const [nativeConfigProfileKey, setNativeConfigProfileKey] = useState<string | null>(null);
-  const [nativeMcpProfileKey, setNativeMcpProfileKey] = useState<string | null>(null);
+  const [nativeConfigVisible, setNativeConfigVisible] = useState(false);
+  const [nativeMcpVisible, setNativeMcpVisible] = useState(false);
   const autoRefreshedKeysRef = useRef<Set<string>>(new Set());
   const autoRefreshInFlightRef = useRef(false);
   const lastForcedRefreshNonceRef = useRef(0);
@@ -574,16 +515,10 @@ function ProviderAuthProfilesSection(props: {
     [accountLogin.sessions, loginSessionId],
   );
   const sortedProfiles = useMemo(() => sortAuthProfiles(profiles), [profiles]);
-  const nativeConfigProfile = useMemo(
-    () => sortedProfiles.find((profile) => profile.key === nativeConfigProfileKey) ?? null,
-    [nativeConfigProfileKey, sortedProfiles],
-  );
-  const nativeMcpProfile = useMemo(
-    () => sortedProfiles.find((profile) => profile.key === nativeMcpProfileKey) ?? null,
-    [nativeMcpProfileKey, sortedProfiles],
-  );
-  const handleCloseNativeConfig = useCallback(() => setNativeConfigProfileKey(null), []);
-  const handleCloseNativeMcp = useCallback(() => setNativeMcpProfileKey(null), []);
+  const handleCloseNativeConfig = useCallback(() => setNativeConfigVisible(false), []);
+  const handleCloseNativeMcp = useCallback(() => setNativeMcpVisible(false), []);
+  const handleOpenNativeConfig = useCallback(() => setNativeConfigVisible(true), []);
+  const handleOpenNativeMcp = useCallback(() => setNativeMcpVisible(true), []);
 
   const runAuthAction = useCallback(async (action: () => Promise<unknown>) => {
     setError(null);
@@ -630,24 +565,19 @@ function ProviderAuthProfilesSection(props: {
     },
     [remove, runAuthAction],
   );
-  const handleSyncConfig = useCallback(
-    (profileKey: string) => {
-      void (async () => {
-        const profile = profiles.find((candidate) => candidate.key === profileKey);
-        const title = profile?.alias || profile?.email || "this account";
-        const confirmed = await confirmDialog({
-          title: "Sync config from Codex?",
-          message: `This replaces ${title}'s managed config.toml with the current native Codex config. Account auth and usage are not changed.`,
-          confirmLabel: "Sync config",
-        });
-        if (!confirmed) {
-          return;
-        }
-        await runAuthAction(() => nativeConfigSync.sync(profileKey));
-      })();
-    },
-    [nativeConfigSync, profiles, runAuthAction],
-  );
+  const handleSyncConfig = useCallback(() => {
+    void (async () => {
+      const confirmed = await confirmDialog({
+        title: `Sync ${providerLabel} config?`,
+        message: `This replaces the shared ${providerLabel} provider config with the current native ${providerLabel} config. Account auth and usage are not changed.`,
+        confirmLabel: "Sync config",
+      });
+      if (!confirmed) {
+        return;
+      }
+      await runAuthAction(() => nativeConfigSync.sync());
+    })();
+  }, [nativeConfigSync, providerLabel, runAuthAction]);
 
   const refreshProfiles = useCallback(
     async (
@@ -750,9 +680,65 @@ function ProviderAuthProfilesSection(props: {
   if (!isSupported) {
     return null;
   }
+  const providerConfigAction = canEditNativeConfig ? (
+    <SettingsSection title="Provider config">
+      <View style={settingsStyles.card}>
+        <View style={PROVIDER_CONFIG_ROW_STYLE}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{providerLabel} config</Text>
+            <Text style={settingsStyles.rowHint}>
+              Shared MCP, skills, plugins, hooks, and native provider settings.
+            </Text>
+          </View>
+          <View style={sheetStyles.providerConfigActions}>
+            {nativeConfigSync.isSupported ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                style={sheetStyles.profileActionButton}
+                textStyle={sheetStyles.profileActionButtonText}
+                onPress={handleSyncConfig}
+                disabled={isRefreshing || nativeConfigSync.isSyncing}
+                loading={nativeConfigSync.isSyncing}
+                accessibilityLabel={`Sync ${providerLabel} config from native provider`}
+              >
+                Sync config
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="xs"
+              style={sheetStyles.profileActionButton}
+              textStyle={sheetStyles.profileActionButtonText}
+              onPress={handleOpenNativeConfig}
+              disabled={nativeConfigSync.isSyncing}
+              accessibilityLabel={`Edit ${providerLabel} native config`}
+            >
+              Config
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              style={sheetStyles.profileActionButton}
+              textStyle={sheetStyles.profileActionButtonText}
+              onPress={handleOpenNativeMcp}
+              disabled={nativeConfigSync.isSyncing}
+              accessibilityLabel={`Manage ${providerLabel} MCP servers`}
+            >
+              MCP
+            </Button>
+          </View>
+        </View>
+      </View>
+      {nativeConfigSync.error ? (
+        <Text style={sheetStyles.errorText}>{nativeConfigSync.error}</Text>
+      ) : null}
+    </SettingsSection>
+  ) : null;
 
   return (
     <>
+      {providerConfigAction}
       <SettingsSection title="Accounts" trailing={importCurrentAction}>
         <View style={settingsStyles.card}>
           {isLoading && profiles.length === 0 ? (
@@ -776,11 +762,6 @@ function ProviderAuthProfilesSection(props: {
               onRefresh={handleRefresh}
               onSetDefault={handleSetDefault}
               onRemove={handleRemove}
-              onSyncConfig={
-                nativeConfigSync.isSupported && canEditNativeConfig ? handleSyncConfig : undefined
-              }
-              onEditConfig={canEditNativeConfig ? setNativeConfigProfileKey : undefined}
-              onManageMcp={canEditNativeConfig ? setNativeMcpProfileKey : undefined}
             />
           ))}
         </View>
@@ -793,16 +774,16 @@ function ProviderAuthProfilesSection(props: {
       />
       <ProviderNativeConfigSheet
         provider={providerId}
+        providerLabel={providerLabel}
         serverId={serverId}
-        profile={nativeConfigProfile}
-        visible={!!nativeConfigProfile}
+        visible={nativeConfigVisible}
         onClose={handleCloseNativeConfig}
       />
       <ProviderNativeMcpSheet
         provider={providerId}
+        providerLabel={providerLabel}
         serverId={serverId}
-        profile={nativeMcpProfile}
-        visible={!!nativeMcpProfile}
+        visible={nativeMcpVisible}
         onClose={handleCloseNativeMcp}
       />
     </>
@@ -811,19 +792,18 @@ function ProviderAuthProfilesSection(props: {
 
 function ProviderNativeConfigSheet(props: {
   provider: AgentProvider;
+  providerLabel: string;
   serverId: string;
-  profile: ProviderAuthProfile | null;
   visible: boolean;
   onClose: () => void;
 }) {
-  const { provider, serverId, profile, visible, onClose } = props;
+  const { provider, providerLabel, serverId, visible, onClose } = props;
   const { theme } = useUnistyles();
   const [draft, setDraft] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const { config, isLoading, isSaving, isSupported, error, save } = useProviderNativeConfig(
     serverId,
     provider,
-    profile?.key ?? null,
   );
 
   useEffect(() => {
@@ -838,7 +818,7 @@ function ProviderNativeConfigSheet(props: {
     }
   }, [config, visible]);
 
-  const title = profile?.alias || profile?.email || "Account";
+  const title = providerLabel;
   const handleSave = useCallback(async () => {
     setLocalError(null);
     try {
@@ -907,17 +887,17 @@ function ProviderNativeConfigSheet(props: {
 
 function ProviderNativeMcpSheet(props: {
   provider: AgentProvider;
+  providerLabel: string;
   serverId: string;
-  profile: ProviderAuthProfile | null;
   visible: boolean;
   onClose: () => void;
 }) {
-  const { provider, serverId, profile, visible, onClose } = props;
+  const { provider, providerLabel, serverId, visible, onClose } = props;
   const [editingServer, setEditingServer] = useState<ProviderNativeMcpServer | null>(null);
   const [editorVisible, setEditorVisible] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const { servers, isLoading, isSaving, isSupported, error, upsert, remove } =
-    useProviderNativeMcpServers(serverId, provider, profile?.key ?? null);
+    useProviderNativeMcpServers(serverId, provider);
 
   useEffect(() => {
     if (!visible) {
@@ -927,7 +907,7 @@ function ProviderNativeMcpSheet(props: {
     }
   }, [visible]);
 
-  const title = profile?.alias || profile?.email || "Account";
+  const title = providerLabel;
   const sortedServers = useMemo(
     () => [...servers].sort(compareProviderNativeMcpServers),
     [servers],
@@ -972,7 +952,7 @@ function ProviderNativeMcpSheet(props: {
       void (async () => {
         const confirmed = await confirmDialog({
           title: `Remove ${server.id}?`,
-          message: "This removes the MCP server from this provider account config.",
+          message: "This removes the MCP server from the shared provider config.",
           confirmLabel: "Remove",
           destructive: true,
         });
@@ -1012,7 +992,7 @@ function ProviderNativeMcpSheet(props: {
     if (sortedServers.length === 0) {
       return (
         <View style={sheetStyles.emptyRow}>
-          <Text style={sheetStyles.mutedText}>No MCP servers in this account config.</Text>
+          <Text style={sheetStyles.mutedText}>No MCP servers in this provider config.</Text>
         </View>
       );
     }
@@ -1537,6 +1517,7 @@ export function ProviderDiagnosticSheet({
 
       <ProviderAuthProfilesSection
         provider={provider}
+        providerLabel={providerLabel}
         serverId={serverId}
         visible={visible}
         refreshNonce={accountRefreshNonce}
@@ -1729,6 +1710,17 @@ const sheetStyles = StyleSheet.create((theme) => ({
     paddingHorizontal: 0,
     textAlign: "right",
   },
+  providerConfigRow: {
+    alignItems: "flex-start",
+    gap: theme.spacing[3],
+  },
+  providerConfigActions: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: theme.spacing[1],
+    flexShrink: 0,
+    width: 96,
+  },
   loginSheetContent: {
     gap: theme.spacing[4],
   },
@@ -1880,6 +1872,7 @@ const AUTH_PROFILE_DEFAULT_ROW_STYLE = [
   sheetStyles.authProfileRow,
   sheetStyles.defaultAuthProfileRow,
 ];
+const PROVIDER_CONFIG_ROW_STYLE = [settingsStyles.row, sheetStyles.providerConfigRow];
 const AUTH_PROFILE_CONTENT_STYLE = [settingsStyles.rowContent, sheetStyles.profileContent];
 const AUTH_PROFILE_TITLE_STYLE = [settingsStyles.rowTitle, sheetStyles.profileTitle];
 const INLINE_ROW_STYLE = [settingsStyles.row, sheetStyles.inlineRow];

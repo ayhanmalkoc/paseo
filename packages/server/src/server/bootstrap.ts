@@ -516,6 +516,7 @@ export async function createPaseoDaemon(
     logger,
   });
   const providerNativeConfigService = new ProviderNativeConfigService({
+    paseoHome: config.paseoHome,
     logger,
     providerAuthService,
   });

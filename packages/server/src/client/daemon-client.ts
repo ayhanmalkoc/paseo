@@ -3714,7 +3714,7 @@ export class DaemonClient {
 
   async readProviderNativeConfig(options: {
     provider: AgentProvider;
-    profileKey: string;
+    profileKey?: string;
     requestId?: string;
   }): Promise<ReadProviderNativeConfigPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -3722,7 +3722,7 @@ export class DaemonClient {
       message: {
         type: "read_provider_native_config_request",
         provider: options.provider,
-        profileKey: options.profileKey,
+        ...(options.profileKey ? { profileKey: options.profileKey } : {}),
       },
       responseType: "read_provider_native_config_response",
       timeout: 10000,
@@ -3731,7 +3731,7 @@ export class DaemonClient {
 
   async writeProviderNativeConfig(options: {
     provider: AgentProvider;
-    profileKey: string;
+    profileKey?: string;
     content: string;
     requestId?: string;
   }): Promise<WriteProviderNativeConfigPayload> {
@@ -3740,7 +3740,7 @@ export class DaemonClient {
       message: {
         type: "write_provider_native_config_request",
         provider: options.provider,
-        profileKey: options.profileKey,
+        ...(options.profileKey ? { profileKey: options.profileKey } : {}),
         content: options.content,
       },
       responseType: "write_provider_native_config_response",
@@ -3750,7 +3750,7 @@ export class DaemonClient {
 
   async syncProviderNativeConfigFromSource(options: {
     provider: AgentProvider;
-    profileKey: string;
+    profileKey?: string;
     requestId?: string;
   }): Promise<SyncProviderNativeConfigFromSourcePayload> {
     return this.sendCorrelatedSessionRequest({
@@ -3758,7 +3758,7 @@ export class DaemonClient {
       message: {
         type: "sync_provider_native_config_from_source_request",
         provider: options.provider,
-        profileKey: options.profileKey,
+        ...(options.profileKey ? { profileKey: options.profileKey } : {}),
       },
       responseType: "sync_provider_native_config_from_source_response",
       timeout: 10000,
@@ -3767,7 +3767,7 @@ export class DaemonClient {
 
   async listProviderNativeMcpServers(options: {
     provider: AgentProvider;
-    profileKey: string;
+    profileKey?: string;
     requestId?: string;
   }): Promise<ListProviderNativeMcpServersPayload> {
     return this.sendCorrelatedSessionRequest({
@@ -3775,7 +3775,7 @@ export class DaemonClient {
       message: {
         type: "list_provider_native_mcp_servers_request",
         provider: options.provider,
-        profileKey: options.profileKey,
+        ...(options.profileKey ? { profileKey: options.profileKey } : {}),
       },
       responseType: "list_provider_native_mcp_servers_response",
       timeout: 10000,
@@ -3784,7 +3784,7 @@ export class DaemonClient {
 
   async upsertProviderNativeMcpServer(options: {
     provider: AgentProvider;
-    profileKey: string;
+    profileKey?: string;
     id: string;
     config: McpServerConfig;
     enabled?: boolean;
@@ -3795,7 +3795,7 @@ export class DaemonClient {
       message: {
         type: "upsert_provider_native_mcp_server_request",
         provider: options.provider,
-        profileKey: options.profileKey,
+        ...(options.profileKey ? { profileKey: options.profileKey } : {}),
         id: options.id,
         config: options.config,
         enabled: options.enabled,
@@ -3807,7 +3807,7 @@ export class DaemonClient {
 
   async removeProviderNativeMcpServer(options: {
     provider: AgentProvider;
-    profileKey: string;
+    profileKey?: string;
     id: string;
     requestId?: string;
   }): Promise<RemoveProviderNativeMcpServerPayload> {
@@ -3816,7 +3816,7 @@ export class DaemonClient {
       message: {
         type: "remove_provider_native_mcp_server_request",
         provider: options.provider,
-        profileKey: options.profileKey,
+        ...(options.profileKey ? { profileKey: options.profileKey } : {}),
         id: options.id,
       },
       responseType: "remove_provider_native_mcp_server_response",

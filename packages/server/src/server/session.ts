@@ -4159,14 +4159,13 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "read_provider_native_config_request" }>,
   ): Promise<void> {
     try {
-      const config = await this.requireProviderNativeConfigService().readAccountConfig({
+      const config = await this.requireProviderNativeConfigService().readProviderConfig({
         provider: msg.provider,
-        profileKey: msg.profileKey,
       });
       this.emit({
         type: "read_provider_native_config_response",
         payload: {
-          config,
+          config: msg.profileKey ? { ...config, profileKey: msg.profileKey } : config,
           requestId: msg.requestId,
         },
       });
@@ -4179,15 +4178,14 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "write_provider_native_config_request" }>,
   ): Promise<void> {
     try {
-      const config = await this.requireProviderNativeConfigService().writeAccountConfig({
+      const config = await this.requireProviderNativeConfigService().writeProviderConfig({
         provider: msg.provider,
-        profileKey: msg.profileKey,
         content: msg.content,
       });
       this.emit({
         type: "write_provider_native_config_response",
         payload: {
-          config,
+          config: msg.profileKey ? { ...config, profileKey: msg.profileKey } : config,
           requestId: msg.requestId,
         },
       });
@@ -4203,14 +4201,13 @@ export class Session {
     >,
   ): Promise<void> {
     try {
-      const config = await this.requireProviderNativeConfigService().syncAccountConfigFromNative({
+      const config = await this.requireProviderNativeConfigService().syncProviderConfigFromNative({
         provider: msg.provider,
-        profileKey: msg.profileKey,
       });
       this.emit({
         type: "sync_provider_native_config_from_source_response",
         payload: {
-          config,
+          config: msg.profileKey ? { ...config, profileKey: msg.profileKey } : config,
           requestId: msg.requestId,
         },
       });
@@ -4223,15 +4220,14 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "list_provider_native_mcp_servers_request" }>,
   ): Promise<void> {
     try {
-      const servers = await this.requireProviderNativeConfigService().listAccountMcpServers({
+      const servers = await this.requireProviderNativeConfigService().listProviderMcpServers({
         provider: msg.provider,
-        profileKey: msg.profileKey,
       });
       this.emit({
         type: "list_provider_native_mcp_servers_response",
         payload: {
           provider: msg.provider,
-          profileKey: msg.profileKey,
+          ...(msg.profileKey ? { profileKey: msg.profileKey } : {}),
           servers,
           requestId: msg.requestId,
         },
@@ -4245,9 +4241,8 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "upsert_provider_native_mcp_server_request" }>,
   ): Promise<void> {
     try {
-      const server = await this.requireProviderNativeConfigService().upsertAccountMcpServer({
+      const server = await this.requireProviderNativeConfigService().upsertProviderMcpServer({
         provider: msg.provider,
-        profileKey: msg.profileKey,
         id: msg.id,
         config: msg.config,
         enabled: msg.enabled,
@@ -4256,7 +4251,7 @@ export class Session {
         type: "upsert_provider_native_mcp_server_response",
         payload: {
           provider: msg.provider,
-          profileKey: msg.profileKey,
+          ...(msg.profileKey ? { profileKey: msg.profileKey } : {}),
           server,
           requestId: msg.requestId,
         },
@@ -4270,16 +4265,15 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "remove_provider_native_mcp_server_request" }>,
   ): Promise<void> {
     try {
-      const removed = await this.requireProviderNativeConfigService().removeAccountMcpServer({
+      const removed = await this.requireProviderNativeConfigService().removeProviderMcpServer({
         provider: msg.provider,
-        profileKey: msg.profileKey,
         id: msg.id,
       });
       this.emit({
         type: "remove_provider_native_mcp_server_response",
         payload: {
           provider: msg.provider,
-          profileKey: msg.profileKey,
+          ...(msg.profileKey ? { profileKey: msg.profileKey } : {}),
           removed,
           requestId: msg.requestId,
         },
