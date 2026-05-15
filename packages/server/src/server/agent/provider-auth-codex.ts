@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants as fsConstants, promises as fs } from "node:fs";
+import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -16,13 +16,16 @@ import type {
 import { getProviderAccountHomePath, getProviderAccountRoot } from "./provider-layout.js";
 import { createManagedProviderHomeRef } from "./provider-home-ref.js";
 import {
+  materializeProviderNativeConfigToHome,
+  seedProviderNativeConfigFromHome,
+} from "./provider-native-config-files.js";
+import {
   readCodexAppServerUsage,
   type ReadCodexAppServerUsageOptions,
 } from "./providers/codex-app-server-usage.js";
 
 const CODEX_PROVIDER = "codex" as const;
 const CODEX_AUTH_FILENAME = "auth.json";
-const CODEX_CONFIG_FILENAME = "config.toml";
 
 type CodexUsageReader = (
   options: ReadCodexAppServerUsageOptions,
@@ -85,7 +88,16 @@ export class CodexProviderAuthAdapter implements ProviderAuthAdapter {
 
     await fs.mkdir(profileCodexHome, { recursive: true });
     await copySensitiveFile(resolvedAuthPath, path.join(profileCodexHome, CODEX_AUTH_FILENAME));
-    await copyOptionalCodexConfig(path.dirname(resolvedAuthPath), profileCodexHome);
+    await seedProviderNativeConfigFromHome({
+      provider: CODEX_PROVIDER,
+      providerRoot: context.providerBaseDir,
+      sourceHomePath: path.dirname(resolvedAuthPath),
+    });
+    await materializeProviderNativeConfigToHome({
+      provider: CODEX_PROVIDER,
+      providerRoot: context.providerBaseDir,
+      providerHomePath: profileCodexHome,
+    });
     await writeAccountMetadata(profileRoot, {
       provider: CODEX_PROVIDER,
       key: parsed.key,
@@ -352,14 +364,4 @@ async function writeAccountMetadata(
 ): Promise<void> {
   const payload = `${JSON.stringify(stripUndefined(metadata), null, 2)}\n`;
   await fs.writeFile(path.join(profileRoot, "metadata.json"), payload, "utf8");
-}
-
-async function copyOptionalCodexConfig(sourceDir: string, targetDir: string): Promise<void> {
-  const sourceConfig = path.join(sourceDir, CODEX_CONFIG_FILENAME);
-  const targetConfig = path.join(targetDir, CODEX_CONFIG_FILENAME);
-  await fs.copyFile(sourceConfig, targetConfig, fsConstants.COPYFILE_EXCL).catch((error) => {
-    if (!["EEXIST", "ENOENT"].includes((error as NodeJS.ErrnoException).code ?? "")) {
-      throw error;
-    }
-  });
 }

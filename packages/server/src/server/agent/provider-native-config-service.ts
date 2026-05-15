@@ -10,12 +10,16 @@ import {
   writeCodexNativeMcpServerConfig,
 } from "./mcp-native-import.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
-
-const CODEX_CONFIG_FILENAME = "config.toml";
+import {
+  materializeProviderNativeConfigToHome,
+  normalizeConfigContent,
+  resolveProviderHomeNativeConfigPath,
+  resolveProviderNativeConfigPath,
+} from "./provider-native-config-files.js";
+import { getProviderRoot } from "./provider-layout.js";
 
 export interface ProviderNativeConfigSnapshot {
   provider: AgentProvider;
-  profileKey: string;
   path: string;
   content: string;
   exists: boolean;
@@ -30,15 +34,18 @@ export interface ProviderNativeMcpServer {
 
 export class ProviderNativeConfigService {
   private readonly logger: Logger;
+  private readonly paseoHome: string;
   private readonly providerAuthService: ProviderAuthService;
   private readonly codexNativeHomeResolver: () => string;
 
   constructor(options: {
+    paseoHome: string;
     logger: Logger;
     providerAuthService: ProviderAuthService;
     codexNativeHomeResolver?: () => string;
   }) {
     this.logger = options.logger.child({ module: "provider-native-config" });
+    this.paseoHome = options.paseoHome;
     this.providerAuthService = options.providerAuthService;
     this.codexNativeHomeResolver = options.codexNativeHomeResolver ?? resolveDefaultCodexHome;
   }
@@ -47,12 +54,10 @@ export class ProviderNativeConfigService {
     return ["codex"];
   }
 
-  async readAccountConfig(input: {
+  async readProviderConfig(input: {
     provider: AgentProvider;
-    profileKey: string;
   }): Promise<ProviderNativeConfigSnapshot> {
-    const profile = await this.requireProfile(input.provider, input.profileKey);
-    const configPath = this.resolveConfigPath(input.provider, profile.providerHomePath);
+    const configPath = this.resolveConfigPath(input.provider);
     try {
       const [content, stat] = await Promise.all([
         fs.readFile(configPath, "utf8"),
@@ -60,7 +65,6 @@ export class ProviderNativeConfigService {
       ]);
       return {
         provider: input.provider,
-        profileKey: input.profileKey,
         path: configPath,
         content,
         exists: true,
@@ -73,7 +77,6 @@ export class ProviderNativeConfigService {
       }
       return {
         provider: input.provider,
-        profileKey: input.profileKey,
         path: configPath,
         content: "",
         exists: false,
@@ -81,24 +84,21 @@ export class ProviderNativeConfigService {
     }
   }
 
-  async writeAccountConfig(input: {
+  async writeProviderConfig(input: {
     provider: AgentProvider;
-    profileKey: string;
     content: string;
   }): Promise<ProviderNativeConfigSnapshot> {
-    const profile = await this.requireProfile(input.provider, input.profileKey);
-    const configPath = this.resolveConfigPath(input.provider, profile.providerHomePath);
+    const configPath = this.resolveConfigPath(input.provider);
     await fs.mkdir(path.dirname(configPath), { recursive: true });
     await fs.writeFile(configPath, normalizeConfigContent(input.content), "utf8");
-    return this.readAccountConfig(input);
+    await this.materializeProviderConfigToAccounts(input.provider);
+    return this.readProviderConfig(input);
   }
 
-  async syncAccountConfigFromNative(input: {
+  async syncProviderConfigFromNative(input: {
     provider: AgentProvider;
-    profileKey: string;
   }): Promise<ProviderNativeConfigSnapshot> {
-    const profile = await this.requireProfile(input.provider, input.profileKey);
-    const targetPath = this.resolveConfigPath(input.provider, profile.providerHomePath);
+    const targetPath = this.resolveConfigPath(input.provider);
     const sourcePath = this.resolveNativeConfigPath(input.provider);
     let content: string;
     try {
@@ -113,14 +113,14 @@ export class ProviderNativeConfigService {
     }
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await fs.writeFile(targetPath, normalizeConfigContent(content), "utf8");
-    return this.readAccountConfig(input);
+    await this.materializeProviderConfigToAccounts(input.provider);
+    return this.readProviderConfig(input);
   }
 
-  async listAccountMcpServers(input: {
+  async listProviderMcpServers(input: {
     provider: AgentProvider;
-    profileKey: string;
   }): Promise<ProviderNativeMcpServer[]> {
-    const config = await this.readAccountConfig(input);
+    const config = await this.readProviderConfig(input);
     if (!config.content.trim()) {
       return [];
     }
@@ -131,14 +131,13 @@ export class ProviderNativeConfigService {
     }));
   }
 
-  async upsertAccountMcpServer(input: {
+  async upsertProviderMcpServer(input: {
     provider: AgentProvider;
-    profileKey: string;
     id: string;
     config: McpServerConfig;
     enabled?: boolean;
   }): Promise<ProviderNativeMcpServer> {
-    const snapshot = await this.readAccountConfig(input);
+    const snapshot = await this.readProviderConfig(input);
     const enabled =
       input.enabled ??
       parseCodexNativeMcpConfigToml(snapshot.content).servers.find(
@@ -151,9 +150,8 @@ export class ProviderNativeConfigService {
       config: input.config,
       enabled,
     });
-    await this.writeAccountConfig({
+    await this.writeProviderConfig({
       provider: input.provider,
-      profileKey: input.profileKey,
       content,
     });
     return {
@@ -163,56 +161,61 @@ export class ProviderNativeConfigService {
     };
   }
 
-  async removeAccountMcpServer(input: {
-    provider: AgentProvider;
-    profileKey: string;
-    id: string;
-  }): Promise<boolean> {
-    const snapshot = await this.readAccountConfig(input);
+  async removeProviderMcpServer(input: { provider: AgentProvider; id: string }): Promise<boolean> {
+    const snapshot = await this.readProviderConfig(input);
     const existed = parseCodexNativeMcpConfigToml(snapshot.content).servers.some(
       (server) => server.id === input.id,
     );
     const content = removeCodexNativeMcpServerConfig(snapshot.content, input.id);
-    await this.writeAccountConfig({
+    await this.writeProviderConfig({
       provider: input.provider,
-      profileKey: input.profileKey,
       content,
     });
     return existed;
   }
 
-  private async requireProfile(provider: AgentProvider, profileKey: string) {
+  async materializeProviderConfigToAccounts(provider: AgentProvider): Promise<void> {
     const profiles = await this.providerAuthService.listProfiles(provider);
-    const profile = profiles.find((candidate) => candidate.key === profileKey);
-    if (!profile) {
-      throw new Error(`Provider account '${profileKey}' was not found`);
-    }
-    if (!profile.providerHomeRef?.homePath) {
-      throw new Error(`Provider account '${profileKey}' does not have a managed provider home`);
-    }
-    return {
-      ...profile,
-      providerHomePath: profile.providerHomeRef.homePath,
-    };
+    await Promise.all(
+      profiles.map(async (profile) => {
+        const homePath = profile.providerHomeRef?.homePath;
+        if (!homePath) {
+          return;
+        }
+        await materializeProviderNativeConfigToHome({
+          provider,
+          providerRoot: this.resolveProviderRoot(provider),
+          providerHomePath: homePath,
+        });
+      }),
+    );
   }
 
-  private resolveConfigPath(provider: AgentProvider, providerHomePath: string): string {
-    if (provider === "codex") {
-      return path.join(providerHomePath, CODEX_CONFIG_FILENAME);
-    }
-    throw new Error(`Native config is not supported for provider '${provider}'`);
+  async materializeProviderConfigToAccount(input: {
+    provider: AgentProvider;
+    providerHomePath: string;
+  }): Promise<boolean> {
+    return materializeProviderNativeConfigToHome({
+      provider: input.provider,
+      providerRoot: this.resolveProviderRoot(input.provider),
+      providerHomePath: input.providerHomePath,
+    });
+  }
+
+  private resolveProviderRoot(provider: AgentProvider): string {
+    return getProviderRoot(this.paseoHome, provider);
+  }
+
+  private resolveConfigPath(provider: AgentProvider): string {
+    return resolveProviderNativeConfigPath(this.resolveProviderRoot(provider), provider);
   }
 
   private resolveNativeConfigPath(provider: AgentProvider): string {
     if (provider === "codex") {
-      return path.join(this.codexNativeHomeResolver(), CODEX_CONFIG_FILENAME);
+      return resolveProviderHomeNativeConfigPath(provider, this.codexNativeHomeResolver());
     }
     throw new Error(`Native config sync is not supported for provider '${provider}'`);
   }
-}
-
-function normalizeConfigContent(content: string): string {
-  return content.endsWith("\n") ? content : `${content}\n`;
 }
 
 function resolveDefaultCodexHome(): string {

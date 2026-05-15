@@ -142,20 +142,17 @@ test("sends provider-native MCP account requests", async () => {
 
   const listPromise = client.listProviderNativeMcpServers({
     provider: "codex",
-    profileKey: "account-a",
   });
   const listRequest = parseSentFrame(mock.sent[0]);
   expect(listRequest).toMatchObject({
     type: "list_provider_native_mcp_servers_request",
     provider: "codex",
-    profileKey: "account-a",
   });
   mock.triggerMessage(
     wrapSessionMessage({
       type: "list_provider_native_mcp_servers_response",
       payload: {
         provider: "codex",
-        profileKey: "account-a",
         servers: [],
         requestId: listRequest.requestId,
       },
@@ -166,7 +163,6 @@ test("sends provider-native MCP account requests", async () => {
   const config = { type: "stdio" as const, command: "context-mode" };
   const upsertPromise = client.upsertProviderNativeMcpServer({
     provider: "codex",
-    profileKey: "account-a",
     id: "context-mode",
     config,
     enabled: false,
@@ -175,7 +171,6 @@ test("sends provider-native MCP account requests", async () => {
   expect(upsertRequest).toMatchObject({
     type: "upsert_provider_native_mcp_server_request",
     provider: "codex",
-    profileKey: "account-a",
     id: "context-mode",
     config,
     enabled: false,
@@ -185,7 +180,6 @@ test("sends provider-native MCP account requests", async () => {
       type: "upsert_provider_native_mcp_server_response",
       payload: {
         provider: "codex",
-        profileKey: "account-a",
         server: { id: "context-mode", config, enabled: false },
         requestId: upsertRequest.requestId,
       },
@@ -197,14 +191,12 @@ test("sends provider-native MCP account requests", async () => {
 
   const removePromise = client.removeProviderNativeMcpServer({
     provider: "codex",
-    profileKey: "account-a",
     id: "context-mode",
   });
   const removeRequest = parseSentFrame(mock.sent[2]);
   expect(removeRequest).toMatchObject({
     type: "remove_provider_native_mcp_server_request",
     provider: "codex",
-    profileKey: "account-a",
     id: "context-mode",
   });
   mock.triggerMessage(
@@ -212,7 +204,6 @@ test("sends provider-native MCP account requests", async () => {
       type: "remove_provider_native_mcp_server_response",
       payload: {
         provider: "codex",
-        profileKey: "account-a",
         removed: true,
         requestId: removeRequest.requestId,
       },
