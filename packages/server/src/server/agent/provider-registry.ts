@@ -24,6 +24,7 @@ import type {
 import { ClaudeAgentClient } from "./providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
+import { GeminiACPAgentClient } from "./providers/gemini-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { resolveOpenCodeManagedRoots } from "./providers/opencode/managed-roots.js";
@@ -102,6 +103,11 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
     }),
   copilot: (logger, runtimeSettings) =>
     new CopilotACPAgentClient({
+      logger,
+      runtimeSettings,
+    }),
+  gemini: (logger, runtimeSettings) =>
+    new GeminiACPAgentClient({
       logger,
       runtimeSettings,
     }),

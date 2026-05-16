@@ -43,6 +43,7 @@ second level.
 | Import session list               | Provider-generic for importable providers: Claude, Codex, and OpenCode.                                                                 |
 | Import with selected account      | Codex-specific for account-aware native session continuity.                                                                             |
 | Cross-account continuity          | Codex-specific. Rollout/session continuity is implemented around Codex native session files.                                            |
+| Gemini provider launch            | Enabled through Gemini CLI ACP. Managed account/native-config integration is not implemented yet.                                       |
 
 ## Codex Integration Baseline
 
@@ -110,6 +111,20 @@ Missing pieces depend on each provider:
 - Whether MCP or plugin configuration is provider-native or passed through
   runtime options.
 - Whether session continuity can be mapped to provider-native history.
+
+### Gemini
+
+Gemini is available as a built-in ACP-backed provider using the local Gemini CLI
+binary with `gemini --acp`. It uses Gemini CLI's native authentication and
+configuration by default.
+
+Missing pieces:
+
+- Gemini account/auth adapter around `GEMINI_CLI_HOME` and native
+  `~/.gemini` files.
+- Gemini native config adapter for `settings.json`, especially `mcpServers`.
+- Gemini usage/limit refresh, if a reliable native/API source exists.
+- Import/session continuity design for Gemini CLI session history.
 
 ## Implementation Direction
 

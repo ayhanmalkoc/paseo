@@ -105,6 +105,38 @@ const COPILOT_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const GEMINI_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "default",
+    label: "Default",
+    description: "Gemini CLI's default approval flow",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
+    id: "autoEdit",
+    label: "Auto Edit",
+    description: "Automatically approves edit tools while prompting for other tool calls",
+    icon: "ShieldAlert",
+    colorTier: "moderate",
+  },
+  {
+    id: "yolo",
+    label: "Full Access",
+    description: "Automatically approves all Gemini CLI tool calls",
+    icon: "ShieldAlert",
+    colorTier: "dangerous",
+    isUnattended: true,
+  },
+  {
+    id: "plan",
+    label: "Plan",
+    description: "Read-only planning mode when supported by the installed Gemini CLI",
+    icon: "ShieldCheck",
+    colorTier: "planning",
+  },
+];
+
 const OPENCODE_MODES: AgentProviderModeDefinition[] = [
   {
     id: "build",
@@ -171,6 +203,13 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     description: "GitHub Copilot via Agent Client Protocol with dynamic modes and session support",
     defaultModeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
     modes: COPILOT_MODES,
+  },
+  {
+    id: "gemini",
+    label: "Gemini",
+    description: "Google Gemini CLI via Agent Client Protocol",
+    defaultModeId: "default",
+    modes: GEMINI_MODES,
   },
   {
     id: "opencode",
