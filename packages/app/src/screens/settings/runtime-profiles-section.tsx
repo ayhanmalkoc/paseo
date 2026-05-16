@@ -13,7 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { applyFeatureValues } from "@/hooks/feature-preferences";
+import { applyFeatureValues, pruneFeatureValues } from "@/hooks/feature-preferences";
 import { useProviderAuthProfiles } from "@/hooks/use-provider-auth-profiles";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useRuntimeProfiles } from "@/hooks/use-runtime-profiles";
@@ -385,6 +385,7 @@ function RuntimeProfileEditorSheet({
         model: defaultModel?.id ?? "",
         modeId: nextEntry?.defaultModeId ?? "",
         thinkingOptionId: defaultModel?.defaultThinkingOptionId ?? "",
+        featureValues: {},
       }));
     },
     [providerEntries],
@@ -396,7 +397,7 @@ function RuntimeProfileEditorSheet({
     setError(null);
     void (async () => {
       try {
-        const patch = buildPatch(draft);
+        const patch = buildPatch(draft, draftFeatures.features);
         await onSave(profile?.id ?? null, patch);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to save profile");
@@ -404,7 +405,7 @@ function RuntimeProfileEditorSheet({
         setSaving(false);
       }
     })();
-  }, [draft, onSave, profile?.id, saving]);
+  }, [draft, draftFeatures.features, onSave, profile?.id, saving]);
 
   const handleSetFeatureValue = useCallback((featureId: string, value: unknown) => {
     setDraft((current) => {
@@ -1058,6 +1059,7 @@ function buildCompatAccountKey(accountSelectionId: string): string | null {
 
 function buildPatch(
   draft: RuntimeProfileDraft,
+  features: AgentFeature[],
 ): RuntimeProfilePatch & { name: string; provider: AgentProvider } {
   const name = draft.name.trim();
   const provider = draft.provider.trim();
@@ -1080,7 +1082,7 @@ function buildPatch(
     sessionBehavior: draft.sessionBehavior,
     systemPrompt: normalizeNullableText(draft.systemPrompt),
     instructionOverlay: normalizeNullableText(draft.instructionOverlay),
-    featureValues: draft.featureValues,
+    featureValues: pruneFeatureValues(draft.featureValues, features),
     envOverlay: parseStringObjectJson("Environment JSON", draft.envOverlayJson),
   };
 }

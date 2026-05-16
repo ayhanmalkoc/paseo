@@ -2326,16 +2326,17 @@ function RuntimeProfileDetailsSection({
       }
     : null;
   const featureValues = profile.featureValues ?? {};
-  const featureRows: ProfileDetailsRow[] = Object.entries(featureValues).map(
-    ([featureId, value]) => {
+  const availableFeatureIds = new Set(features?.map((feature) => feature.id) ?? []);
+  const featureRows: ProfileDetailsRow[] = Object.entries(featureValues)
+    .filter(([featureId]) => availableFeatureIds.has(featureId))
+    .map(([featureId, value]) => {
       const featureLabel =
         features?.find((feature) => feature.id === featureId)?.label ?? featureId;
       return {
         label: featureLabel,
         value: formatRuntimeProfileValue(value),
       };
-    },
-  );
+    });
   const rows: ProfileDetailsRow[] = [
     {
       label: "Provider",
