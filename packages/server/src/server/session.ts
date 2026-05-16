@@ -1380,6 +1380,7 @@ export class Session {
 
   private getProviderRegistry(): ReturnType<typeof buildProviderRegistry> {
     return buildProviderRegistry(this.sessionLogger, {
+      paseoHome: this.paseoHome,
       runtimeSettings: this.agentProviderRuntimeSettings,
       providerOverrides: applyMutableProviderConfigToOverrides(
         this.providerOverrides,

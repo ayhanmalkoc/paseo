@@ -76,6 +76,10 @@ Implemented surfaces:
   The provider adapter launches Codex with that account home, so native MCP,
   plugin, hook, and other Codex-owned config stays provider-owned and is resolved
   by Codex at launch.
+- OpenCode account settings expose the native auth bundle as a single provider
+  account surface. OpenCode does not model Codex-style per-account homes; Paseo
+  syncs the native `auth.json` into the managed OpenCode root and preserves every
+  linked provider credential such as `opencode`, `openai`, or `anthropic`.
 - Native Codex config is copied into a managed account only when the managed
   `config.toml` does not already exist. Refresh/import must not overwrite an
   existing managed config, because account-local MCP toggles and power-user
@@ -180,19 +184,20 @@ Active agent:
 
 ## Provider Support Boundaries
 
-| Provider | Account surfaces                                                                           | Native import                                                                         | Cross-account continuity                                                                                                                                             |
-| -------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Codex    | Enabled. Listing/import/default/remove and ChatGPT device-code onboarding are implemented. | Reads Codex native sessions from the selected source provider home.                   | Implemented by copying/fast-forwarding the target rollout file before resume.                                                                                        |
-| Claude   | Disabled. No managed account adapter exists yet.                                           | Reads native Claude project sessions from the native default Claude config directory. | Not enabled. Claude session files are tied to the native Claude config/project layout and need provider-specific design before managed account switching is exposed. |
-| OpenCode | Disabled. No managed account adapter exists yet.                                           | Reads OpenCode sessions from the OpenCode storage root used by the provider wrapper.  | Not enabled. OpenCode storage is provider-managed and the account boundary is not represented by Paseo yet.                                                          |
+| Provider | Account surfaces                                                                                                                                         | Native import                                                                         | Cross-account continuity                                                                                                                                             |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex    | Enabled. Listing/import/default/remove and ChatGPT device-code onboarding are implemented.                                                               | Reads Codex native sessions from the selected source provider home.                   | Implemented by copying/fast-forwarding the target rollout file before resume.                                                                                        |
+| Claude   | Disabled. No managed account adapter exists yet.                                                                                                         | Reads native Claude project sessions from the native default Claude config directory. | Not enabled. Claude session files are tied to the native Claude config/project layout and need provider-specific design before managed account switching is exposed. |
+| OpenCode | Enabled as one native auth bundle. Import/refresh syncs native OpenCode `auth.json` into the managed OpenCode root and summarizes linked auth providers. | Reads OpenCode sessions from the OpenCode storage root used by the provider wrapper.  | Not applicable as Codex-style account switching. OpenCode auth is a provider-level bundle, not separate Paseo-managed account homes.                                 |
 
 Server capability payloads expose provider-specific support lists:
 
 - `providerAuthProfileProviders`
 - `providerAccountOnboardingProviders`
 
-Current value is Codex-only. Old daemons that only send the global boolean are
-still accepted by the client for protocol compatibility.
+Current value includes Codex and OpenCode for account surfaces, while onboarding
+is provider-specific. Old daemons that only send the global boolean are still
+accepted by the client for protocol compatibility.
 
 Unsupported providers should not pretend to support managed account continuity.
 They should either use native default provider homes or surface a clear
