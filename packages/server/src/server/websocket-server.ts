@@ -475,6 +475,7 @@ export class VoiceAssistantWebSocketServer {
     const providerSnapshotLogger = this.logger.child({ module: "provider-snapshot-manager" });
     this.providerSnapshotManager = new ProviderSnapshotManager(
       buildProviderRegistry(providerSnapshotLogger, {
+        paseoHome: this.paseoHome,
         runtimeSettings: this.agentProviderRuntimeSettings,
         providerOverrides: this.providerOverrides,
         isDev: this.isDev,
@@ -494,6 +495,7 @@ export class VoiceAssistantWebSocketServer {
         config.providers,
       );
       const registry = buildProviderRegistry(providerSnapshotLogger, {
+        paseoHome: this.paseoHome,
         runtimeSettings: this.agentProviderRuntimeSettings,
         providerOverrides: this.providerOverrides,
         isDev: this.isDev,

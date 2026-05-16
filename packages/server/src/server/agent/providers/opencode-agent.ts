@@ -45,6 +45,8 @@ import { createProviderEnvSpec, type ProviderRuntimeSettings } from "../provider
 import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand } from "../../../utils/spawn.js";
 import { buildToolCallDisplayModel } from "../../../shared/tool-call-display.js";
+import { findOpenCodeBinary } from "./opencode/binary.js";
+import { ensureOpenCodeManagedRoots, type OpenCodeManagedRoots } from "./opencode/managed-roots.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import { OpenCodeServerManager } from "./opencode/server-manager.js";
 import {
@@ -918,6 +920,11 @@ interface OpenCodeAgentClientDeps {
   runtime?: OpenCodeRuntime;
 }
 
+export interface OpenCodeAgentClientOptions {
+  storageRoot?: string;
+  managedRoots?: OpenCodeManagedRoots;
+}
+
 class ProductionOpenCodeRuntime implements OpenCodeRuntime {
   constructor(private readonly serverManager: OpenCodeServerManager) {}
 
@@ -947,20 +954,31 @@ export class OpenCodeAgentClient implements AgentClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly modelContextWindows = new Map<string, number>();
   private readonly storageRoot: string;
+  private readonly managedRoots?: OpenCodeManagedRoots;
 
   constructor(
     logger: Logger,
     runtimeSettings?: ProviderRuntimeSettings,
-    storageRoot?: string,
+    options?: string | OpenCodeAgentClientOptions,
     deps: OpenCodeAgentClientDeps = {},
   ) {
     this.logger = logger.child({ module: "agent", provider: "opencode" });
     this.runtimeSettings = runtimeSettings;
-    this.storageRoot = storageRoot ?? resolveOpenCodeStorageRoot();
+    const resolvedOptions = typeof options === "string" ? { storageRoot: options } : options;
+    this.managedRoots = resolvedOptions?.managedRoots;
+    this.storageRoot =
+      resolvedOptions?.storageRoot ??
+      resolvedOptions?.managedRoots?.storageRoot ??
+      resolveOpenCodeStorageRoot();
+    const serverManagerOptions = this.managedRoots
+      ? {
+          managedRoots: this.managedRoots,
+        }
+      : undefined;
     this.runtime =
       deps.runtime ??
       new ProductionOpenCodeRuntime(
-        OpenCodeServerManager.getInstance(this.logger, runtimeSettings),
+        OpenCodeServerManager.getInstance(this.logger, runtimeSettings, serverManagerOptions),
       );
   }
 
@@ -1151,6 +1169,7 @@ export class OpenCodeAgentClient implements AgentClient {
   async listPersistedAgents(
     options?: ListPersistedAgentsOptions,
   ): Promise<PersistedAgentDescriptor[]> {
+    await this.ensureManagedRoots();
     return collectOpenCodePersistedAgentsFromStorage(this.storageRoot, options);
   }
 
@@ -1159,13 +1178,13 @@ export class OpenCodeAgentClient implements AgentClient {
     if (command?.mode === "replace") {
       return await isCommandAvailable(command.argv[0]);
     }
-    return await isCommandAvailable("opencode");
+    return (await findOpenCodeBinary()) !== null;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
       const available = await this.isAvailable();
-      const resolvedBinary = await findExecutable("opencode");
+      const resolvedBinary = await this.resolveBinaryPath();
       let serverStatus = "Not running";
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
@@ -1181,7 +1200,7 @@ export class OpenCodeAgentClient implements AgentClient {
       if (resolvedBinary) {
         try {
           const { stdout, stderr } = await execCommand(resolvedBinary, ["auth", "list"], {
-            ...createProviderEnvSpec(),
+            ...this.createEnvSpec(),
             timeout: 5_000,
           });
           const text = (stdout.trim() || stderr.trim()).trim();
@@ -1237,6 +1256,29 @@ export class OpenCodeAgentClient implements AgentClient {
       };
     }
   }
+
+  private async ensureManagedRoots(): Promise<void> {
+    if (!this.managedRoots) {
+      return;
+    }
+    await ensureOpenCodeManagedRoots({ roots: this.managedRoots });
+  }
+
+  private async resolveBinaryPath(): Promise<string | null> {
+    const command = this.runtimeSettings?.command;
+    if (command?.mode === "replace") {
+      return await findExecutable(command.argv[0]);
+    }
+    return await findOpenCodeBinary();
+  }
+
+  private createEnvSpec(): ReturnType<typeof createProviderEnvSpec> {
+    return createProviderEnvSpec({
+      runtimeSettings: this.runtimeSettings,
+      overlays: [this.managedRoots?.envOverlay],
+    });
+  }
+
   private assertConfig(config: AgentSessionConfig): OpenCodeAgentConfig {
     if (config.provider !== "opencode") {
       throw new Error(`OpenCodeAgentClient received config for provider '${config.provider}'`);

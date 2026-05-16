@@ -83,15 +83,18 @@ Missing pieces:
 
 ### OpenCode
 
-OpenCode can launch as a provider, and OpenCode sessions can appear in import
-flows, but managed account/profile integration is not implemented yet.
+OpenCode launches under Paseo-managed XDG roots at
+`$PASEO_HOME/providers/opencode/{config,data,state}`. On first use, Paseo seeds
+missing OpenCode config/data entries from the native XDG locations, then keeps
+the managed roots independent. OpenCode sessions can appear in import flows, but
+managed account/profile integration is not implemented yet.
 
 Missing pieces:
 
 - OpenCode account/auth adapter.
 - OpenCode account discovery and default account semantics.
 - OpenCode usage refresh, if available.
-- OpenCode native config adapter for MCP/config equivalents.
+- OpenCode native config UI/editor for MCP/config equivalents.
 - Account-aware import/session continuity design.
 - Runtime profile account selection backed by real OpenCode managed accounts.
 

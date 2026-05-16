@@ -26,6 +26,7 @@ import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
 import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
+import { resolveOpenCodeManagedRoots } from "./providers/opencode/managed-roots.js";
 import { OpenCodeServerManager } from "./providers/opencode/server-manager.js";
 import { PiDirectAgentClient } from "./providers/pi-direct-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
@@ -61,6 +62,7 @@ export interface ProviderDefinition extends AgentProviderDefinition {
 export { IMPORTABLE_PROVIDERS } from "../../shared/importable-providers.js";
 
 export interface BuildProviderRegistryOptions {
+  paseoHome?: string;
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
@@ -70,8 +72,13 @@ export interface BuildProviderRegistryOptions {
 type ProviderClientFactory = (
   logger: Logger,
   runtimeSettings?: ProviderRuntimeSettings,
-  options?: Pick<BuildProviderRegistryOptions, "workspaceGitService">,
+  options?: ProviderFactoryOptions,
 ) => AgentClient;
+
+type ProviderFactoryOptions = Pick<
+  BuildProviderRegistryOptions,
+  "paseoHome" | "workspaceGitService"
+>;
 
 interface ResolvedProvider {
   definition: AgentProviderDefinition;
@@ -98,7 +105,16 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       logger,
       runtimeSettings,
     }),
-  opencode: (logger, runtimeSettings) => new OpenCodeAgentClient(logger, runtimeSettings),
+  opencode: (logger, runtimeSettings, options) =>
+    new OpenCodeAgentClient(
+      logger,
+      runtimeSettings,
+      options?.paseoHome
+        ? {
+            managedRoots: resolveOpenCodeManagedRoots(options.paseoHome),
+          }
+        : undefined,
+    ),
   pi: (logger, runtimeSettings) =>
     new PiDirectAgentClient({
       logger,
@@ -430,7 +446,7 @@ function createResolvedProviderClient(
 function buildResolvedBuiltinProviders(
   providerOverrides: Record<string, ProviderOverride>,
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
-  options: Pick<BuildProviderRegistryOptions, "workspaceGitService">,
+  options: ProviderFactoryOptions,
   isDev: boolean,
 ): Map<string, ResolvedProvider> {
   const resolvedProviders = new Map<string, ResolvedProvider>();
@@ -454,10 +470,7 @@ function buildResolvedBuiltinProviders(
       additionalModels: override?.additionalModels ?? [],
       enabled: override?.enabled !== false,
       derivedFromProviderId: null,
-      createBaseClient: (logger) =>
-        factory(logger, mergedRuntimeSettings, {
-          workspaceGitService: options.workspaceGitService,
-        }),
+      createBaseClient: (logger) => factory(logger, mergedRuntimeSettings, options),
     });
   }
 
@@ -467,6 +480,7 @@ function buildResolvedBuiltinProviders(
 function addDerivedProviders(
   resolvedProviders: Map<string, ResolvedProvider>,
   providerOverrides: Record<string, ProviderOverride>,
+  options: ProviderFactoryOptions,
 ): void {
   for (const [providerId, override] of Object.entries(providerOverrides)) {
     if (resolvedProviders.has(providerId) || BUILTIN_PROVIDER_IDS.includes(providerId)) {
@@ -532,9 +546,18 @@ function addDerivedProviders(
       additionalModels: override.additionalModels ?? [],
       enabled: override.enabled !== false,
       derivedFromProviderId: override.extends,
-      createBaseClient: (logger) => baseFactory(logger, mergedRuntimeSettings),
+      createBaseClient: (logger) => baseFactory(logger, mergedRuntimeSettings, options),
     });
   }
+}
+
+function buildProviderFactoryOptions(
+  options: BuildProviderRegistryOptions | undefined,
+): ProviderFactoryOptions {
+  return {
+    ...(options?.paseoHome ? { paseoHome: options.paseoHome } : {}),
+    ...(options?.workspaceGitService ? { workspaceGitService: options.workspaceGitService } : {}),
+  };
 }
 
 export function buildProviderRegistry(
@@ -543,15 +566,14 @@ export function buildProviderRegistry(
 ): Record<AgentProvider, ProviderDefinition> {
   const runtimeSettings = options?.runtimeSettings;
   const providerOverrides = options?.providerOverrides ?? {};
+  const factoryOptions = buildProviderFactoryOptions(options);
   const resolvedProviders = buildResolvedBuiltinProviders(
     providerOverrides,
     runtimeSettings,
-    {
-      workspaceGitService: options?.workspaceGitService,
-    },
+    factoryOptions,
     options?.isDev === true,
   );
-  addDerivedProviders(resolvedProviders, providerOverrides);
+  addDerivedProviders(resolvedProviders, providerOverrides, factoryOptions);
 
   return Object.fromEntries(
     [...resolvedProviders.entries()].map(([provider, resolved]) => [
@@ -594,5 +616,13 @@ export async function shutdownProviders(
   logger: Logger,
   options?: BuildProviderRegistryOptions,
 ): Promise<void> {
-  await OpenCodeServerManager.getInstance(logger, options?.runtimeSettings?.opencode).shutdown();
+  await OpenCodeServerManager.getInstance(
+    logger,
+    options?.runtimeSettings?.opencode,
+    options?.paseoHome
+      ? {
+          managedRoots: resolveOpenCodeManagedRoots(options.paseoHome),
+        }
+      : undefined,
+  ).shutdown();
 }

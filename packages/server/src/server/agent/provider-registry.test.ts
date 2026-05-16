@@ -20,6 +20,7 @@ const mockState = vi.hoisted(() => {
       }>,
     },
     isCommandAvailable: vi.fn(async (_command: string) => false),
+    findExecutable: vi.fn(async (_command: string) => null as string | null),
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
     reset() {
       this.constructorArgs.claude = [];
@@ -29,12 +30,15 @@ const mockState = vi.hoisted(() => {
       this.constructorArgs.genericAcp = [];
       this.isCommandAvailable.mockReset();
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
+      this.findExecutable.mockReset();
+      this.findExecutable.mockImplementation(async (_command: string) => null);
       this.runtimeModels.clear();
     },
   };
 });
 
 vi.mock("../../utils/executable.js", () => ({
+  findExecutable: mockState.findExecutable,
   isCommandAvailable: mockState.isCommandAvailable,
 }));
 

@@ -500,6 +500,7 @@ export async function createPaseoDaemon(
     },
   });
   const providerRegistry = buildProviderRegistry(logger, {
+    paseoHome: config.paseoHome,
     runtimeSettings: config.agentProviderSettings,
     providerOverrides: config.providerOverrides,
     workspaceGitService,

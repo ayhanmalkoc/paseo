@@ -2,7 +2,6 @@ import type { ChildProcess } from "node:child_process";
 import net from "node:net";
 import type { Logger } from "pino";
 
-import { findExecutable } from "../../../../utils/executable.js";
 import { spawnProcess } from "../../../../utils/spawn.js";
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
 import {
@@ -10,6 +9,8 @@ import {
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
+import { resolveOpenCodeBinary } from "./binary.js";
+import { ensureOpenCodeManagedRoots, type OpenCodeManagedRoots } from "./managed-roots.js";
 
 const OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
@@ -32,6 +33,10 @@ export interface OpenCodeServerGeneration {
   retired: boolean;
 }
 
+export interface OpenCodeServerManagerOptions {
+  managedRoots?: OpenCodeManagedRoots;
+}
+
 export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private static instance: OpenCodeServerManager | null = null;
   private static exitHandlerRegistered = false;
@@ -42,20 +47,45 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly runtimeSettingsKey: string;
+  private readonly options?: OpenCodeServerManagerOptions;
 
-  private constructor(logger: Logger, runtimeSettings?: ProviderRuntimeSettings) {
+  private constructor(
+    logger: Logger,
+    runtimeSettings?: ProviderRuntimeSettings,
+    options?: OpenCodeServerManagerOptions,
+  ) {
     this.logger = logger;
     this.runtimeSettings = runtimeSettings;
-    this.runtimeSettingsKey = JSON.stringify(runtimeSettings ?? {});
+    this.options = options;
+    this.runtimeSettingsKey = JSON.stringify({
+      runtimeSettings: runtimeSettings ?? {},
+      managedRoots: options?.managedRoots
+        ? {
+            xdgConfigHome: options.managedRoots.xdgConfigHome,
+            xdgDataHome: options.managedRoots.xdgDataHome,
+            xdgStateHome: options.managedRoots.xdgStateHome,
+          }
+        : null,
+    });
   }
 
   static getInstance(
     logger: Logger,
     runtimeSettings?: ProviderRuntimeSettings,
+    options?: OpenCodeServerManagerOptions,
   ): OpenCodeServerManager {
-    const nextSettingsKey = JSON.stringify(runtimeSettings ?? {});
+    const nextSettingsKey = JSON.stringify({
+      runtimeSettings: runtimeSettings ?? {},
+      managedRoots: options?.managedRoots
+        ? {
+            xdgConfigHome: options.managedRoots.xdgConfigHome,
+            xdgDataHome: options.managedRoots.xdgDataHome,
+            xdgStateHome: options.managedRoots.xdgStateHome,
+          }
+        : null,
+    });
     if (!OpenCodeServerManager.instance) {
-      OpenCodeServerManager.instance = new OpenCodeServerManager(logger, runtimeSettings);
+      OpenCodeServerManager.instance = new OpenCodeServerManager(logger, runtimeSettings, options);
       OpenCodeServerManager.registerExitHandler();
     } else if (OpenCodeServerManager.instance.runtimeSettingsKey !== nextSettingsKey) {
       logger.warn(
@@ -167,6 +197,9 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private async startServer(): Promise<OpenCodeServerGeneration> {
     const port = await findAvailablePort();
     const url = `http://127.0.0.1:${port}`;
+    if (this.options?.managedRoots) {
+      await ensureOpenCodeManagedRoots({ roots: this.options.managedRoots });
+    }
     const launchPrefix = await resolveProviderCommandPrefix(
       this.runtimeSettings?.command,
       resolveOpenCodeBinary,
@@ -179,7 +212,10 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
         {
           detached: process.platform !== "win32",
           stdio: ["ignore", "pipe", "pipe"],
-          ...createProviderEnvSpec({ runtimeSettings: this.runtimeSettings }),
+          ...createProviderEnvSpec({
+            runtimeSettings: this.runtimeSettings,
+            overlays: [this.options?.managedRoots?.envOverlay],
+          }),
         },
       );
 
@@ -297,16 +333,6 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       );
     }
   }
-}
-
-async function resolveOpenCodeBinary(): Promise<string> {
-  const found = await findExecutable("opencode");
-  if (found) {
-    return found;
-  }
-  throw new Error(
-    "OpenCode binary not found. Install OpenCode (https://github.com/opencode-ai/opencode) and ensure it is available in your shell PATH.",
-  );
 }
 
 function findAvailablePort(): Promise<number> {
