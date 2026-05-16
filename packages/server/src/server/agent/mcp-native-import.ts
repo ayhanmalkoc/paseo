@@ -291,6 +291,62 @@ export function removeCodexNativeMcpServerConfig(content: string, id: string): s
   return removeCodexNativeActiveMcpServerConfig(withoutDisabled, id);
 }
 
+export function parseGeminiNativeMcpConfigJson(content: string): NativeMcpImportParseResult {
+  const skipped: NativeMcpImportSkipped[] = [];
+  const settings = parseGeminiSettingsJson(content);
+  const serversRecord = readRecord(settings.mcpServers);
+  const mcpRecord = readRecord(settings.mcp);
+  const allowed = new Set(asStringArray(mcpRecord?.allowed));
+  const excluded = new Set(asStringArray(mcpRecord?.excluded));
+  const hasAllowedList = Array.isArray(mcpRecord?.allowed);
+  const servers: NativeMcpServerCandidate[] = [];
+
+  for (const [id, value] of Object.entries(serversRecord ?? {})) {
+    if (isReservedMcpServerId(id)) {
+      skipped.push({ id, reason: "Reserved MCP server id" });
+      continue;
+    }
+    const candidate = buildGeminiNativeMcpServerCandidate(id, value);
+    if (!candidate) {
+      skipped.push({ id, reason: "Unsupported Gemini MCP server config" });
+      continue;
+    }
+    servers.push({
+      ...candidate,
+      enabled: !excluded.has(id) && (!hasAllowedList || allowed.has(id)),
+    });
+  }
+
+  return { servers, skipped };
+}
+
+export function writeGeminiNativeMcpServerConfig(input: {
+  content: string;
+  id: string;
+  config: McpServerConfig;
+  enabled: boolean;
+}): string {
+  const settings = parseGeminiSettingsJson(input.content);
+  const mcpServers = ensureGeminiRecord(settings, "mcpServers");
+  const previous = readRecord(mcpServers[input.id]);
+  mcpServers[input.id] = formatGeminiNativeMcpServerConfig(input.config, previous);
+  setGeminiMcpServerEnabled(settings, input.id, input.enabled);
+  return stringifyGeminiSettings(settings);
+}
+
+export function removeGeminiNativeMcpServerConfig(content: string, id: string): string {
+  const settings = parseGeminiSettingsJson(content);
+  const mcpServers = readRecord(settings.mcpServers);
+  if (mcpServers) {
+    delete mcpServers[id];
+    if (Object.keys(mcpServers).length === 0) {
+      delete settings.mcpServers;
+    }
+  }
+  removeGeminiMcpServerFromLists(settings, id);
+  return stringifyGeminiSettings(settings);
+}
+
 function removeCodexNativeActiveMcpServerConfig(content: string, id: string): string {
   const lines = content.split(/\r?\n/);
   const nextLines: string[] = [];
@@ -415,6 +471,171 @@ function removeAllPaseoDisabledMcpServerConfigs(content: string): string {
 
 function isCodexNativeMcpTableForId(parts: string[], id: string): boolean {
   return parts[0] === "mcp_servers" && parts[1] === id;
+}
+
+function parseGeminiSettingsJson(content: string): Record<string, unknown> {
+  if (!content.trim()) {
+    return {};
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    throw new Error(
+      `Gemini settings.json is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Gemini settings.json must contain a JSON object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function buildGeminiNativeMcpServerCandidate(
+  id: string,
+  value: unknown,
+): Omit<NativeMcpServerCandidate, "enabled"> | null {
+  const record = readRecord(value);
+  if (!record) {
+    return null;
+  }
+  const command = asString(record.command);
+  if (command) {
+    const args = asStringArray(record.args);
+    const env = asStringRecord(record.env);
+    return {
+      id,
+      config: {
+        type: "stdio",
+        command,
+        ...(args.length > 0 ? { args } : {}),
+        ...(Object.keys(env).length > 0 ? { env } : {}),
+      },
+    };
+  }
+  const httpUrl = asString(record.httpUrl);
+  if (httpUrl) {
+    const headers = asStringRecord(record.headers);
+    return {
+      id,
+      config: {
+        type: "http",
+        url: httpUrl,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      },
+    };
+  }
+  const url = asString(record.url);
+  if (url) {
+    const headers = asStringRecord(record.headers);
+    return {
+      id,
+      config: {
+        type: "sse",
+        url,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      },
+    };
+  }
+  return null;
+}
+
+function formatGeminiNativeMcpServerConfig(
+  config: McpServerConfig,
+  previous: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...previous };
+  delete next.command;
+  delete next.args;
+  delete next.env;
+  delete next.httpUrl;
+  delete next.url;
+  delete next.headers;
+  if (config.type === "stdio") {
+    next.command = config.command;
+    if (config.args?.length) {
+      next.args = config.args;
+    }
+    if (config.env && Object.keys(config.env).length > 0) {
+      next.env = config.env;
+    }
+    return next;
+  }
+  if (config.type === "http") {
+    next.httpUrl = config.url;
+  } else {
+    next.url = config.url;
+  }
+  if (config.headers && Object.keys(config.headers).length > 0) {
+    next.headers = config.headers;
+  }
+  return next;
+}
+
+function setGeminiMcpServerEnabled(
+  settings: Record<string, unknown>,
+  id: string,
+  enabled: boolean,
+): void {
+  const mcp = ensureGeminiRecord(settings, "mcp");
+  const excluded = new Set(asStringArray(mcp.excluded));
+  if (enabled) {
+    excluded.delete(id);
+    if (Array.isArray(mcp.allowed)) {
+      const allowed = new Set(asStringArray(mcp.allowed));
+      allowed.add(id);
+      mcp.allowed = Array.from(allowed).sort();
+    }
+  } else {
+    excluded.add(id);
+  }
+  if (excluded.size > 0) {
+    mcp.excluded = Array.from(excluded).sort();
+  } else {
+    delete mcp.excluded;
+  }
+  pruneEmptyGeminiMcp(settings);
+}
+
+function removeGeminiMcpServerFromLists(settings: Record<string, unknown>, id: string): void {
+  const mcp = readRecord(settings.mcp);
+  if (!mcp) {
+    return;
+  }
+  for (const key of ["allowed", "excluded"]) {
+    if (!Array.isArray(mcp[key])) {
+      continue;
+    }
+    const values = asStringArray(mcp[key]).filter((value) => value !== id);
+    if (values.length > 0) {
+      mcp[key] = values;
+    } else {
+      delete mcp[key];
+    }
+  }
+  pruneEmptyGeminiMcp(settings);
+}
+
+function pruneEmptyGeminiMcp(settings: Record<string, unknown>): void {
+  const mcp = readRecord(settings.mcp);
+  if (mcp && Object.keys(mcp).length === 0) {
+    delete settings.mcp;
+  }
+}
+
+function ensureGeminiRecord(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  const existing = readRecord(record[key]);
+  if (existing) {
+    return existing;
+  }
+  const next: Record<string, unknown> = {};
+  record[key] = next;
+  return next;
+}
+
+function stringifyGeminiSettings(settings: Record<string, unknown>): string {
+  return `${JSON.stringify(settings, null, 2)}\n`;
 }
 
 function formatCodexNativeMcpServerBlock(input: { id: string; config: McpServerConfig }): string {
@@ -735,6 +956,13 @@ function asStringArray(value: unknown): string[] {
 
 function asBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
 }
 
 function asStringRecord(value: unknown): Record<string, string> {

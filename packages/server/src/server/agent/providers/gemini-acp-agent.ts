@@ -1,7 +1,17 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { Logger } from "pino";
 
-import type { AgentCapabilityFlags, AgentMode } from "../agent-sdk-types.js";
+import type {
+  AgentCapabilityFlags,
+  AgentCreateSessionOptions,
+  AgentLaunchContext,
+  AgentMode,
+  AgentPersistenceHandle,
+  AgentResumeSessionOptions,
+  AgentSession,
+  AgentSessionConfig,
+} from "../agent-sdk-types.js";
 import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
 import { findExecutable } from "../../../utils/executable.js";
 import { ACPAgentClient } from "./acp-agent.js";
@@ -48,9 +58,12 @@ const GEMINI_MODES: AgentMode[] = [
 interface GeminiACPAgentClientOptions {
   logger: Logger;
   runtimeSettings?: ProviderRuntimeSettings;
+  settingsPath?: string;
 }
 
 export class GeminiACPAgentClient extends ACPAgentClient {
+  private readonly settingsPath?: string;
+
   constructor(options: GeminiACPAgentClientOptions) {
     super({
       provider: "gemini",
@@ -60,6 +73,24 @@ export class GeminiACPAgentClient extends ACPAgentClient {
       defaultModes: GEMINI_MODES,
       capabilities: GEMINI_CAPABILITIES,
     });
+    this.settingsPath = options.settingsPath;
+  }
+
+  override async createSession(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+    _options?: AgentCreateSessionOptions,
+  ): Promise<AgentSession> {
+    return super.createSession(config, this.withGeminiSettingsEnv(launchContext));
+  }
+
+  override async resumeSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+    _options?: AgentResumeSessionOptions,
+  ): Promise<AgentSession> {
+    return super.resumeSession(handle, overrides, this.withGeminiSettingsEnv(launchContext));
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
@@ -112,5 +143,20 @@ export class GeminiACPAgentClient extends ACPAgentClient {
         diagnostic: formatProviderDiagnosticError("Gemini", error),
       };
     }
+  }
+
+  private withGeminiSettingsEnv(
+    launchContext?: AgentLaunchContext,
+  ): AgentLaunchContext | undefined {
+    if (!this.settingsPath || !existsSync(this.settingsPath)) {
+      return launchContext;
+    }
+    return {
+      ...launchContext,
+      env: {
+        ...launchContext?.env,
+        GEMINI_CLI_SYSTEM_SETTINGS_PATH: this.settingsPath,
+      },
+    };
   }
 }

@@ -5,6 +5,7 @@ import type { AgentProvider } from "./agent-sdk-types.js";
 
 const CODEX_CONFIG_FILENAME = "config.toml";
 const CODEX_HOOKS_FILENAME = "hooks.json";
+const GEMINI_CONFIG_FILENAME = "settings.json";
 
 export function resolveProviderNativeConfigPath(
   providerRoot: string,
@@ -12,6 +13,9 @@ export function resolveProviderNativeConfigPath(
 ): string {
   if (provider === "codex") {
     return path.join(providerRoot, "config", CODEX_CONFIG_FILENAME);
+  }
+  if (provider === "gemini") {
+    return path.join(providerRoot, "config", GEMINI_CONFIG_FILENAME);
   }
   throw new Error(`Native config is not supported for provider '${provider}'`);
 }
@@ -32,6 +36,9 @@ export function resolveProviderHomeNativeConfigPath(
 ): string {
   if (provider === "codex") {
     return path.join(providerHomePath, CODEX_CONFIG_FILENAME);
+  }
+  if (provider === "gemini") {
+    return path.join(providerHomePath, GEMINI_CONFIG_FILENAME);
   }
   throw new Error(`Native config is not supported for provider '${provider}'`);
 }
@@ -146,6 +153,9 @@ export async function syncProviderNativeHooksFromHome(input: {
   providerRoot: string;
   sourceHomePath: string;
 }): Promise<boolean> {
+  if (!providerSupportsNativeHooks(input.provider)) {
+    return false;
+  }
   const sourcePath = resolveProviderHomeNativeHooksPath(input.provider, input.sourceHomePath);
   const targetPath = resolveProviderNativeHooksPath(input.providerRoot, input.provider);
   return copyOptionalFile(sourcePath, targetPath, { overwrite: true });
@@ -156,6 +166,9 @@ async function seedProviderNativeHooksFromHome(input: {
   providerRoot: string;
   sourceHomePath: string;
 }): Promise<boolean> {
+  if (!providerSupportsNativeHooks(input.provider)) {
+    return false;
+  }
   const sourcePath = resolveProviderHomeNativeHooksPath(input.provider, input.sourceHomePath);
   const targetPath = resolveProviderNativeHooksPath(input.providerRoot, input.provider);
   return copyOptionalFile(sourcePath, targetPath, { overwrite: false });
@@ -166,9 +179,16 @@ async function materializeProviderNativeHooksToHome(input: {
   providerRoot: string;
   providerHomePath: string;
 }): Promise<boolean> {
+  if (!providerSupportsNativeHooks(input.provider)) {
+    return false;
+  }
   const sourcePath = resolveProviderNativeHooksPath(input.providerRoot, input.provider);
   const targetPath = resolveProviderHomeNativeHooksPath(input.provider, input.providerHomePath);
   return copyOptionalFile(sourcePath, targetPath, { overwrite: true });
+}
+
+function providerSupportsNativeHooks(provider: AgentProvider): boolean {
+  return provider === "codex";
 }
 
 async function copyOptionalFile(

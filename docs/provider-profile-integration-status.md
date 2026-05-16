@@ -116,13 +116,16 @@ Missing pieces depend on each provider:
 
 Gemini is available as a built-in ACP-backed provider using the local Gemini CLI
 binary with `gemini --acp`. It uses Gemini CLI's native authentication and
-configuration by default.
+configuration by default. Paseo can sync `~/.gemini/settings.json` into
+`$PASEO_HOME/providers/gemini/config/settings.json`, edit that JSON, and manage
+the `mcpServers` map through the provider MCP controls. When the managed config
+exists, Gemini launches with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` pointing at that
+file.
 
 Missing pieces:
 
-- Gemini account/auth adapter around `GEMINI_CLI_HOME` and native
-  `~/.gemini` files.
-- Gemini native config adapter for `settings.json`, especially `mcpServers`.
+- Gemini account/auth adapter, if Gemini CLI exposes a stable multi-account
+  boundary beyond native `~/.gemini` auth files.
 - Gemini usage/limit refresh, if a reliable native/API source exists.
 - Import/session continuity design for Gemini CLI session history.
 

@@ -15,6 +15,8 @@ describe("ProviderNativeConfigService", () => {
   let providerConfigPath: string;
   let providerHooksPath: string;
   let nativeCodexHome: string;
+  let geminiProviderConfigPath: string;
+  let nativeGeminiHome: string;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(path.join(tmpdir(), "paseo-provider-native-config-"));
@@ -22,8 +24,17 @@ describe("ProviderNativeConfigService", () => {
     providerConfigPath = path.join(tempRoot, "providers", "codex", "config", "config.toml");
     providerHooksPath = path.join(tempRoot, "providers", "codex", "config", "hooks.json");
     nativeCodexHome = path.join(tempRoot, "native-codex");
+    geminiProviderConfigPath = path.join(
+      tempRoot,
+      "providers",
+      "gemini",
+      "config",
+      "settings.json",
+    );
+    nativeGeminiHome = path.join(tempRoot, "native-gemini");
     await fs.mkdir(providerHomePath, { recursive: true });
     await fs.mkdir(nativeCodexHome, { recursive: true });
+    await fs.mkdir(nativeGeminiHome, { recursive: true });
   });
 
   afterEach(() => {
@@ -40,6 +51,7 @@ describe("ProviderNativeConfigService", () => {
       logger: createTestLogger(),
       providerAuthService,
       codexNativeHomeResolver: () => nativeCodexHome,
+      geminiNativeHomeResolver: () => nativeGeminiHome,
     });
   }
 
@@ -195,6 +207,105 @@ describe("ProviderNativeConfigService", () => {
       }),
     ).resolves.toBe(true);
     await expect(service.listProviderMcpServers({ provider: "codex" })).resolves.toEqual([]);
+  });
+
+  it("syncs Gemini settings.json from the native Gemini home into provider config", async () => {
+    const service = createService();
+    await fs.writeFile(
+      path.join(nativeGeminiHome, "settings.json"),
+      JSON.stringify(
+        {
+          ui: { theme: "Default Light" },
+          mcpServers: {
+            "context-mode": {
+              command: "context-mode",
+              args: ["serve"],
+              env: { CONTEXT_MODE: "1" },
+            },
+          },
+          mcp: { excluded: ["context-mode"] },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const snapshot = await service.syncProviderConfigFromNative({
+      provider: "gemini",
+    });
+
+    expect(snapshot).toMatchObject({
+      provider: "gemini",
+      path: geminiProviderConfigPath,
+      exists: true,
+    });
+    await expect(service.listProviderMcpServers({ provider: "gemini" })).resolves.toEqual([
+      {
+        id: "context-mode",
+        config: {
+          type: "stdio",
+          command: "context-mode",
+          args: ["serve"],
+          env: { CONTEXT_MODE: "1" },
+        },
+        enabled: false,
+      },
+    ]);
+  });
+
+  it("manages Gemini MCP servers inside settings.json", async () => {
+    const service = createService();
+
+    const created = await service.upsertProviderMcpServer({
+      provider: "gemini",
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode", args: ["serve"] },
+      enabled: false,
+    });
+
+    expect(created).toEqual({
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode", args: ["serve"] },
+      enabled: false,
+    });
+    await expect(service.listProviderMcpServers({ provider: "gemini" })).resolves.toEqual([
+      created,
+    ]);
+    await expect(fs.readFile(geminiProviderConfigPath, "utf8")).resolves.toContain('"mcpServers"');
+    await expect(fs.readFile(geminiProviderConfigPath, "utf8")).resolves.toContain('"excluded"');
+
+    const enabled = await service.upsertProviderMcpServer({
+      provider: "gemini",
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode", args: ["serve"] },
+      enabled: true,
+    });
+
+    expect(enabled.enabled).toBe(true);
+    await expect(fs.readFile(geminiProviderConfigPath, "utf8")).resolves.not.toContain(
+      '"excluded"',
+    );
+
+    const http = await service.upsertProviderMcpServer({
+      provider: "gemini",
+      id: "remote",
+      config: { type: "http", url: "https://example.com/mcp" },
+    });
+
+    expect(http).toEqual({
+      id: "remote",
+      config: { type: "http", url: "https://example.com/mcp" },
+      enabled: true,
+    });
+    await expect(fs.readFile(geminiProviderConfigPath, "utf8")).resolves.toContain('"httpUrl"');
+
+    await expect(
+      service.removeProviderMcpServer({
+        provider: "gemini",
+        id: "context-mode",
+      }),
+    ).resolves.toBe(true);
+    await expect(service.listProviderMcpServers({ provider: "gemini" })).resolves.toEqual([http]);
   });
 
   it("rejects unsupported providers", async () => {

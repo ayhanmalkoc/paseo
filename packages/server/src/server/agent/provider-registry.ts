@@ -38,6 +38,8 @@ import {
   getAgentProviderDefinition,
   type AgentProviderDefinition,
 } from "./provider-manifest.js";
+import { resolveProviderNativeConfigPath } from "./provider-native-config-files.js";
+import { getProviderRoot } from "./provider-layout.js";
 
 function isNonEmptyStringArray(value: string[]): value is [string, ...string[]] {
   return value.length > 0;
@@ -106,10 +108,18 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       logger,
       runtimeSettings,
     }),
-  gemini: (logger, runtimeSettings) =>
+  gemini: (logger, runtimeSettings, options) =>
     new GeminiACPAgentClient({
       logger,
       runtimeSettings,
+      ...(options?.paseoHome
+        ? {
+            settingsPath: resolveProviderNativeConfigPath(
+              getProviderRoot(options.paseoHome, "gemini"),
+              "gemini",
+            ),
+          }
+        : {}),
     }),
   opencode: (logger, runtimeSettings, options) =>
     new OpenCodeAgentClient(

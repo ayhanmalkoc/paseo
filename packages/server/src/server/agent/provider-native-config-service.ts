@@ -5,8 +5,11 @@ import type { Logger } from "pino";
 
 import type { AgentProvider, McpServerConfig } from "./agent-sdk-types.js";
 import {
+  parseGeminiNativeMcpConfigJson,
   parseCodexNativeMcpConfigToml,
+  removeGeminiNativeMcpServerConfig,
   removeCodexNativeMcpServerConfig,
+  writeGeminiNativeMcpServerConfig,
   writeCodexNativeMcpServerConfig,
 } from "./mcp-native-import.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
@@ -39,21 +42,24 @@ export class ProviderNativeConfigService {
   private readonly paseoHome: string;
   private readonly providerAuthService: ProviderAuthService;
   private readonly codexNativeHomeResolver: () => string;
+  private readonly geminiNativeHomeResolver: () => string;
 
   constructor(options: {
     paseoHome: string;
     logger: Logger;
     providerAuthService: ProviderAuthService;
     codexNativeHomeResolver?: () => string;
+    geminiNativeHomeResolver?: () => string;
   }) {
     this.logger = options.logger.child({ module: "provider-native-config" });
     this.paseoHome = options.paseoHome;
     this.providerAuthService = options.providerAuthService;
     this.codexNativeHomeResolver = options.codexNativeHomeResolver ?? resolveDefaultCodexHome;
+    this.geminiNativeHomeResolver = options.geminiNativeHomeResolver ?? resolveDefaultGeminiHome;
   }
 
   getSupportedProviders(): AgentProvider[] {
-    return ["codex"];
+    return ["codex", "gemini"];
   }
 
   async readProviderConfig(input: {
@@ -140,7 +146,7 @@ export class ProviderNativeConfigService {
     if (!config.content.trim()) {
       return [];
     }
-    return parseCodexNativeMcpConfigToml(config.content).servers.map((server) => ({
+    return this.parseNativeMcpConfig(input.provider, config.content).servers.map((server) => ({
       id: server.id,
       config: server.config,
       enabled: server.enabled,
@@ -156,11 +162,12 @@ export class ProviderNativeConfigService {
     const snapshot = await this.readProviderConfig(input);
     const enabled =
       input.enabled ??
-      parseCodexNativeMcpConfigToml(snapshot.content).servers.find(
+      this.parseNativeMcpConfig(input.provider, snapshot.content).servers.find(
         (server) => server.id === input.id,
       )?.enabled ??
       true;
-    const content = writeCodexNativeMcpServerConfig({
+    const content = this.writeNativeMcpServerConfig({
+      provider: input.provider,
       content: snapshot.content,
       id: input.id,
       config: input.config,
@@ -179,10 +186,10 @@ export class ProviderNativeConfigService {
 
   async removeProviderMcpServer(input: { provider: AgentProvider; id: string }): Promise<boolean> {
     const snapshot = await this.readProviderConfig(input);
-    const existed = parseCodexNativeMcpConfigToml(snapshot.content).servers.some(
+    const existed = this.parseNativeMcpConfig(input.provider, snapshot.content).servers.some(
       (server) => server.id === input.id,
     );
-    const content = removeCodexNativeMcpServerConfig(snapshot.content, input.id);
+    const content = this.removeNativeMcpServerConfig(input.provider, snapshot.content, input.id);
     await this.writeProviderConfig({
       provider: input.provider,
       content,
@@ -230,10 +237,57 @@ export class ProviderNativeConfigService {
     if (provider === "codex") {
       return resolveProviderHomeNativeConfigPath(provider, this.codexNativeHomeResolver());
     }
+    if (provider === "gemini") {
+      return resolveProviderHomeNativeConfigPath(provider, this.geminiNativeHomeResolver());
+    }
     throw new Error(`Native config sync is not supported for provider '${provider}'`);
+  }
+
+  private parseNativeMcpConfig(provider: AgentProvider, content: string) {
+    if (provider === "codex") {
+      return parseCodexNativeMcpConfigToml(content);
+    }
+    if (provider === "gemini") {
+      return parseGeminiNativeMcpConfigJson(content);
+    }
+    throw new Error(`Native MCP editing is not supported for provider '${provider}'`);
+  }
+
+  private writeNativeMcpServerConfig(input: {
+    provider: AgentProvider;
+    content: string;
+    id: string;
+    config: McpServerConfig;
+    enabled: boolean;
+  }): string {
+    if (input.provider === "codex") {
+      return writeCodexNativeMcpServerConfig(input);
+    }
+    if (input.provider === "gemini") {
+      return writeGeminiNativeMcpServerConfig(input);
+    }
+    throw new Error(`Native MCP editing is not supported for provider '${input.provider}'`);
+  }
+
+  private removeNativeMcpServerConfig(
+    provider: AgentProvider,
+    content: string,
+    id: string,
+  ): string {
+    if (provider === "codex") {
+      return removeCodexNativeMcpServerConfig(content, id);
+    }
+    if (provider === "gemini") {
+      return removeGeminiNativeMcpServerConfig(content, id);
+    }
+    throw new Error(`Native MCP editing is not supported for provider '${provider}'`);
   }
 }
 
 function resolveDefaultCodexHome(): string {
   return path.resolve(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"));
+}
+
+function resolveDefaultGeminiHome(): string {
+  return path.resolve(path.join(homedir(), ".gemini"));
 }

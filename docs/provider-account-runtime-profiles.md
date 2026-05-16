@@ -80,6 +80,10 @@ Implemented surfaces:
   account surface. OpenCode does not model Codex-style per-account homes; Paseo
   syncs the native `auth.json` into the managed OpenCode root and preserves every
   linked provider credential such as `opencode`, `openai`, or `anthropic`.
+- Gemini provider settings can sync and edit Gemini CLI `settings.json`.
+  Gemini launches with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` pointed at the managed
+  provider config when it exists, so MCP server edits are resolved by Gemini CLI
+  without inventing a Paseo account model for Gemini.
 - Native Codex config is copied into a managed account only when the managed
   `config.toml` does not already exist. Refresh/import must not overwrite an
   existing managed config, because account-local MCP toggles and power-user
@@ -117,6 +121,9 @@ $PASEO_HOME/providers/
     pending/
       <login-session-id>/
         home/
+  gemini/
+    config/
+      settings.json
 ```
 
 The old `provider-auth` tree is not the canonical layout. During development,
@@ -126,9 +133,9 @@ first time the new registry is created. New code reads and writes
 
 Runtime profiles remain launch presets. They select provider/account/model and
 runtime behavior. Provider-native configuration such as Codex `config.toml`,
-`hooks.json`, MCP server details, plugins, hooks, and future provider extras is
-owned by the provider config tree and materialized into the selected account
-home at launch.
+Codex `hooks.json`, Gemini `settings.json`, MCP server details, plugins, hooks,
+and future provider extras is owned by the provider config tree and resolved by
+the provider adapter at launch.
 
 ## Codex Session Continuity
 
