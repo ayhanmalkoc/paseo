@@ -677,9 +677,6 @@ function ProviderAuthProfilesSection(props: {
     ],
   );
 
-  if (!isSupported) {
-    return null;
-  }
   const providerConfigAction = canEditNativeConfig ? (
     <SettingsSection title="Provider config">
       <View style={settingsStyles.card}>
@@ -736,56 +733,70 @@ function ProviderAuthProfilesSection(props: {
     </SettingsSection>
   ) : null;
 
+  const accountsSection = isSupported ? (
+    <SettingsSection title="Accounts" trailing={importCurrentAction}>
+      <View style={settingsStyles.card}>
+        {isLoading && profiles.length === 0 ? (
+          <View style={sheetStyles.emptyRow}>
+            <ActivityIndicator size="small" />
+            <Text style={sheetStyles.mutedText}>Loading accounts…</Text>
+          </View>
+        ) : null}
+        {!isLoading && profiles.length === 0 ? (
+          <View style={sheetStyles.emptyRow}>
+            <Text style={sheetStyles.mutedText}>
+              No accounts yet. Add an account or import the current provider account.
+            </Text>
+          </View>
+        ) : null}
+        {sortedProfiles.map((profile) => (
+          <AuthProfileRow
+            key={profile.key}
+            profile={profile}
+            busy={isRefreshing || nativeConfigSync.isSyncing}
+            onRefresh={handleRefresh}
+            onSetDefault={handleSetDefault}
+            onRemove={handleRemove}
+          />
+        ))}
+      </View>
+      {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
+    </SettingsSection>
+  ) : null;
+
+  if (!providerConfigAction && !accountsSection) {
+    return null;
+  }
+
   return (
     <>
       {providerConfigAction}
-      <SettingsSection title="Accounts" trailing={importCurrentAction}>
-        <View style={settingsStyles.card}>
-          {isLoading && profiles.length === 0 ? (
-            <View style={sheetStyles.emptyRow}>
-              <ActivityIndicator size="small" />
-              <Text style={sheetStyles.mutedText}>Loading accounts…</Text>
-            </View>
-          ) : null}
-          {!isLoading && profiles.length === 0 ? (
-            <View style={sheetStyles.emptyRow}>
-              <Text style={sheetStyles.mutedText}>
-                No accounts yet. Add an account or import the current provider account.
-              </Text>
-            </View>
-          ) : null}
-          {sortedProfiles.map((profile) => (
-            <AuthProfileRow
-              key={profile.key}
-              profile={profile}
-              busy={isRefreshing || nativeConfigSync.isSyncing}
-              onRefresh={handleRefresh}
-              onSetDefault={handleSetDefault}
-              onRemove={handleRemove}
-            />
-          ))}
-        </View>
-        {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
-      </SettingsSection>
-      <AccountLoginSheet
-        session={loginSession}
-        visible={!!loginSession}
-        onClose={handleCloseLogin}
-      />
-      <ProviderNativeConfigSheet
-        provider={providerId}
-        providerLabel={providerLabel}
-        serverId={serverId}
-        visible={nativeConfigVisible}
-        onClose={handleCloseNativeConfig}
-      />
-      <ProviderNativeMcpSheet
-        provider={providerId}
-        providerLabel={providerLabel}
-        serverId={serverId}
-        visible={nativeMcpVisible}
-        onClose={handleCloseNativeMcp}
-      />
+      {accountsSection}
+      {isSupported ? (
+        <AccountLoginSheet
+          session={loginSession}
+          visible={!!loginSession}
+          onClose={handleCloseLogin}
+        />
+      ) : null}
+      {canEditNativeConfig ? (
+        <>
+          <ProviderNativeConfigSheet
+            provider={providerId}
+            providerLabel={providerLabel}
+            serverId={serverId}
+            visible={nativeConfigVisible}
+            onClose={handleCloseNativeConfig}
+          />
+          <ProviderNativeMcpSheet
+            provider={providerId}
+            providerLabel={providerLabel}
+            serverId={serverId}
+            visible={nativeMcpVisible}
+            onClose={handleCloseNativeMcp}
+          />
+        </>
+      ) : null}
     </>
   );
 }

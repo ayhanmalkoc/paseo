@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import type { Logger } from "pino";
 
 import type {
@@ -20,7 +19,6 @@ import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
   resolveBinaryVersion,
-  toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
 const GEMINI_CAPABILITIES: AgentCapabilityFlags = {
@@ -97,32 +95,7 @@ export class GeminiACPAgentClient extends ACPAgentClient {
     try {
       const available = await this.isAvailable();
       const resolvedBinary = await findExecutable("gemini");
-      let modelsValue = "Not checked";
-      let status = formatDiagnosticStatus(available);
-
-      if (available) {
-        try {
-          const models = await this.listModels({ cwd: homedir(), force: false });
-          modelsValue = String(models.length);
-        } catch (error) {
-          modelsValue = `Error - ${toDiagnosticErrorMessage(error)}`;
-          status = formatDiagnosticStatus(available, {
-            source: "model fetch",
-            cause: error,
-          });
-        }
-
-        if (!modelsValue.startsWith("Error -")) {
-          try {
-            await this.listModes({ cwd: homedir(), force: false });
-          } catch (error) {
-            status = formatDiagnosticStatus(available, {
-              source: "mode fetch",
-              cause: error,
-            });
-          }
-        }
-      }
+      const status = formatDiagnosticStatus(available);
 
       return {
         diagnostic: formatProviderDiagnostic("Gemini", [
@@ -134,7 +107,7 @@ export class GeminiACPAgentClient extends ACPAgentClient {
             label: "Version",
             value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown",
           },
-          { label: "Models", value: modelsValue },
+          { label: "Models", value: "Shown in the provider model list" },
           { label: "Status", value: status },
         ]),
       };
