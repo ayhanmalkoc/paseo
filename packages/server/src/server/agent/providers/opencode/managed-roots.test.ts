@@ -14,7 +14,7 @@ describe("OpenCode managed roots", () => {
     );
   });
 
-  test("seeds native config and data once into the Paseo provider root", async () => {
+  test("seeds native config and syncs native auth into the Paseo provider root", async () => {
     const root = await createTempRoot();
     const nativeRoot = path.join(root, "native");
     const paseoHome = path.join(root, "paseo-home");
@@ -24,7 +24,10 @@ describe("OpenCode managed roots", () => {
       path.join(nativeRoot, "config", "opencode", "opencode.jsonc"),
       '{\n  "$schema": "https://opencode.ai/config.json"\n}\n',
     );
-    await writeFile(path.join(nativeRoot, "data", "opencode", "auth.json"), '{"ok":true}\n');
+    await writeFile(
+      path.join(nativeRoot, "data", "opencode", "auth.json"),
+      '{"opencode":{"type":"api","key":"native-opencode"}}\n',
+    );
 
     const roots = resolveOpenCodeManagedRoots(paseoHome);
     await ensureOpenCodeManagedRoots({
@@ -36,7 +39,14 @@ describe("OpenCode managed roots", () => {
       },
     });
 
-    await writeFile(path.join(roots.xdgDataHome, "opencode", "auth.json"), '{"managed":true}\n');
+    await writeFile(
+      path.join(nativeRoot, "data", "opencode", "auth.json"),
+      '{"opencode":{"type":"api","key":"fresh-opencode"},"openai":{"type":"oauth","access":"native-openai"}}\n',
+    );
+    await writeFile(
+      path.join(roots.xdgDataHome, "opencode", "auth.json"),
+      '{"managed":true,"opencode":{"type":"api","key":"stale-opencode"}}\n',
+    );
     await ensureOpenCodeManagedRoots({
       roots,
       nativeRoots: {
@@ -51,7 +61,9 @@ describe("OpenCode managed roots", () => {
     ).resolves.toContain("opencode.ai/config.json");
     await expect(
       readFile(path.join(roots.xdgDataHome, "opencode", "auth.json"), "utf8"),
-    ).resolves.toBe('{"managed":true}\n');
+    ).resolves.toBe(
+      '{\n  "managed": true,\n  "opencode": {\n    "type": "api",\n    "key": "fresh-opencode"\n  },\n  "openai": {\n    "type": "oauth",\n    "access": "native-openai"\n  }\n}\n',
+    );
     expect(roots.storageRoot).toBe(path.join(roots.xdgDataHome, "opencode", "storage"));
     expect(roots.envOverlay).toMatchObject({
       XDG_CONFIG_HOME: roots.xdgConfigHome,

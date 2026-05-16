@@ -59,6 +59,10 @@ export async function ensureOpenCodeManagedRoots(input: {
     ),
     fs.mkdir(path.join(input.roots.xdgStateHome, "opencode"), { recursive: true }),
   ]);
+  await syncOpenCodeAuthFile(
+    path.join(nativeRoots.xdgDataHome, "opencode", "auth.json"),
+    path.join(input.roots.xdgDataHome, "opencode", "auth.json"),
+  );
 }
 
 function resolveNativeOpenCodeRoots(): OpenCodeNativeRoots {
@@ -125,4 +129,41 @@ async function copyMissingDirectoryEntry(input: {
 
   await fs.copyFile(input.sourcePath, input.targetPath);
   return true;
+}
+
+async function syncOpenCodeAuthFile(sourcePath: string, targetPath: string): Promise<void> {
+  const nativeAuth = await readJsonRecord(sourcePath);
+  if (!nativeAuth) {
+    return;
+  }
+  const managedAuth = (await readJsonRecord(targetPath)) ?? {};
+  const mergedAuth = { ...managedAuth, ...nativeAuth };
+  const nextContents = `${JSON.stringify(mergedAuth, null, 2)}\n`;
+  try {
+    const currentContents = await fs.readFile(targetPath, "utf8");
+    if (currentContents === nextContents) {
+      return;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  await fs.writeFile(targetPath, nextContents);
+}
+
+async function readJsonRecord(filePath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
 }

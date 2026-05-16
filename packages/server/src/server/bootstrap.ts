@@ -98,6 +98,7 @@ import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { CodexProviderAuthAdapter } from "./agent/provider-auth-codex.js";
+import { OpenCodeProviderAuthAdapter } from "./agent/provider-auth-opencode.js";
 import { ProviderAuthService } from "./agent/provider-auth-service.js";
 import { RuntimeProfileService } from "./agent/runtime-profile-service.js";
 import { ProviderNativeConfigService } from "./agent/provider-native-config-service.js";
@@ -509,7 +510,7 @@ export async function createPaseoDaemon(
   const providerAuthService = new ProviderAuthService({
     paseoHome: config.paseoHome,
     logger,
-    adapters: [new CodexProviderAuthAdapter()],
+    adapters: [new CodexProviderAuthAdapter(), new OpenCodeProviderAuthAdapter()],
     ...(config.agentProviderSettings ? { runtimeSettings: config.agentProviderSettings } : {}),
   });
   const runtimeProfileService = new RuntimeProfileService({

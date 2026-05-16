@@ -544,6 +544,7 @@ function getRuntimeLaunchWarnings(error: unknown): RuntimeLaunchWarning[] | null
 }
 
 function resolveHasPreferencesControl(input: {
+  canSelectProvider: boolean;
   hasRuntimeProfileControl: boolean;
   hasAuthProfileControl: boolean;
   canSelectThinking: boolean;
@@ -551,6 +552,7 @@ function resolveHasPreferencesControl(input: {
   features?: AgentFeature[];
 }) {
   return Boolean(
+    input.canSelectProvider ||
     input.hasRuntimeProfileControl ||
     input.hasAuthProfileControl ||
     input.canSelectThinking ||
@@ -1163,6 +1165,11 @@ function ControlledStatusBar({
     [canSelectRuntimeProfile, disabled],
   );
 
+  const sheetProviderPressableStyle = useMemo(
+    () => makeSheetPressableStyle(disabled || !canSelectProvider),
+    [canSelectProvider, disabled],
+  );
+
   const sheetModePressableStyle = useMemo(
     () => makeSheetPressableStyle(disabled || !canSelectMode),
     [canSelectMode, disabled],
@@ -1196,6 +1203,7 @@ function ControlledStatusBar({
     isCompact,
   });
   const hasPreferencesControl = resolveHasPreferencesControl({
+    canSelectProvider,
     hasRuntimeProfileControl,
     hasAuthProfileControl,
     canSelectThinking,
@@ -1282,6 +1290,7 @@ function ControlledStatusBar({
           handleClosePrefs={handleClosePrefs}
           sheetThinkingPressableStyle={sheetThinkingPressableStyle}
           sheetRuntimeProfilePressableStyle={sheetRuntimeProfilePressableStyle}
+          sheetProviderPressableStyle={sheetProviderPressableStyle}
           sheetAuthProfilePressableStyle={sheetAuthProfilePressableStyle}
           sheetModePressableStyle={sheetModePressableStyle}
           handleSheetModelSelect={handleSheetModelSelect}
@@ -1294,6 +1303,8 @@ function ControlledStatusBar({
       ) : (
         <SheetStatusBarContent
           provider={provider}
+          providerOptions={providerOptions}
+          selectedProviderId={selectedProviderId}
           modeOptions={modeOptions}
           selectedModeId={selectedModeId}
           selectedModelId={selectedModelId}
@@ -1322,6 +1333,7 @@ function ControlledStatusBar({
           favoriteKeys={favoriteKeys}
           disabled={disabled}
           isModelLoading={isModelLoading}
+          canSelectProvider={canSelectProvider}
           canSelectMode={canSelectMode}
           canSelectModel={canSelectModel}
           canSelectThinking={canSelectThinking}
@@ -1330,6 +1342,7 @@ function ControlledStatusBar({
           effectiveProviderDefinitions={effectiveProviderDefinitions}
           effectiveAllProviderModels={effectiveAllProviderModels}
           displayMode={displayMode}
+          displayProvider={displayProvider}
           displayAuthProfile={displayAuthProfile}
           displayRuntimeProfile={displayRuntimeProfile}
           displayThinking={displayThinking}
@@ -1345,14 +1358,17 @@ function ControlledStatusBar({
           hasPreferencesControl={hasPreferencesControl}
           sheetThinkingPressableStyle={sheetThinkingPressableStyle}
           sheetRuntimeProfilePressableStyle={sheetRuntimeProfilePressableStyle}
+          sheetProviderPressableStyle={sheetProviderPressableStyle}
           sheetAuthProfilePressableStyle={sheetAuthProfilePressableStyle}
           sheetModePressableStyle={sheetModePressableStyle}
           handleSheetModelSelect={handleSheetModelSelect}
           handleThinkingOpenChange={handleThinkingOpenChange}
+          handleProviderOpenChange={handleProviderOpenChange}
           handleRuntimeProfileOpenChange={handleRuntimeProfileOpenChange}
           handleAuthProfileOpenChange={handleAuthProfileOpenChange}
           handleModeOpenChange={handleModeOpenChange}
           handleRuntimeProfileSelect={handleRuntimeProfileSelect}
+          handleProviderSelect={handleProviderSelect}
           handleAuthProfileSelect={handleAuthProfileSelect}
           handleOpenChange={handleOpenChange}
           renderSheetModelTrigger={renderSheetModelTrigger}
@@ -1442,6 +1458,7 @@ interface DesktopStatusBarContentProps {
   handleClosePrefs: () => void;
   sheetThinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   sheetRuntimeProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  sheetProviderPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   sheetAuthProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   sheetModePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
@@ -1459,6 +1476,8 @@ interface DesktopStatusBarContentProps {
 function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
   const {
     provider,
+    providerOptions,
+    selectedProviderId,
     modeOptions,
     selectedModeId,
     selectedModelId,
@@ -1481,6 +1500,7 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     onModelSelectorOpen,
     disabled,
     isModelLoading,
+    canSelectProvider,
     canSelectMode,
     canSelectModel,
     canSelectThinking,
@@ -1488,18 +1508,22 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     modelDisabled,
     effectiveProviderDefinitions,
     effectiveAllProviderModels,
+    displayProvider,
     displayAuthProfile,
     displayRuntimeProfile,
     displayThinking,
     ModeIconComponent,
     modeIconColor,
     openSelector,
+    ProviderIcon,
     prefsOpen,
+    handleProviderSelect,
     handleRuntimeProfileSelect,
     handleAuthProfileSelect,
     handleModeSelect,
     handleThinkingSelect,
     handleThinkingOpenChange,
+    handleProviderOpenChange,
     handleRuntimeProfileOpenChange,
     handleAuthProfileOpenChange,
     handleModeOpenChange,
@@ -1508,6 +1532,7 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     handleClosePrefs,
     sheetThinkingPressableStyle,
     sheetRuntimeProfilePressableStyle,
+    sheetProviderPressableStyle,
     sheetAuthProfilePressableStyle,
     sheetModePressableStyle,
     renderSheetModelTrigger,
@@ -1541,6 +1566,8 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
       >
         <PreferencesSheetBody
           provider={provider}
+          providerOptions={providerOptions}
+          selectedProviderId={selectedProviderId}
           modeOptions={modeOptions}
           selectedModeId={selectedModeId}
           selectedModelId={selectedModelId}
@@ -1567,6 +1594,7 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
           favoriteKeys={favoriteKeys}
           disabled={disabled}
           isModelLoading={isModelLoading}
+          canSelectProvider={canSelectProvider}
           canSelectMode={canSelectMode}
           canSelectThinking={canSelectThinking}
           canSelectProviderInModelMenu={canSelectProviderInModelMenu}
@@ -1574,22 +1602,27 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
           effectiveProviderDefinitions={effectiveProviderDefinitions}
           effectiveAllProviderModels={effectiveAllProviderModels}
           displayMode={findOptionLabel(modeOptions, selectedModeId, "Default")}
+          displayProvider={displayProvider}
           displayAuthProfile={displayAuthProfile}
           displayRuntimeProfile={displayRuntimeProfile}
           displayThinking={displayThinking}
           ModeIconComponent={ModeIconComponent}
           modeIconColor={modeIconColor}
           openSelector={openSelector}
+          ProviderIcon={ProviderIcon}
           sheetThinkingPressableStyle={sheetThinkingPressableStyle}
           sheetRuntimeProfilePressableStyle={sheetRuntimeProfilePressableStyle}
+          sheetProviderPressableStyle={sheetProviderPressableStyle}
           sheetAuthProfilePressableStyle={sheetAuthProfilePressableStyle}
           sheetModePressableStyle={sheetModePressableStyle}
           handleSheetModelSelect={props.handleSheetModelSelect}
           handleThinkingOpenChange={handleThinkingOpenChange}
           handleRuntimeProfileOpenChange={handleRuntimeProfileOpenChange}
+          handleProviderOpenChange={handleProviderOpenChange}
           handleAuthProfileOpenChange={handleAuthProfileOpenChange}
           handleModeOpenChange={handleModeOpenChange}
           handleRuntimeProfileSelect={handleRuntimeProfileSelect}
+          handleProviderSelect={handleProviderSelect}
           handleAuthProfileSelect={handleAuthProfileSelect}
           handleOpenChange={handleOpenChange}
           renderSheetModelTrigger={renderSheetModelTrigger}
@@ -1702,6 +1735,93 @@ function RuntimeProfileMenuItem({
   );
 }
 
+function ProviderMenuItem({
+  provider,
+  selected,
+  onSelectProvider,
+}: {
+  provider: StatusOption;
+  selected: boolean;
+  onSelectProvider: (providerId: string) => void;
+}) {
+  const handleSelect = useCallback(() => {
+    onSelectProvider(provider.id);
+  }, [onSelectProvider, provider.id]);
+
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {provider.label}
+    </DropdownMenuItem>
+  );
+}
+
+function SheetProviderSection({
+  visible,
+  providerOptions,
+  selectedProviderId,
+  canSelectProvider,
+  disabled,
+  displayProvider,
+  openSelector,
+  ProviderIcon,
+  sheetProviderPressableStyle,
+  handleProviderOpenChange,
+  handleProviderSelect,
+}: {
+  visible: boolean;
+  providerOptions?: StatusOption[];
+  selectedProviderId?: string;
+  canSelectProvider: boolean;
+  disabled: boolean;
+  displayProvider: string;
+  openSelector: StatusSelector | null;
+  ProviderIcon: ReturnType<typeof getProviderIcon> | null;
+  sheetProviderPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  handleProviderOpenChange: (open: boolean) => void;
+  handleProviderSelect: (id: string) => void;
+}) {
+  const { theme } = useUnistyles();
+
+  if (!visible || !providerOptions || providerOptions.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.sheetSection}>
+      <DropdownMenu open={openSelector === "provider"} onOpenChange={handleProviderOpenChange}>
+        <DropdownMenuTrigger
+          disabled={disabled || !canSelectProvider}
+          style={sheetProviderPressableStyle}
+          accessibilityRole="button"
+          accessibilityLabel="Select agent provider"
+          testID="agent-preferences-provider"
+        >
+          {ProviderIcon ? (
+            <ProviderIcon size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+          ) : (
+            <Settings2 size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+          )}
+          <Text style={styles.sheetSelectText}>Provider</Text>
+          <Text ellipsizeMode="tail" numberOfLines={1} style={styles.sheetSelectValueText}>
+            {displayProvider}
+          </Text>
+          <ChevronDown size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="start">
+          {providerOptions.map((option) => (
+            <ProviderMenuItem
+              key={option.id}
+              provider={option}
+              selected={option.id === selectedProviderId}
+              onSelectProvider={handleProviderSelect}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </View>
+  );
+}
+
 function SheetRuntimeProfileSection({
   visible,
   runtimeProfiles,
@@ -1776,6 +1896,8 @@ function SheetRuntimeProfileSection({
 
 interface SheetStatusBarContentProps {
   provider: string;
+  providerOptions?: StatusOption[];
+  selectedProviderId?: string;
   modeOptions?: StatusOption[];
   selectedModeId?: string;
   selectedModelId?: string;
@@ -1804,6 +1926,7 @@ interface SheetStatusBarContentProps {
   favoriteKeys: Set<string>;
   disabled: boolean;
   isModelLoading: boolean;
+  canSelectProvider: boolean;
   canSelectMode: boolean;
   canSelectModel: boolean;
   canSelectThinking: boolean;
@@ -1812,6 +1935,7 @@ interface SheetStatusBarContentProps {
   effectiveProviderDefinitions: AgentProviderDefinition[];
   effectiveAllProviderModels: Map<string, AgentModelDefinition[]>;
   displayMode: string;
+  displayProvider: string;
   displayAuthProfile: string;
   displayRuntimeProfile: string;
   displayThinking: string;
@@ -1827,14 +1951,17 @@ interface SheetStatusBarContentProps {
   hasPreferencesControl: boolean;
   sheetThinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   sheetRuntimeProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  sheetProviderPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   sheetAuthProfilePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   sheetModePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
   handleThinkingOpenChange: (open: boolean) => void;
+  handleProviderOpenChange: (open: boolean) => void;
   handleRuntimeProfileOpenChange: (open: boolean) => void;
   handleAuthProfileOpenChange: (open: boolean) => void;
   handleModeOpenChange: (open: boolean) => void;
   handleRuntimeProfileSelect: (id: string) => void;
+  handleProviderSelect: (id: string) => void;
   handleAuthProfileSelect: (id: string) => void;
   handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
   renderSheetModelTrigger: (args: { selectedModelLabel: string }) => ReactElement;
@@ -1844,6 +1971,8 @@ interface SheetStatusBarContentProps {
 type PreferencesSheetBodyProps = Pick<
   SheetStatusBarContentProps,
   | "provider"
+  | "providerOptions"
+  | "selectedProviderId"
   | "modeOptions"
   | "selectedModeId"
   | "selectedModelId"
@@ -1870,6 +1999,7 @@ type PreferencesSheetBodyProps = Pick<
   | "favoriteKeys"
   | "disabled"
   | "isModelLoading"
+  | "canSelectProvider"
   | "canSelectMode"
   | "canSelectThinking"
   | "canSelectProviderInModelMenu"
@@ -1877,22 +2007,27 @@ type PreferencesSheetBodyProps = Pick<
   | "effectiveProviderDefinitions"
   | "effectiveAllProviderModels"
   | "displayMode"
+  | "displayProvider"
   | "displayAuthProfile"
   | "displayRuntimeProfile"
   | "displayThinking"
   | "ModeIconComponent"
   | "modeIconColor"
   | "openSelector"
+  | "ProviderIcon"
   | "sheetThinkingPressableStyle"
   | "sheetRuntimeProfilePressableStyle"
+  | "sheetProviderPressableStyle"
   | "sheetAuthProfilePressableStyle"
   | "sheetModePressableStyle"
   | "handleSheetModelSelect"
   | "handleThinkingOpenChange"
+  | "handleProviderOpenChange"
   | "handleRuntimeProfileOpenChange"
   | "handleAuthProfileOpenChange"
   | "handleModeOpenChange"
   | "handleRuntimeProfileSelect"
+  | "handleProviderSelect"
   | "handleAuthProfileSelect"
   | "handleOpenChange"
   | "renderSheetModelTrigger"
@@ -1906,6 +2041,8 @@ function PreferencesSheetBody(props: PreferencesSheetBodyProps) {
   const { theme } = useUnistyles();
   const {
     provider,
+    providerOptions,
+    selectedProviderId,
     modeOptions,
     selectedModeId,
     selectedModelId,
@@ -1932,6 +2069,7 @@ function PreferencesSheetBody(props: PreferencesSheetBodyProps) {
     favoriteKeys,
     disabled,
     isModelLoading,
+    canSelectProvider,
     canSelectMode,
     canSelectThinking,
     canSelectProviderInModelMenu,
@@ -1939,22 +2077,27 @@ function PreferencesSheetBody(props: PreferencesSheetBodyProps) {
     effectiveProviderDefinitions,
     effectiveAllProviderModels,
     displayMode,
+    displayProvider,
     displayAuthProfile,
     displayRuntimeProfile,
     displayThinking,
     ModeIconComponent,
     modeIconColor,
     openSelector,
+    ProviderIcon,
     sheetThinkingPressableStyle,
     sheetRuntimeProfilePressableStyle,
+    sheetProviderPressableStyle,
     sheetAuthProfilePressableStyle,
     sheetModePressableStyle,
     handleSheetModelSelect,
     handleThinkingOpenChange,
+    handleProviderOpenChange,
     handleRuntimeProfileOpenChange,
     handleAuthProfileOpenChange,
     handleModeOpenChange,
     handleRuntimeProfileSelect,
+    handleProviderSelect,
     handleAuthProfileSelect,
     handleOpenChange,
     renderSheetModelTrigger,
@@ -1991,6 +2134,20 @@ function PreferencesSheetBody(props: PreferencesSheetBodyProps) {
         sheetRuntimeProfilePressableStyle={sheetRuntimeProfilePressableStyle}
         handleRuntimeProfileOpenChange={handleRuntimeProfileOpenChange}
         handleRuntimeProfileSelect={handleRuntimeProfileSelect}
+      />
+
+      <SheetProviderSection
+        visible={shouldRenderDirectRuntimeControls}
+        providerOptions={providerOptions}
+        selectedProviderId={selectedProviderId}
+        canSelectProvider={canSelectProvider}
+        disabled={disabled}
+        displayProvider={displayProvider}
+        openSelector={openSelector}
+        ProviderIcon={ProviderIcon}
+        sheetProviderPressableStyle={sheetProviderPressableStyle}
+        handleProviderOpenChange={handleProviderOpenChange}
+        handleProviderSelect={handleProviderSelect}
       />
 
       {renderModelControl && shouldRenderDirectRuntimeControls ? (
@@ -3257,7 +3414,7 @@ export const AgentStatusBar = memo(function AgentStatusBar({
 export function DraftAgentStatusBar({
   providerDefinitions,
   selectedProvider,
-  onSelectProvider: _onSelectProvider,
+  onSelectProvider,
   modeOptions,
   selectedMode,
   onSelectMode,
@@ -3305,6 +3462,14 @@ export function DraftAgentStatusBar({
       label: option.label,
     }));
   }, [thinkingOptions]);
+  const providerOptions = useMemo<StatusOption[]>(
+    () =>
+      providerDefinitions.map((definition) => ({
+        id: definition.id,
+        label: definition.label,
+      })),
+    [providerDefinitions],
+  );
   const favoriteKeys = useMemo(
     () =>
       new Set(
@@ -3341,6 +3506,9 @@ export function DraftAgentStatusBar({
   return (
     <ControlledStatusBar
       provider={selectedProvider ?? ""}
+      providerOptions={providerOptions}
+      selectedProviderId={selectedProvider ?? undefined}
+      onSelectProvider={onSelectProvider}
       providerDefinitions={providerDefinitions}
       allProviderModels={allProviderModels}
       modeOptions={hasSelectedProvider ? mappedModeOptions : undefined}
