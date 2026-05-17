@@ -1414,7 +1414,7 @@ test("createAgent passes injected MCP auth headers only to provider launch confi
   expect(client.lastConfig?.mcpServers).toEqual({
     paseo: {
       type: "http",
-      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}&mcpAuthToken=shared-secret`,
+      url: `http://127.0.0.1:6767/mcp/agents/shared-secret/${snapshot.id}`,
       headers: {
         Authorization: "Bearer shared-secret",
       },

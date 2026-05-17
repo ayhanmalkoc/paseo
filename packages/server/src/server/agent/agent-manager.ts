@@ -312,13 +312,32 @@ function mergeMcpServerHeaders(
   };
 }
 
-function appendMcpAuthQueryToken(url: string, headers: Record<string, string>): string {
+function appendMcpAuthPathToken(url: string, headers: Record<string, string>): string {
   const token = extractBearerHeaderToken(headers);
   if (!token) {
     return url;
   }
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}mcpAuthToken=${encodeURIComponent(token)}`;
+  try {
+    const parsed = new URL(url);
+    const callerAgentId = parsed.searchParams.get("callerAgentId");
+    parsed.searchParams.delete("callerAgentId");
+    parsed.searchParams.delete("mcpAuthToken");
+    parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/${encodeURIComponent(token)}${
+      callerAgentId ? `/${encodeURIComponent(callerAgentId)}` : ""
+    }`;
+    return parsed.toString();
+  } catch {
+    const [baseUrl, query = ""] = url.split("?", 2);
+    const searchParams = new URLSearchParams(query);
+    const callerAgentId = searchParams.get("callerAgentId");
+    searchParams.delete("callerAgentId");
+    searchParams.delete("mcpAuthToken");
+    const nextUrl = `${baseUrl.replace(/\/+$/, "")}/${encodeURIComponent(token)}${
+      callerAgentId ? `/${encodeURIComponent(callerAgentId)}` : ""
+    }`;
+    const nextQuery = searchParams.toString();
+    return nextQuery ? `${nextUrl}?${nextQuery}` : nextUrl;
+  }
 }
 
 function extractBearerHeaderToken(headers: Record<string, string>): string | null {
@@ -480,21 +499,58 @@ function sanitizePersistenceMetadata(metadata: AgentMetadata | undefined): Agent
 function sanitizeMcpServerPersistenceConfig(
   config: Record<string, unknown>,
 ): Record<string, unknown> {
-  if (typeof config.url !== "string" || !config.url.includes("mcpAuthToken=")) {
+  if (
+    typeof config.url !== "string" ||
+    (!config.url.includes("mcpAuthToken=") && !config.url.includes("/mcp/agents/"))
+  ) {
     return config;
   }
   try {
     const parsed = new URL(config.url);
     parsed.searchParams.delete("mcpAuthToken");
+    const sanitizedPath = sanitizeAgentMcpAuthPath(parsed.pathname);
+    if (sanitizedPath) {
+      parsed.pathname = sanitizedPath.pathname;
+      if (sanitizedPath.callerAgentId && !parsed.searchParams.has("callerAgentId")) {
+        parsed.searchParams.set("callerAgentId", sanitizedPath.callerAgentId);
+      }
+    }
     return { ...config, url: parsed.toString() };
   } catch {
+    const withoutPathToken = config.url.replace(
+      /(\/mcp\/agents)\/[^/?#]+\/([^/?#]+)/,
+      (_match, prefix: string, callerAgentId: string) =>
+        `${prefix}?callerAgentId=${encodeURIComponent(decodeURIComponent(callerAgentId))}`,
+    );
     return {
       ...config,
-      url: config.url.replace(/([?&])mcpAuthToken=[^&]*&?/, (_match, prefix: string) =>
+      url: withoutPathToken.replace(/([?&])mcpAuthToken=[^&]*&?/, (_match, prefix: string) =>
         prefix === "?" ? "?" : "",
       ),
     };
   }
+}
+
+function sanitizeAgentMcpAuthPath(
+  pathname: string,
+): { pathname: string; callerAgentId?: string } | null {
+  const marker = "/mcp/agents/";
+  const markerIndex = pathname.indexOf(marker);
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  const sanitizedPathname = pathname.slice(0, markerIndex + "/mcp/agents".length);
+  const suffix = pathname.slice(markerIndex + marker.length);
+  const [tokenSegment, callerAgentIdSegment] = suffix.split("/", 3);
+  if (!tokenSegment) {
+    return null;
+  }
+
+  return {
+    pathname: sanitizedPathname,
+    ...(callerAgentIdSegment ? { callerAgentId: decodeURIComponent(callerAgentIdSegment) } : {}),
+  };
 }
 
 interface SubscriptionRecord {
@@ -695,7 +751,7 @@ export class AgentManager {
         ...config.mcpServers,
         paseo: {
           ...paseo,
-          url: appendMcpAuthQueryToken(paseo.url, headers),
+          url: appendMcpAuthPathToken(paseo.url, headers),
           headers: {
             ...headers,
             ...paseo.headers,
