@@ -379,10 +379,23 @@ export async function createPaseoDaemon(
     next();
   });
 
+  const agentMcpInternalAuthToken = randomUUID();
+  const agentMcpInternalHeaders = {
+    Authorization: `Bearer ${agentMcpInternalAuthToken}`,
+  };
+
   app.use(
-    createRequireBearerMiddleware(config.auth, (context) => {
-      logger.warn(context, "Rejected HTTP request with invalid daemon password");
-    }),
+    createRequireBearerMiddleware(
+      config.auth,
+      (context) => {
+        logger.warn(context, "Rejected HTTP request with invalid daemon password");
+      },
+      {
+        shouldBypass: (req) =>
+          req.path.startsWith("/mcp/agents") &&
+          extractHttpBearerToken(req.header("authorization")) === agentMcpInternalAuthToken,
+      },
+    ),
   );
 
   // Script proxy — intercepts requests for registered *.localhost hostnames
@@ -543,6 +556,7 @@ export async function createPaseoDaemon(
     },
     providerDefinitions: providerRegistry,
     registry: agentStorage,
+    mcpServerHeaders: agentMcpInternalHeaders,
     providerAuthService,
     runtimeProfileService,
     logger,
