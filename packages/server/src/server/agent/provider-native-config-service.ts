@@ -125,6 +125,7 @@ export class ProviderNativeConfigService {
     const targetPath = this.resolveConfigPath(input.provider);
     const sourcePath = this.resolveNativeConfigPath(input.provider);
     let content: string;
+    const existingContent = await fs.readFile(targetPath, "utf8").catch(() => null);
     try {
       content = await fs.readFile(sourcePath, "utf8");
     } catch (error) {
@@ -135,15 +136,16 @@ export class ProviderNativeConfigService {
       }
       throw error;
     }
+    const normalizedContent = normalizeProviderNativeConfigContentFromHome({
+      content,
+      provider: input.provider,
+      providerRoot: this.resolveProviderRoot(input.provider),
+      sourceHomePath: path.dirname(sourcePath),
+    });
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await fs.writeFile(
       targetPath,
-      normalizeProviderNativeConfigContentFromHome({
-        content,
-        provider: input.provider,
-        providerRoot: this.resolveProviderRoot(input.provider),
-        sourceHomePath: path.dirname(sourcePath),
-      }),
+      this.preserveManagedMcpServers(input.provider, normalizedContent, existingContent),
       "utf8",
     );
     await syncProviderNativeHooksFromHome({
@@ -295,6 +297,27 @@ export class ProviderNativeConfigService {
     throw new Error(`Native MCP editing is not supported for provider '${provider}'`);
   }
 
+  private preserveManagedMcpServers(
+    provider: AgentProvider,
+    syncedContent: string,
+    existingContent: string | null,
+  ): string {
+    if (!existingContent) {
+      return syncedContent;
+    }
+    let nextContent = syncedContent;
+    for (const server of this.parseNativeMcpConfig(provider, existingContent).servers) {
+      nextContent = this.writeNativeMcpServerConfig({
+        provider,
+        content: nextContent,
+        id: server.id,
+        config: server.config,
+        enabled: server.enabled,
+      });
+    }
+    return nextContent;
+  }
+
   private writeNativeMcpServerConfig(input: {
     provider: AgentProvider;
     content: string;
@@ -379,6 +402,16 @@ function resolveGeminiExtensionEnabled(value: unknown): boolean | undefined {
 async function readGeminiExtensionSkillIds(extensionPath: string): Promise<string[]> {
   const ids = new Set<string>();
   await walkFiles(extensionPath, async (filePath) => {
+    const relativePath = path.relative(extensionPath, filePath);
+    const segments = relativePath.split(path.sep);
+    if (
+      segments.length >= 3 &&
+      segments[0] === "skills" &&
+      segments[segments.length - 1]?.toLowerCase() === "skill.md"
+    ) {
+      ids.add(segments[1]);
+      return;
+    }
     const basename = path.basename(filePath).replace(/\.[^.]+$/, "");
     if (/^(gws|recipe|persona)-[a-z0-9-]+$/i.test(basename)) {
       ids.add(basename);
