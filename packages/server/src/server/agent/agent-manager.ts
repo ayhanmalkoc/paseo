@@ -312,6 +312,24 @@ function mergeMcpServerHeaders(
   };
 }
 
+function appendMcpAuthQueryToken(url: string, headers: Record<string, string>): string {
+  const token = extractBearerHeaderToken(headers);
+  if (!token) {
+    return url;
+  }
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}mcpAuthToken=${encodeURIComponent(token)}`;
+}
+
+function extractBearerHeaderToken(headers: Record<string, string>): string | null {
+  const authorization = headers.Authorization ?? headers.authorization;
+  if (!authorization) {
+    return null;
+  }
+  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+  return match?.[1] ?? null;
+}
+
 interface StreamEventFlags {
   shouldDispatchEvent: boolean;
   shouldNotifyWaiters: boolean;
@@ -450,13 +468,33 @@ function sanitizePersistenceMetadata(metadata: AgentMetadata | undefined): Agent
       continue;
     }
     const { headers: _headers, ...rest } = serverConfig as Record<string, unknown>;
-    sanitizedMcpServers[name] = rest;
+    sanitizedMcpServers[name] = sanitizeMcpServerPersistenceConfig(rest);
   }
 
   return {
     ...metadata,
     mcpServers: sanitizedMcpServers,
   };
+}
+
+function sanitizeMcpServerPersistenceConfig(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof config.url !== "string" || !config.url.includes("mcpAuthToken=")) {
+    return config;
+  }
+  try {
+    const parsed = new URL(config.url);
+    parsed.searchParams.delete("mcpAuthToken");
+    return { ...config, url: parsed.toString() };
+  } catch {
+    return {
+      ...config,
+      url: config.url.replace(/([?&])mcpAuthToken=[^&]*&?/, (_match, prefix: string) =>
+        prefix === "?" ? "?" : "",
+      ),
+    };
+  }
 }
 
 interface SubscriptionRecord {
@@ -657,6 +695,7 @@ export class AgentManager {
         ...config.mcpServers,
         paseo: {
           ...paseo,
+          url: appendMcpAuthQueryToken(paseo.url, headers),
           headers: {
             ...headers,
             ...paseo.headers,

@@ -393,7 +393,8 @@ export async function createPaseoDaemon(
       {
         shouldBypass: (req) =>
           req.path.startsWith("/mcp/agents") &&
-          extractHttpBearerToken(req.header("authorization")) === agentMcpInternalAuthToken,
+          (extractHttpBearerToken(req.header("authorization")) === agentMcpInternalAuthToken ||
+            req.query.mcpAuthToken === agentMcpInternalAuthToken),
       },
     ),
   );
