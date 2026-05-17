@@ -91,6 +91,59 @@ describe("ProviderNativeConfigService", () => {
     expect(snapshot.updatedAt).toBeUndefined();
   });
 
+  it("reads Gemini extensions from managed account homes", async () => {
+    const geminiHomePath = path.join(tempRoot, "providers", "gemini", "accounts", "malkoc", "home");
+    const extensionsRoot = path.join(geminiHomePath, ".gemini", "extensions");
+    const extensionPath = path.join(extensionsRoot, "google-workspace-cli");
+    await fs.mkdir(path.join(extensionPath, "skills"), { recursive: true });
+    await fs.writeFile(
+      path.join(extensionPath, "gemini-extension.json"),
+      JSON.stringify({
+        name: "Google Workspace",
+        version: "1.2.3",
+        contextFileName: "GEMINI.md",
+      }),
+    );
+    await fs.writeFile(
+      path.join(extensionsRoot, "extension-enablement.json"),
+      JSON.stringify({
+        "google-workspace-cli": { enabled: true },
+      }),
+    );
+    await fs.writeFile(path.join(extensionPath, "skills", "gws-calendar.md"), "calendar skill");
+
+    const service = createService([
+      createProfile({
+        provider: "gemini",
+        key: "malkoc",
+        alias: "malkoc.a",
+        authMode: "oauth",
+        providerHomeRef: {
+          kind: "managed-profile",
+          provider: "gemini",
+          profileKey: "malkoc",
+          homePath: geminiHomePath,
+          label: "malkoc.a",
+        },
+      }),
+    ]);
+
+    await expect(service.readProviderConfig({ provider: "gemini" })).resolves.toMatchObject({
+      extensions: [
+        {
+          id: "google-workspace-cli",
+          name: "Google Workspace",
+          version: "1.2.3",
+          enabled: true,
+          contextFileName: "GEMINI.md",
+          accountKey: "malkoc",
+          accountAlias: "malkoc.a",
+          skillIds: ["gws-calendar"],
+        },
+      ],
+    });
+  });
+
   it("writes Codex config.toml into the provider config and materializes account homes", async () => {
     const service = createService();
 

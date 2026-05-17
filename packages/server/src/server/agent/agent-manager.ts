@@ -257,6 +257,7 @@ export interface AgentManagerOptions {
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
+  mcpServerHeaders?: Record<string, string>;
   providerAuthService?: ProviderAuthService;
   runtimeProfileService?: RuntimeProfileService;
   agentStreamCoalesceWindowMs?: number;
@@ -295,6 +296,19 @@ function resolveInitialAttention(input: AttentionState | undefined): AttentionSt
     requiresAttention: true,
     attentionReason: input.attentionReason,
     attentionTimestamp: new Date(input.attentionTimestamp),
+  };
+}
+
+function mergeMcpServerHeaders(
+  base: Record<string, string> | undefined,
+  override: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!base && !override) {
+    return undefined;
+  }
+  return {
+    ...base,
+    ...override,
   };
 }
 
@@ -549,6 +563,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
+  private readonly mcpServerHeaders: Record<string, string> | undefined;
   private readonly providerAuthService: ProviderAuthService | null;
   private readonly launchResolver: LaunchResolver;
   private onAgentAttention?: AgentAttentionCallback;
@@ -561,6 +576,7 @@ export class AgentManager {
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
+    this.mcpServerHeaders = options?.mcpServerHeaders;
     this.providerAuthService = options?.providerAuthService ?? null;
     this.launchResolver = new LaunchResolver({
       providerAuthService: this.providerAuthService,
@@ -1084,7 +1100,7 @@ export class AgentManager {
     const launchConfig = this.withInjectedMcpHeaders(
       resolvedLaunch.config,
       resolvedAgentId,
-      options?.mcpServerHeaders,
+      mergeMcpServerHeaders(this.mcpServerHeaders, options?.mcpServerHeaders),
     );
     const client = await this.requireAvailableClient({
       provider: launchConfig.provider,

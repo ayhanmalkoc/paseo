@@ -506,6 +506,21 @@ export const ProviderNativeConfigSnapshotSchema = z.object({
   content: z.string(),
   exists: z.boolean(),
   updatedAt: z.string().optional(),
+  extensions: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1),
+        name: z.string().trim().min(1).optional(),
+        version: z.string().trim().min(1).optional(),
+        path: z.string(),
+        enabled: z.boolean().optional(),
+        contextFileName: z.string().trim().min(1).optional(),
+        accountKey: z.string().trim().min(1).optional(),
+        accountAlias: z.string().trim().min(1).optional(),
+        skillIds: z.array(z.string().trim().min(1)).default([]),
+      }),
+    )
+    .optional(),
 });
 
 export const ProviderNativeMcpServerSchema = z.object({

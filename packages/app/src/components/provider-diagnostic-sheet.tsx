@@ -42,7 +42,13 @@ import type {
   ProviderAuthProfile,
 } from "@server/server/agent/agent-sdk-types";
 import type { ProviderProfileModel } from "@server/server/agent/provider-launch-config";
-import type { McpServerConfig, ProviderNativeMcpServer } from "@server/shared/messages";
+import type {
+  McpServerConfig,
+  ProviderNativeConfigSnapshot,
+  ProviderNativeMcpServer,
+} from "@server/shared/messages";
+
+type ProviderNativeExtension = NonNullable<ProviderNativeConfigSnapshot["extensions"]>[number];
 
 interface ProviderDiagnosticSheetProps {
   provider: string;
@@ -472,6 +478,33 @@ function compareProviderNativeMcpServers(
   right: ProviderNativeMcpServer,
 ): number {
   return left.id.localeCompare(right.id);
+}
+
+function compareProviderNativeExtensions(
+  left: ProviderNativeExtension,
+  right: ProviderNativeExtension,
+): number {
+  const byAccount = (left.accountAlias ?? "").localeCompare(right.accountAlias ?? "");
+  return byAccount || left.id.localeCompare(right.id);
+}
+
+function formatProviderNativeExtensionSummary(extension: ProviderNativeExtension): string {
+  const parts = [
+    extension.accountAlias ? `account ${extension.accountAlias}` : null,
+    extension.version ? `v${extension.version}` : null,
+    extension.enabled === false ? "disabled" : "enabled",
+    `${extension.skillIds.length} skills`,
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function formatProviderNativeExtensionSkills(extension: ProviderNativeExtension): string {
+  if (extension.skillIds.length === 0) {
+    return extension.contextFileName ? `context ${extension.contextFileName}` : extension.path;
+  }
+  const visibleSkills = extension.skillIds.slice(0, 4);
+  const suffix = extension.skillIds.length > visibleSkills.length ? " · …" : "";
+  return `${visibleSkills.join(" · ")}${suffix}`;
 }
 
 function formatNativeMcpError(error: unknown): string {
@@ -909,6 +942,11 @@ function ProviderNativeMcpSheet(props: {
   const [localError, setLocalError] = useState<string | null>(null);
   const { servers, isLoading, isSaving, isSupported, error, upsert, remove } =
     useProviderNativeMcpServers(serverId, provider);
+  const {
+    config: nativeConfig,
+    isLoading: isNativeConfigLoading,
+    error: nativeConfigError,
+  } = useProviderNativeConfig(serverId, provider);
 
   useEffect(() => {
     if (!visible) {
@@ -922,6 +960,10 @@ function ProviderNativeMcpSheet(props: {
   const sortedServers = useMemo(
     () => [...servers].sort(compareProviderNativeMcpServers),
     [servers],
+  );
+  const sortedExtensions = useMemo(
+    () => [...(nativeConfig?.extensions ?? [])].sort(compareProviderNativeExtensions),
+    [nativeConfig?.extensions],
   );
 
   const handleAdd = useCallback(() => {
@@ -1019,6 +1061,30 @@ function ProviderNativeMcpSheet(props: {
     ));
   }
 
+  function renderExtensionsBody() {
+    if (isNativeConfigLoading && sortedExtensions.length === 0) {
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <ActivityIndicator size="small" />
+          <Text style={sheetStyles.mutedText}>Loading extensions…</Text>
+        </View>
+      );
+    }
+    if (sortedExtensions.length === 0) {
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <Text style={sheetStyles.mutedText}>No Gemini extensions in managed accounts.</Text>
+        </View>
+      );
+    }
+    return sortedExtensions.map((extension) => (
+      <ProviderNativeExtensionRow
+        key={`${extension.accountKey ?? "provider"}:${extension.id}`}
+        extension={extension}
+      />
+    ));
+  }
+
   return (
     <>
       <AdaptiveModalSheet
@@ -1033,6 +1099,14 @@ function ProviderNativeMcpSheet(props: {
             <Text style={sheetStyles.errorText}>{localError ?? error}</Text>
           ) : null}
         </SettingsSection>
+        {provider === "gemini" ? (
+          <SettingsSection title="Extensions">
+            <View style={settingsStyles.card}>{renderExtensionsBody()}</View>
+            {nativeConfigError ? (
+              <Text style={sheetStyles.errorText}>{nativeConfigError}</Text>
+            ) : null}
+          </SettingsSection>
+        ) : null}
       </AdaptiveModalSheet>
       <ProviderNativeMcpEditor
         visible={editorVisible}
@@ -1101,6 +1175,29 @@ function ProviderNativeMcpRow(props: {
         >
           <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />
         </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function ProviderNativeExtensionRow({ extension }: { extension: ProviderNativeExtension }) {
+  return (
+    <View style={MCP_SERVER_ROW_STYLE}>
+      <View style={sheetStyles.mcpServerHeader}>
+        <View style={sheetStyles.mcpServerContent}>
+          <View style={sheetStyles.profileTitleRow}>
+            <Text style={sheetStyles.mcpServerTitle} numberOfLines={1}>
+              {extension.name ?? extension.id}
+            </Text>
+            <Text style={sheetStyles.nativeMcpBadge}>extension</Text>
+          </View>
+          <Text style={sheetStyles.mutedText} numberOfLines={1}>
+            {formatProviderNativeExtensionSummary(extension)}
+          </Text>
+          <Text style={sheetStyles.monoHint} numberOfLines={2}>
+            {formatProviderNativeExtensionSkills(extension)}
+          </Text>
+        </View>
       </View>
     </View>
   );

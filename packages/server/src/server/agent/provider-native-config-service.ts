@@ -29,6 +29,19 @@ export interface ProviderNativeConfigSnapshot {
   content: string;
   exists: boolean;
   updatedAt?: string;
+  extensions?: ProviderNativeExtension[];
+}
+
+export interface ProviderNativeExtension {
+  id: string;
+  name?: string;
+  version?: string;
+  path: string;
+  enabled?: boolean;
+  contextFileName?: string;
+  accountKey?: string;
+  accountAlias?: string;
+  skillIds: string[];
 }
 
 export interface ProviderNativeMcpServer {
@@ -66,6 +79,7 @@ export class ProviderNativeConfigService {
     provider: AgentProvider;
   }): Promise<ProviderNativeConfigSnapshot> {
     const configPath = this.resolveConfigPath(input.provider);
+    const extensions = await this.readProviderExtensions(input.provider);
     try {
       const [content, stat] = await Promise.all([
         fs.readFile(configPath, "utf8"),
@@ -77,6 +91,7 @@ export class ProviderNativeConfigService {
         content,
         exists: true,
         updatedAt: stat.mtime.toISOString(),
+        ...(extensions.length > 0 ? { extensions } : {}),
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -88,6 +103,7 @@ export class ProviderNativeConfigService {
         path: configPath,
         content: "",
         exists: false,
+        ...(extensions.length > 0 ? { extensions } : {}),
       };
     }
   }
@@ -225,6 +241,32 @@ export class ProviderNativeConfigService {
     });
   }
 
+  private async readProviderExtensions(
+    provider: AgentProvider,
+  ): Promise<ProviderNativeExtension[]> {
+    if (provider !== "gemini") {
+      return [];
+    }
+    const profiles = await this.providerAuthService.listProfiles(provider);
+    const extensions = await Promise.all(
+      profiles.map(async (profile) => {
+        const homePath = profile.providerHomeRef?.homePath;
+        if (!homePath) {
+          return [];
+        }
+        return readGeminiExtensionsForAccount({
+          accountKey: profile.key,
+          accountAlias: profile.alias,
+          extensionsRoot: path.join(homePath, ".gemini", "extensions"),
+        });
+      }),
+    );
+    return extensions.flat().sort((left, right) => {
+      const byAccount = (left.accountAlias ?? "").localeCompare(right.accountAlias ?? "");
+      return byAccount || left.id.localeCompare(right.id);
+    });
+  }
+
   private resolveProviderRoot(provider: AgentProvider): string {
     return getProviderRoot(this.paseoHome, provider);
   }
@@ -290,4 +332,97 @@ function resolveDefaultCodexHome(): string {
 
 function resolveDefaultGeminiHome(): string {
   return path.resolve(path.join(homedir(), ".gemini"));
+}
+
+async function readGeminiExtensionsForAccount(input: {
+  accountKey: string;
+  accountAlias: string;
+  extensionsRoot: string;
+}): Promise<ProviderNativeExtension[]> {
+  const entries = await fs.readdir(input.extensionsRoot, { withFileTypes: true }).catch(() => []);
+  const enablement = await readJsonObject(
+    path.join(input.extensionsRoot, "extension-enablement.json"),
+  );
+  const extensions: ProviderNativeExtension[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const extensionPath = path.join(input.extensionsRoot, entry.name);
+    const manifest = await readJsonObject(path.join(extensionPath, "gemini-extension.json"));
+    extensions.push({
+      id: entry.name,
+      name: readString(manifest?.name),
+      version: readString(manifest?.version),
+      path: extensionPath,
+      enabled: resolveGeminiExtensionEnabled(enablement?.[entry.name]),
+      contextFileName: readString(manifest?.contextFileName),
+      accountKey: input.accountKey,
+      accountAlias: input.accountAlias,
+      skillIds: await readGeminiExtensionSkillIds(extensionPath),
+    });
+  }
+  return extensions;
+}
+
+function resolveGeminiExtensionEnabled(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value && typeof value === "object") {
+    const enabled = (value as Record<string, unknown>).enabled;
+    return typeof enabled === "boolean" ? enabled : true;
+  }
+  return value === undefined ? undefined : true;
+}
+
+async function readGeminiExtensionSkillIds(extensionPath: string): Promise<string[]> {
+  const ids = new Set<string>();
+  await walkFiles(extensionPath, async (filePath) => {
+    const basename = path.basename(filePath).replace(/\.[^.]+$/, "");
+    if (/^(gws|recipe|persona)-[a-z0-9-]+$/i.test(basename)) {
+      ids.add(basename);
+    }
+  });
+  return [...ids].sort();
+}
+
+async function walkFiles(
+  root: string,
+  visit: (filePath: string) => Promise<void>,
+  depth = 0,
+): Promise<void> {
+  if (depth > 5) {
+    return;
+  }
+  const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      await walkFiles(fullPath, visit, depth + 1);
+      continue;
+    }
+    if (entry.isFile()) {
+      await visit(fullPath);
+    }
+  }
+}
+
+async function readJsonObject(filePath: string): Promise<Record<string, unknown> | null> {
+  const raw = await fs.readFile(filePath, "utf8").catch(() => null);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
