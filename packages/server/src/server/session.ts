@@ -2190,6 +2190,10 @@ export class Session {
         return this.handleUpsertProviderNativeMcpServerRequest(msg);
       case "remove_provider_native_mcp_server_request":
         return this.handleRemoveProviderNativeMcpServerRequest(msg);
+      case "set_provider_native_extension_enabled_request":
+        return this.handleSetProviderNativeExtensionEnabledRequest(msg);
+      case "set_provider_native_skill_enabled_request":
+        return this.handleSetProviderNativeSkillEnabledRequest(msg);
       default:
         return undefined;
     }
@@ -4284,6 +4288,49 @@ export class Session {
     }
   }
 
+  private async handleSetProviderNativeExtensionEnabledRequest(
+    msg: Extract<SessionInboundMessage, { type: "set_provider_native_extension_enabled_request" }>,
+  ): Promise<void> {
+    try {
+      const config = await this.requireProviderNativeConfigService().setProviderExtensionEnabled({
+        provider: msg.provider,
+        accountKey: msg.accountKey,
+        extensionId: msg.extensionId,
+        enabled: msg.enabled,
+      });
+      this.emit({
+        type: "set_provider_native_extension_enabled_response",
+        payload: {
+          config,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_extension_toggle_failed");
+    }
+  }
+
+  private async handleSetProviderNativeSkillEnabledRequest(
+    msg: Extract<SessionInboundMessage, { type: "set_provider_native_skill_enabled_request" }>,
+  ): Promise<void> {
+    try {
+      const config = await this.requireProviderNativeConfigService().setProviderSkillEnabled({
+        provider: msg.provider,
+        skillId: msg.skillId,
+        enabled: msg.enabled,
+      });
+      this.emit({
+        type: "set_provider_native_skill_enabled_response",
+        payload: {
+          config,
+          requestId: msg.requestId,
+        },
+      });
+    } catch (error) {
+      this.emitProviderNativeConfigRpcError(msg, error, "provider_native_skill_toggle_failed");
+    }
+  }
+
   private requireProviderAuthService(): ProviderAuthService {
     if (!this.providerAuthService) {
       throw new Error("Provider auth profiles are not available");
@@ -4404,7 +4451,9 @@ export class Session {
           | "sync_provider_native_config_from_source_request"
           | "list_provider_native_mcp_servers_request"
           | "upsert_provider_native_mcp_server_request"
-          | "remove_provider_native_mcp_server_request";
+          | "remove_provider_native_mcp_server_request"
+          | "set_provider_native_extension_enabled_request"
+          | "set_provider_native_skill_enabled_request";
       }
     >,
     error: unknown,

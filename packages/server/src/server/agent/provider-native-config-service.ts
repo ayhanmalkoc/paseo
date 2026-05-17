@@ -42,6 +42,12 @@ export interface ProviderNativeExtension {
   accountKey?: string;
   accountAlias?: string;
   skillIds: string[];
+  skills: ProviderNativeExtensionSkill[];
+}
+
+export interface ProviderNativeExtensionSkill {
+  id: string;
+  enabled: boolean;
 }
 
 export interface ProviderNativeMcpServer {
@@ -215,6 +221,45 @@ export class ProviderNativeConfigService {
     return existed;
   }
 
+  async setProviderExtensionEnabled(input: {
+    provider: AgentProvider;
+    accountKey: string;
+    extensionId: string;
+    enabled: boolean;
+  }): Promise<ProviderNativeConfigSnapshot> {
+    if (input.provider !== "gemini") {
+      throw new Error(
+        `Native extension toggles are not supported for provider '${input.provider}'`,
+      );
+    }
+    const profile = await this.resolveProviderProfile(input.provider, input.accountKey);
+    const homePath = profile.providerHomeRef?.homePath;
+    if (!homePath) {
+      throw new Error(`Provider account '${input.accountKey}' has no managed home`);
+    }
+    await writeGeminiExtensionEnabled({
+      extensionsRoot: path.join(homePath, ".gemini", "extensions"),
+      extensionId: input.extensionId,
+      enabled: input.enabled,
+    });
+    return this.readProviderConfig({ provider: input.provider });
+  }
+
+  async setProviderSkillEnabled(input: {
+    provider: AgentProvider;
+    skillId: string;
+    enabled: boolean;
+  }): Promise<ProviderNativeConfigSnapshot> {
+    if (input.provider !== "gemini") {
+      throw new Error(`Native skill toggles are not supported for provider '${input.provider}'`);
+    }
+    const snapshot = await this.readProviderConfig({ provider: input.provider });
+    return this.writeProviderConfig({
+      provider: input.provider,
+      content: setGeminiSkillEnabled(snapshot.content, input.skillId, input.enabled),
+    });
+  }
+
   async materializeProviderConfigToAccounts(provider: AgentProvider): Promise<void> {
     const profiles = await this.providerAuthService.listProfiles(provider);
     await Promise.all(
@@ -249,6 +294,7 @@ export class ProviderNativeConfigService {
     if (provider !== "gemini") {
       return [];
     }
+    const skillState = await readGeminiSkillState(this.resolveConfigPath(provider));
     const profiles = await this.providerAuthService.listProfiles(provider);
     const extensions = await Promise.all(
       profiles.map(async (profile) => {
@@ -260,6 +306,7 @@ export class ProviderNativeConfigService {
           accountKey: profile.key,
           accountAlias: profile.alias,
           extensionsRoot: path.join(homePath, ".gemini", "extensions"),
+          skillState,
         });
       }),
     );
@@ -271,6 +318,15 @@ export class ProviderNativeConfigService {
 
   private resolveProviderRoot(provider: AgentProvider): string {
     return getProviderRoot(this.paseoHome, provider);
+  }
+
+  private async resolveProviderProfile(provider: AgentProvider, accountKey: string) {
+    const profiles = await this.providerAuthService.listProfiles(provider);
+    const profile = profiles.find((candidate) => candidate.key === accountKey);
+    if (!profile) {
+      throw new Error(`Provider account '${accountKey}' was not found`);
+    }
+    return profile;
   }
 
   private resolveConfigPath(provider: AgentProvider): string {
@@ -361,6 +417,7 @@ async function readGeminiExtensionsForAccount(input: {
   accountKey: string;
   accountAlias: string;
   extensionsRoot: string;
+  skillState: GeminiSkillState;
 }): Promise<ProviderNativeExtension[]> {
   const entries = await fs.readdir(input.extensionsRoot, { withFileTypes: true }).catch(() => []);
   const enablement = await readJsonObject(
@@ -382,7 +439,10 @@ async function readGeminiExtensionsForAccount(input: {
       contextFileName: readString(manifest?.contextFileName),
       accountKey: input.accountKey,
       accountAlias: input.accountAlias,
-      skillIds: await readGeminiExtensionSkillIds(extensionPath),
+      ...formatGeminiExtensionSkills(
+        await readGeminiExtensionSkillIds(extensionPath),
+        input.skillState,
+      ),
     });
   }
   return extensions;
@@ -393,10 +453,80 @@ function resolveGeminiExtensionEnabled(value: unknown): boolean | undefined {
     return value;
   }
   if (value && typeof value === "object") {
-    const enabled = (value as Record<string, unknown>).enabled;
-    return typeof enabled === "boolean" ? enabled : true;
+    const record = value as Record<string, unknown>;
+    const enabled = record.enabled;
+    if (typeof enabled === "boolean") {
+      return enabled;
+    }
+    const overrides = readStringArray(record.overrides);
+    if (overrides.length === 0) {
+      return true;
+    }
+    const lastOverride = overrides[overrides.length - 1]?.trim();
+    return lastOverride ? !lastOverride.startsWith("!") : true;
   }
   return value === undefined ? undefined : true;
+}
+
+interface GeminiSkillState {
+  enabled: boolean;
+  disabledIds: Set<string>;
+}
+
+async function readGeminiSkillState(configPath: string): Promise<GeminiSkillState> {
+  const settings = await readJsonObject(configPath);
+  const skills = readRecord(settings?.skills);
+  return {
+    enabled: skills?.enabled !== false,
+    disabledIds: new Set(readStringArray(skills?.disabled)),
+  };
+}
+
+function formatGeminiExtensionSkills(skillIds: string[], skillState: GeminiSkillState) {
+  return {
+    skillIds,
+    skills: skillIds.map((id) => ({
+      id,
+      enabled: skillState.enabled && !skillState.disabledIds.has(id),
+    })),
+  };
+}
+
+async function writeGeminiExtensionEnabled(input: {
+  extensionsRoot: string;
+  extensionId: string;
+  enabled: boolean;
+}): Promise<void> {
+  const configPath = path.join(input.extensionsRoot, "extension-enablement.json");
+  const config = (await readJsonObject(configPath)) ?? {};
+  const existing = readRecord(config[input.extensionId]) ?? {};
+  config[input.extensionId] = {
+    ...existing,
+    overrides: [input.enabled ? "/*" : "!/*"],
+  };
+  delete (config[input.extensionId] as Record<string, unknown>).enabled;
+  await writeJsonObject(configPath, config);
+}
+
+function setGeminiSkillEnabled(content: string, skillId: string, enabled: boolean): string {
+  const settings = parseJsonObject(content, "Gemini settings.json");
+  const skills = ensureRecord(settings, "skills");
+  const disabled = new Set(readStringArray(skills.disabled));
+  if (enabled) {
+    disabled.delete(skillId);
+    skills.enabled = true;
+  } else {
+    disabled.add(skillId);
+  }
+  if (disabled.size > 0) {
+    skills.disabled = Array.from(disabled).sort();
+  } else {
+    delete skills.disabled;
+  }
+  if (Object.keys(skills).length === 0) {
+    delete settings.skills;
+  }
+  return `${JSON.stringify(settings, null, 2)}\n`;
 }
 
 async function readGeminiExtensionSkillIds(extensionPath: string): Promise<string[]> {
@@ -447,13 +577,58 @@ async function readJsonObject(filePath: string): Promise<Record<string, unknown>
     return null;
   }
   try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
+    return parseJsonObject(raw, filePath);
   } catch {
     return null;
   }
+}
+
+async function writeJsonObject(filePath: string, value: Record<string, unknown>): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function parseJsonObject(content: string, label: string): Record<string, unknown> {
+  if (!content.trim()) {
+    return {};
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    throw new Error(
+      `${label} is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      {
+        cause: error,
+      },
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must contain a JSON object`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function ensureRecord(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  const existing = readRecord(record[key]);
+  if (existing) {
+    return existing;
+  }
+  const next: Record<string, unknown> = {};
+  record[key] = next;
+  return next;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
 }
 
 function readString(value: unknown): string | undefined {

@@ -78,6 +78,8 @@ import type {
   ListProviderNativeMcpServersResponseMessage,
   UpsertProviderNativeMcpServerResponseMessage,
   RemoveProviderNativeMcpServerResponseMessage,
+  SetProviderNativeExtensionEnabledResponseMessage,
+  SetProviderNativeSkillEnabledResponseMessage,
   McpServerConfig,
   RestartAgentWithRuntimeProfileResponseMessage,
   ListTerminalsResponse,
@@ -375,6 +377,9 @@ type SyncProviderNativeConfigFromSourcePayload =
 type ListProviderNativeMcpServersPayload = ListProviderNativeMcpServersResponseMessage["payload"];
 type UpsertProviderNativeMcpServerPayload = UpsertProviderNativeMcpServerResponseMessage["payload"];
 type RemoveProviderNativeMcpServerPayload = RemoveProviderNativeMcpServerResponseMessage["payload"];
+type SetProviderNativeExtensionEnabledPayload =
+  SetProviderNativeExtensionEnabledResponseMessage["payload"];
+type SetProviderNativeSkillEnabledPayload = SetProviderNativeSkillEnabledResponseMessage["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -3820,6 +3825,46 @@ export class DaemonClient {
         id: options.id,
       },
       responseType: "remove_provider_native_mcp_server_response",
+      timeout: 10000,
+    });
+  }
+
+  async setProviderNativeExtensionEnabled(options: {
+    provider: AgentProvider;
+    accountKey: string;
+    extensionId: string;
+    enabled: boolean;
+    requestId?: string;
+  }): Promise<SetProviderNativeExtensionEnabledPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "set_provider_native_extension_enabled_request",
+        provider: options.provider,
+        accountKey: options.accountKey,
+        extensionId: options.extensionId,
+        enabled: options.enabled,
+      },
+      responseType: "set_provider_native_extension_enabled_response",
+      timeout: 10000,
+    });
+  }
+
+  async setProviderNativeSkillEnabled(options: {
+    provider: AgentProvider;
+    skillId: string;
+    enabled: boolean;
+    requestId?: string;
+  }): Promise<SetProviderNativeSkillEnabledPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "set_provider_native_skill_enabled_request",
+        provider: options.provider,
+        skillId: options.skillId,
+        enabled: options.enabled,
+      },
+      responseType: "set_provider_native_skill_enabled_response",
       timeout: 10000,
     });
   }
