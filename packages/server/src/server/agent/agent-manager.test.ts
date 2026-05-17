@@ -1428,6 +1428,66 @@ test("createAgent passes injected MCP auth headers only to provider launch confi
   rmSync(workdir, { recursive: true, force: true });
 });
 
+test("createAgent keeps internal MCP auth when session daemon auth headers are present", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class CaptureClient extends TestAgentClient {
+    lastConfig: AgentSessionConfig | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.lastConfig = config;
+      return new TestAgentSession(config);
+    }
+  }
+
+  const client = new CaptureClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpServerHeaders: {
+      Authorization: "Bearer internal-secret",
+    },
+    idFactory: () => "00000000-0000-4000-8000-000000000106",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+    },
+    undefined,
+    {
+      mcpServerHeaders: {
+        Authorization: "Bearer daemon-password",
+      },
+    },
+  );
+
+  expect(snapshot.config.mcpServers).toEqual({
+    paseo: {
+      type: "http",
+      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+    },
+  });
+  expect(client.lastConfig?.mcpServers).toEqual({
+    paseo: {
+      type: "http",
+      url: `http://127.0.0.1:6767/mcp/agents/internal-secret/${snapshot.id}`,
+      headers: {
+        Authorization: "Bearer internal-secret",
+      },
+    },
+  });
+
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("createAgent resolves session MCP before system MCP", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

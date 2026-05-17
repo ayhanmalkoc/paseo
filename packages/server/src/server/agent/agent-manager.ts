@@ -307,8 +307,8 @@ function mergeMcpServerHeaders(
     return undefined;
   }
   return {
-    ...base,
     ...override,
+    ...base,
   };
 }
 
