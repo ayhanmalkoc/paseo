@@ -536,6 +536,7 @@ function ProviderAuthProfilesSection(props: {
   const [loginSessionId, setLoginSessionId] = useState<string | null>(null);
   const [nativeConfigVisible, setNativeConfigVisible] = useState(false);
   const [nativeMcpVisible, setNativeMcpVisible] = useState(false);
+  const [nativeExtensionsVisible, setNativeExtensionsVisible] = useState(false);
   const autoRefreshedKeysRef = useRef<Set<string>>(new Set());
   const autoRefreshInFlightRef = useRef(false);
   const lastForcedRefreshNonceRef = useRef(0);
@@ -550,8 +551,10 @@ function ProviderAuthProfilesSection(props: {
   const sortedProfiles = useMemo(() => sortAuthProfiles(profiles), [profiles]);
   const handleCloseNativeConfig = useCallback(() => setNativeConfigVisible(false), []);
   const handleCloseNativeMcp = useCallback(() => setNativeMcpVisible(false), []);
+  const handleCloseNativeExtensions = useCallback(() => setNativeExtensionsVisible(false), []);
   const handleOpenNativeConfig = useCallback(() => setNativeConfigVisible(true), []);
   const handleOpenNativeMcp = useCallback(() => setNativeMcpVisible(true), []);
+  const handleOpenNativeExtensions = useCallback(() => setNativeExtensionsVisible(true), []);
 
   const runAuthAction = useCallback(async (action: () => Promise<unknown>) => {
     setError(null);
@@ -602,7 +605,7 @@ function ProviderAuthProfilesSection(props: {
     void (async () => {
       const confirmed = await confirmDialog({
         title: `Sync ${providerLabel} config?`,
-        message: `This replaces the shared ${providerLabel} provider config with the current native ${providerLabel} config. Account auth and usage are not changed.`,
+        message: `This imports the current native ${providerLabel} config and keeps MCP servers managed in Paseo. Account auth and usage are not changed.`,
         confirmLabel: "Sync config",
       });
       if (!confirmed) {
@@ -717,7 +720,7 @@ function ProviderAuthProfilesSection(props: {
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>{providerLabel} config</Text>
             <Text style={settingsStyles.rowHint}>
-              Shared MCP, skills, plugins, hooks, and native provider settings.
+              Shared MCP, extensions, hooks, and native provider settings.
             </Text>
           </View>
           <View style={sheetStyles.providerConfigActions}>
@@ -757,6 +760,19 @@ function ProviderAuthProfilesSection(props: {
             >
               MCP
             </Button>
+            {providerId === "gemini" ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                style={sheetStyles.profileActionButton}
+                textStyle={sheetStyles.profileActionButtonText}
+                onPress={handleOpenNativeExtensions}
+                disabled={nativeConfigSync.isSyncing}
+                accessibilityLabel={`View ${providerLabel} extensions`}
+              >
+                Extensions
+              </Button>
+            ) : null}
           </View>
         </View>
       </View>
@@ -828,6 +844,15 @@ function ProviderAuthProfilesSection(props: {
             visible={nativeMcpVisible}
             onClose={handleCloseNativeMcp}
           />
+          {providerId === "gemini" ? (
+            <ProviderNativeExtensionsSheet
+              provider={providerId}
+              providerLabel={providerLabel}
+              serverId={serverId}
+              visible={nativeExtensionsVisible}
+              onClose={handleCloseNativeExtensions}
+            />
+          ) : null}
         </>
       ) : null}
     </>
@@ -942,11 +967,6 @@ function ProviderNativeMcpSheet(props: {
   const [localError, setLocalError] = useState<string | null>(null);
   const { servers, isLoading, isSaving, isSupported, error, upsert, remove } =
     useProviderNativeMcpServers(serverId, provider);
-  const {
-    config: nativeConfig,
-    isLoading: isNativeConfigLoading,
-    error: nativeConfigError,
-  } = useProviderNativeConfig(serverId, provider);
 
   useEffect(() => {
     if (!visible) {
@@ -960,10 +980,6 @@ function ProviderNativeMcpSheet(props: {
   const sortedServers = useMemo(
     () => [...servers].sort(compareProviderNativeMcpServers),
     [servers],
-  );
-  const sortedExtensions = useMemo(
-    () => [...(nativeConfig?.extensions ?? [])].sort(compareProviderNativeExtensions),
-    [nativeConfig?.extensions],
   );
 
   const handleAdd = useCallback(() => {
@@ -1061,30 +1077,6 @@ function ProviderNativeMcpSheet(props: {
     ));
   }
 
-  function renderExtensionsBody() {
-    if (isNativeConfigLoading && sortedExtensions.length === 0) {
-      return (
-        <View style={sheetStyles.emptyRow}>
-          <ActivityIndicator size="small" />
-          <Text style={sheetStyles.mutedText}>Loading extensions…</Text>
-        </View>
-      );
-    }
-    if (sortedExtensions.length === 0) {
-      return (
-        <View style={sheetStyles.emptyRow}>
-          <Text style={sheetStyles.mutedText}>No Gemini extensions in managed accounts.</Text>
-        </View>
-      );
-    }
-    return sortedExtensions.map((extension) => (
-      <ProviderNativeExtensionRow
-        key={`${extension.accountKey ?? "provider"}:${extension.id}`}
-        extension={extension}
-      />
-    ));
-  }
-
   return (
     <>
       <AdaptiveModalSheet
@@ -1099,14 +1091,6 @@ function ProviderNativeMcpSheet(props: {
             <Text style={sheetStyles.errorText}>{localError ?? error}</Text>
           ) : null}
         </SettingsSection>
-        {provider === "gemini" ? (
-          <SettingsSection title="Extensions">
-            <View style={settingsStyles.card}>{renderExtensionsBody()}</View>
-            {nativeConfigError ? (
-              <Text style={sheetStyles.errorText}>{nativeConfigError}</Text>
-            ) : null}
-          </SettingsSection>
-        ) : null}
       </AdaptiveModalSheet>
       <ProviderNativeMcpEditor
         visible={editorVisible}
@@ -1177,6 +1161,59 @@ function ProviderNativeMcpRow(props: {
         </Pressable>
       </View>
     </View>
+  );
+}
+
+function ProviderNativeExtensionsSheet(props: {
+  provider: AgentProvider;
+  providerLabel: string;
+  serverId: string;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { provider, providerLabel, serverId, visible, onClose } = props;
+  const { config, isLoading, error } = useProviderNativeConfig(serverId, provider);
+  const sortedExtensions = useMemo(
+    () => [...(config?.extensions ?? [])].sort(compareProviderNativeExtensions),
+    [config?.extensions],
+  );
+
+  function renderBody() {
+    if (isLoading && sortedExtensions.length === 0) {
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <ActivityIndicator size="small" />
+          <Text style={sheetStyles.mutedText}>Loading extensions…</Text>
+        </View>
+      );
+    }
+    if (sortedExtensions.length === 0) {
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <Text style={sheetStyles.mutedText}>No Gemini extensions in managed accounts.</Text>
+        </View>
+      );
+    }
+    return sortedExtensions.map((extension) => (
+      <ProviderNativeExtensionRow
+        key={`${extension.accountKey ?? "provider"}:${extension.id}`}
+        extension={extension}
+      />
+    ));
+  }
+
+  return (
+    <AdaptiveModalSheet
+      title={`${providerLabel} extensions`}
+      visible={visible}
+      onClose={onClose}
+      snapPoints={NATIVE_MCP_SNAP_POINTS}
+    >
+      <SettingsSection title="Extensions">
+        <View style={settingsStyles.card}>{renderBody()}</View>
+        {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
+      </SettingsSection>
+    </AdaptiveModalSheet>
   );
 }
 

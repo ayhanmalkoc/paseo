@@ -95,7 +95,7 @@ describe("ProviderNativeConfigService", () => {
     const geminiHomePath = path.join(tempRoot, "providers", "gemini", "accounts", "malkoc", "home");
     const extensionsRoot = path.join(geminiHomePath, ".gemini", "extensions");
     const extensionPath = path.join(extensionsRoot, "google-workspace-cli");
-    await fs.mkdir(path.join(extensionPath, "skills"), { recursive: true });
+    await fs.mkdir(path.join(extensionPath, "skills", "gws-calendar"), { recursive: true });
     await fs.writeFile(
       path.join(extensionPath, "gemini-extension.json"),
       JSON.stringify({
@@ -110,7 +110,10 @@ describe("ProviderNativeConfigService", () => {
         "google-workspace-cli": { enabled: true },
       }),
     );
-    await fs.writeFile(path.join(extensionPath, "skills", "gws-calendar.md"), "calendar skill");
+    await fs.writeFile(
+      path.join(extensionPath, "skills", "gws-calendar", "SKILL.md"),
+      "calendar skill",
+    );
 
     const service = createService([
       createProfile({
@@ -302,6 +305,30 @@ describe("ProviderNativeConfigService", () => {
           env: { CONTEXT_MODE: "1" },
         },
         enabled: false,
+      },
+    ]);
+  });
+
+  it("keeps managed Gemini MCP servers when syncing native settings", async () => {
+    const service = createService();
+    await service.upsertProviderMcpServer({
+      provider: "gemini",
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode" },
+      enabled: true,
+    });
+    await fs.writeFile(
+      path.join(nativeGeminiHome, "settings.json"),
+      JSON.stringify({ ui: { theme: "Default Light" } }, null, 2),
+    );
+
+    await service.syncProviderConfigFromNative({ provider: "gemini" });
+
+    await expect(service.listProviderMcpServers({ provider: "gemini" })).resolves.toEqual([
+      {
+        id: "context-mode",
+        config: { type: "stdio", command: "context-mode" },
+        enabled: true,
       },
     ]);
   });
