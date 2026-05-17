@@ -57,21 +57,24 @@ describe("paseo daemon bootstrap", () => {
     });
 
     try {
-      const response = await fetch(`http://127.0.0.1:${daemonHandle.port}/mcp/agents`, {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer secret-debug-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "tools/call",
-          params: {
-            apiKey: "secret-body-token",
+      const response = await fetch(
+        `http://127.0.0.1:${daemonHandle.port}/mcp/agents/secret-path-token/caller-agent`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer secret-debug-token",
+            "Content-Type": "application/json",
           },
-        }),
-      });
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              apiKey: "secret-body-token",
+            },
+          }),
+        },
+      );
 
       expect(response.status).toBe(400);
       const logs = logLines.join("\n");
@@ -80,6 +83,7 @@ describe("paseo daemon bootstrap", () => {
       expect(logs).toContain('"method":"tools/call"');
       expect(logs).toContain('"hasParams":true');
       expect(logs).not.toContain("secret-debug-token");
+      expect(logs).not.toContain("secret-path-token");
       expect(logs).not.toContain("secret-body-token");
       expect(logs).not.toContain("apiKey");
     } finally {

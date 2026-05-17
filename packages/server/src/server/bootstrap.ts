@@ -171,6 +171,36 @@ function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null
   ).toString();
 }
 
+function extractAgentMcpPathAuth(
+  requestPath: string,
+  route: string,
+): { mcpAuthToken?: string; callerAgentId?: string } {
+  const prefix = `${route}/`;
+  if (!requestPath.startsWith(prefix)) {
+    return {};
+  }
+  const [mcpAuthToken, callerAgentId] = requestPath
+    .slice(prefix.length)
+    .split("/")
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        return segment;
+      }
+    });
+  return {
+    ...(mcpAuthToken ? { mcpAuthToken } : {}),
+    ...(callerAgentId ? { callerAgentId } : {}),
+  };
+}
+
+function redactAgentMcpDebugUrl(url: string, route: string): string {
+  return url
+    .replace(new RegExp(`(${route}/)[^/?#]+(?:/[^/?#]+)?`), `$1${REDACTED_LOG_VALUE}`)
+    .replace(/([?&])mcpAuthToken=[^&]*/g, `$1mcpAuthToken=${REDACTED_LOG_VALUE}`);
+}
+
 function summarizeAgentMcpDebugMessage(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return {
@@ -379,6 +409,7 @@ export async function createPaseoDaemon(
     next();
   });
 
+  const agentMcpRoute = "/mcp/agents";
   const agentMcpInternalAuthToken = randomUUID();
   const agentMcpInternalHeaders = {
     Authorization: `Bearer ${agentMcpInternalAuthToken}`,
@@ -394,7 +425,9 @@ export async function createPaseoDaemon(
         shouldBypass: (req) =>
           req.path.startsWith("/mcp/agents") &&
           (extractHttpBearerToken(req.header("authorization")) === agentMcpInternalAuthToken ||
-            req.query.mcpAuthToken === agentMcpInternalAuthToken),
+            req.query.mcpAuthToken === agentMcpInternalAuthToken ||
+            extractAgentMcpPathAuth(req.path, agentMcpRoute).mcpAuthToken ===
+              agentMcpInternalAuthToken),
       },
     ),
   );
@@ -614,7 +647,6 @@ export async function createPaseoDaemon(
   const mcpEnabled = config.mcpEnabled ?? true;
   let agentMcpBaseUrl: string | null = null;
   if (mcpEnabled) {
-    const agentMcpRoute = "/mcp/agents";
     const agentMcpTransports: AgentMcpTransportMap = new Map();
     const archiveWorkspaceRecordForMcp = async (workspaceId: string) => {
       const sessions = wsServer?.listActiveSessions() ?? [];
@@ -774,7 +806,7 @@ export async function createPaseoDaemon(
         logger.debug(
           {
             method: req.method,
-            url: req.originalUrl,
+            url: redactAgentMcpDebugUrl(req.originalUrl, agentMcpRoute),
             sessionId: req.header("mcp-session-id"),
             authorization: req.header("authorization") ? REDACTED_LOG_VALUE : undefined,
             body: summarizeAgentMcpDebugBody(req.body),
@@ -809,7 +841,8 @@ export async function createPaseoDaemon(
             });
             return;
           }
-          const callerAgentIdRaw = req.query.callerAgentId;
+          const pathAuth = extractAgentMcpPathAuth(req.path, agentMcpRoute);
+          const callerAgentIdRaw = req.query.callerAgentId ?? pathAuth.callerAgentId;
           let callerAgentId: string | undefined;
           if (typeof callerAgentIdRaw === "string") {
             callerAgentId = callerAgentIdRaw;
@@ -850,6 +883,12 @@ export async function createPaseoDaemon(
     app.post(agentMcpRoute, handleAgentMcpRequest);
     app.get(agentMcpRoute, handleAgentMcpRequest);
     app.delete(agentMcpRoute, handleAgentMcpRequest);
+    app.post(`${agentMcpRoute}/:mcpAuthToken`, handleAgentMcpRequest);
+    app.get(`${agentMcpRoute}/:mcpAuthToken`, handleAgentMcpRequest);
+    app.delete(`${agentMcpRoute}/:mcpAuthToken`, handleAgentMcpRequest);
+    app.post(`${agentMcpRoute}/:mcpAuthToken/:callerAgentId`, handleAgentMcpRequest);
+    app.get(`${agentMcpRoute}/:mcpAuthToken/:callerAgentId`, handleAgentMcpRequest);
+    app.delete(`${agentMcpRoute}/:mcpAuthToken/:callerAgentId`, handleAgentMcpRequest);
     logger.info({ route: agentMcpRoute }, "Agent MCP server mounted on main app");
   } else {
     logger.info("Agent MCP HTTP endpoint disabled");
