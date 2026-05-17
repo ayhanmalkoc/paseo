@@ -107,12 +107,17 @@ describe("ProviderNativeConfigService", () => {
     await fs.writeFile(
       path.join(extensionsRoot, "extension-enablement.json"),
       JSON.stringify({
-        "google-workspace-cli": { enabled: true },
+        "google-workspace-cli": { overrides: ["/*"] },
       }),
     );
     await fs.writeFile(
       path.join(extensionPath, "skills", "gws-calendar", "SKILL.md"),
       "calendar skill",
+    );
+    await fs.mkdir(path.dirname(geminiProviderConfigPath), { recursive: true });
+    await fs.writeFile(
+      geminiProviderConfigPath,
+      JSON.stringify({ skills: { disabled: ["gws-calendar"] } }, null, 2),
     );
 
     const service = createService([
@@ -142,9 +147,84 @@ describe("ProviderNativeConfigService", () => {
           accountKey: "malkoc",
           accountAlias: "malkoc.a",
           skillIds: ["gws-calendar"],
+          skills: [{ id: "gws-calendar", enabled: false }],
         },
       ],
     });
+  });
+
+  it("toggles Gemini extensions using native extension enablement overrides", async () => {
+    const geminiHomePath = path.join(tempRoot, "providers", "gemini", "accounts", "malkoc", "home");
+    const extensionsRoot = path.join(geminiHomePath, ".gemini", "extensions");
+    const extensionPath = path.join(extensionsRoot, "google-workspace-cli");
+    await fs.mkdir(extensionPath, { recursive: true });
+    await fs.writeFile(path.join(extensionPath, "gemini-extension.json"), JSON.stringify({}));
+
+    const service = createService([
+      createProfile({
+        provider: "gemini",
+        key: "malkoc",
+        alias: "malkoc.a",
+        authMode: "oauth",
+        providerHomeRef: {
+          kind: "managed-profile",
+          provider: "gemini",
+          profileKey: "malkoc",
+          homePath: geminiHomePath,
+          label: "malkoc.a",
+        },
+      }),
+    ]);
+
+    await service.setProviderExtensionEnabled({
+      provider: "gemini",
+      accountKey: "malkoc",
+      extensionId: "google-workspace-cli",
+      enabled: false,
+    });
+
+    await expect(
+      fs.readFile(path.join(extensionsRoot, "extension-enablement.json"), "utf8"),
+    ).resolves.toContain('"!/*"');
+    await expect(service.readProviderConfig({ provider: "gemini" })).resolves.toMatchObject({
+      extensions: [{ id: "google-workspace-cli", enabled: false }],
+    });
+
+    await service.setProviderExtensionEnabled({
+      provider: "gemini",
+      accountKey: "malkoc",
+      extensionId: "google-workspace-cli",
+      enabled: true,
+    });
+
+    await expect(
+      fs.readFile(path.join(extensionsRoot, "extension-enablement.json"), "utf8"),
+    ).resolves.toContain('"/*"');
+    await expect(service.readProviderConfig({ provider: "gemini" })).resolves.toMatchObject({
+      extensions: [{ id: "google-workspace-cli", enabled: true }],
+    });
+  });
+
+  it("toggles Gemini skills using settings.json skills.disabled", async () => {
+    const service = createService();
+
+    await service.setProviderSkillEnabled({
+      provider: "gemini",
+      skillId: "gws-calendar",
+      enabled: false,
+    });
+
+    await expect(fs.readFile(geminiProviderConfigPath, "utf8")).resolves.toContain('"disabled"');
+
+    await service.setProviderSkillEnabled({
+      provider: "gemini",
+      skillId: "gws-calendar",
+      enabled: true,
+    });
+
+    await expect(fs.readFile(geminiProviderConfigPath, "utf8")).resolves.not.toContain(
+      "gws-calendar",
+    );
   });
 
   it("writes Codex config.toml into the provider config and materializes account homes", async () => {

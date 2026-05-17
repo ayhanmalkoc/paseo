@@ -49,6 +49,7 @@ import type {
 } from "@server/shared/messages";
 
 type ProviderNativeExtension = NonNullable<ProviderNativeConfigSnapshot["extensions"]>[number];
+type ProviderNativeExtensionSkill = ProviderNativeExtension["skills"][number];
 
 interface ProviderDiagnosticSheetProps {
   provider: string;
@@ -499,11 +500,13 @@ function formatProviderNativeExtensionSummary(extension: ProviderNativeExtension
 }
 
 function formatProviderNativeExtensionSkills(extension: ProviderNativeExtension): string {
-  if (extension.skillIds.length === 0) {
+  const skillIds =
+    extension.skills.length > 0 ? extension.skills.map((skill) => skill.id) : extension.skillIds;
+  if (skillIds.length === 0) {
     return extension.contextFileName ? `context ${extension.contextFileName}` : extension.path;
   }
-  const visibleSkills = extension.skillIds.slice(0, 4);
-  const suffix = extension.skillIds.length > visibleSkills.length ? " · …" : "";
+  const visibleSkills = skillIds.slice(0, 4);
+  const suffix = skillIds.length > visibleSkills.length ? " · …" : "";
   return `${visibleSkills.join(" · ")}${suffix}`;
 }
 
@@ -1172,10 +1175,30 @@ function ProviderNativeExtensionsSheet(props: {
   onClose: () => void;
 }) {
   const { provider, providerLabel, serverId, visible, onClose } = props;
-  const { config, isLoading, error } = useProviderNativeConfig(serverId, provider);
+  const { config, isLoading, isSaving, error, setExtensionEnabled, setSkillEnabled } =
+    useProviderNativeConfig(serverId, provider);
   const sortedExtensions = useMemo(
     () => [...(config?.extensions ?? [])].sort(compareProviderNativeExtensions),
     [config?.extensions],
+  );
+  const handleToggleExtension = useCallback(
+    async (extension: ProviderNativeExtension, enabled: boolean) => {
+      if (!extension.accountKey) {
+        return;
+      }
+      await setExtensionEnabled({
+        accountKey: extension.accountKey,
+        extensionId: extension.id,
+        enabled,
+      });
+    },
+    [setExtensionEnabled],
+  );
+  const handleToggleSkill = useCallback(
+    async (skill: ProviderNativeExtensionSkill, enabled: boolean) => {
+      await setSkillEnabled({ skillId: skill.id, enabled });
+    },
+    [setSkillEnabled],
   );
 
   function renderBody() {
@@ -1198,6 +1221,9 @@ function ProviderNativeExtensionsSheet(props: {
       <ProviderNativeExtensionRow
         key={`${extension.accountKey ?? "provider"}:${extension.id}`}
         extension={extension}
+        busy={isSaving}
+        onToggleExtension={handleToggleExtension}
+        onToggleSkill={handleToggleSkill}
       />
     ));
   }
@@ -1217,7 +1243,23 @@ function ProviderNativeExtensionsSheet(props: {
   );
 }
 
-function ProviderNativeExtensionRow({ extension }: { extension: ProviderNativeExtension }) {
+function ProviderNativeExtensionRow(props: {
+  extension: ProviderNativeExtension;
+  busy: boolean;
+  onToggleExtension: (extension: ProviderNativeExtension, enabled: boolean) => void;
+  onToggleSkill: (skill: ProviderNativeExtensionSkill, enabled: boolean) => void;
+}) {
+  const { extension, busy, onToggleExtension, onToggleSkill } = props;
+  const enabled = extension.enabled !== false;
+  const skills =
+    extension.skills.length > 0
+      ? extension.skills
+      : extension.skillIds.map((id) => ({ id, enabled: true }));
+  const handleToggleExtension = useCallback(
+    (nextEnabled: boolean) => onToggleExtension(extension, nextEnabled),
+    [extension, onToggleExtension],
+  );
+
   return (
     <View style={MCP_SERVER_ROW_STYLE}>
       <View style={sheetStyles.mcpServerHeader}>
@@ -1235,7 +1277,53 @@ function ProviderNativeExtensionRow({ extension }: { extension: ProviderNativeEx
             {formatProviderNativeExtensionSkills(extension)}
           </Text>
         </View>
+        <Switch
+          value={enabled}
+          onValueChange={handleToggleExtension}
+          disabled={busy || !extension.accountKey}
+          accessibilityLabel={`${enabled ? "Disable" : "Enable"} ${extension.name ?? extension.id}`}
+        />
       </View>
+      {skills.length > 0 ? (
+        <View style={sheetStyles.extensionSkills}>
+          {skills.map((skill) => (
+            <ProviderNativeExtensionSkillRow
+              key={skill.id}
+              skill={skill}
+              busy={busy || !enabled}
+              onToggle={onToggleSkill}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function ProviderNativeExtensionSkillRow(props: {
+  skill: ProviderNativeExtensionSkill;
+  busy: boolean;
+  onToggle: (skill: ProviderNativeExtensionSkill, enabled: boolean) => void;
+}) {
+  const { skill, busy, onToggle } = props;
+  const handleToggle = useCallback(
+    (enabled: boolean) => onToggle(skill, enabled),
+    [onToggle, skill],
+  );
+  return (
+    <View style={sheetStyles.extensionSkillRow}>
+      <View style={sheetStyles.extensionSkillContent}>
+        <Text style={sheetStyles.extensionSkillTitle} numberOfLines={1}>
+          {skill.id}
+        </Text>
+        <Text style={sheetStyles.mutedText}>{skill.enabled ? "enabled" : "disabled"}</Text>
+      </View>
+      <Switch
+        value={skill.enabled}
+        onValueChange={handleToggle}
+        disabled={busy}
+        accessibilityLabel={`${skill.enabled ? "Disable" : "Enable"} ${skill.id} skill`}
+      />
     </View>
   );
 }
@@ -1943,6 +2031,28 @@ const sheetStyles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     minHeight: 30,
     minWidth: 30,
+  },
+  extensionSkills: {
+    gap: theme.spacing[2],
+    paddingTop: theme.spacing[2],
+  },
+  extensionSkillRow: {
+    alignItems: "center",
+    borderTopColor: theme.colors.border,
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: theme.spacing[3],
+    justifyContent: "space-between",
+    paddingTop: theme.spacing[2],
+  },
+  extensionSkillContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  extensionSkillTitle: {
+    color: theme.colors.foreground,
+    fontFamily: Fonts.mono,
+    fontSize: theme.fontSize.sm,
   },
   deviceCode: {
     fontFamily: Fonts.mono,

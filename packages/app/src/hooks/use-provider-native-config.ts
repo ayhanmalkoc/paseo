@@ -132,14 +132,57 @@ export function useProviderNativeConfig(serverId: string | null, provider?: Agen
     },
   });
 
+  const extensionToggleMutation = useMutation({
+    mutationFn: async (input: { accountKey: string; extensionId: string; enabled: boolean }) => {
+      const response = await requireClient(client).setProviderNativeExtensionEnabled({
+        provider: requireProvider(provider),
+        accountKey: input.accountKey,
+        extensionId: input.extensionId,
+        enabled: input.enabled,
+      });
+      return response.config;
+    },
+    onSuccess: async (config: ProviderNativeConfigSnapshot) => {
+      queryClient.setQueryData(queryKey, config);
+      await queryClient.invalidateQueries({ queryKey });
+    },
+  });
+
+  const skillToggleMutation = useMutation({
+    mutationFn: async (input: { skillId: string; enabled: boolean }) => {
+      const response = await requireClient(client).setProviderNativeSkillEnabled({
+        provider: requireProvider(provider),
+        skillId: input.skillId,
+        enabled: input.enabled,
+      });
+      return response.config;
+    },
+    onSuccess: async (config: ProviderNativeConfigSnapshot) => {
+      queryClient.setQueryData(queryKey, config);
+      await queryClient.invalidateQueries({ queryKey });
+    },
+  });
+
   return {
     config: query.data,
     isLoading: query.isPending,
-    isRefreshing: query.isFetching || saveMutation.isPending,
-    isSaving: saveMutation.isPending,
+    isRefreshing:
+      query.isFetching ||
+      saveMutation.isPending ||
+      extensionToggleMutation.isPending ||
+      skillToggleMutation.isPending,
+    isSaving:
+      saveMutation.isPending || extensionToggleMutation.isPending || skillToggleMutation.isPending,
     isSupported,
-    error: formatError(query.error ?? saveMutation.error),
+    error: formatError(
+      query.error ??
+        saveMutation.error ??
+        extensionToggleMutation.error ??
+        skillToggleMutation.error,
+    ),
     save: saveMutation.mutateAsync,
+    setExtensionEnabled: extensionToggleMutation.mutateAsync,
+    setSkillEnabled: skillToggleMutation.mutateAsync,
     refetch: async () => {
       await query.refetch();
     },

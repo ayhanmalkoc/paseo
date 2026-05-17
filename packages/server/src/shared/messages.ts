@@ -518,6 +518,14 @@ export const ProviderNativeConfigSnapshotSchema = z.object({
         accountKey: z.string().trim().min(1).optional(),
         accountAlias: z.string().trim().min(1).optional(),
         skillIds: z.array(z.string().trim().min(1)).default([]),
+        skills: z
+          .array(
+            z.object({
+              id: z.string().trim().min(1),
+              enabled: z.boolean(),
+            }),
+          )
+          .default([]),
       }),
     )
     .optional(),
@@ -1512,6 +1520,23 @@ export const RemoveProviderNativeMcpServerRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const SetProviderNativeExtensionEnabledRequestMessageSchema = z.object({
+  type: z.literal("set_provider_native_extension_enabled_request"),
+  provider: AgentProviderSchema,
+  accountKey: z.string().trim().min(1),
+  extensionId: z.string().trim().min(1),
+  enabled: z.boolean(),
+  requestId: z.string(),
+});
+
+export const SetProviderNativeSkillEnabledRequestMessageSchema = z.object({
+  type: z.literal("set_provider_native_skill_enabled_request"),
+  provider: AgentProviderSchema,
+  skillId: z.string().trim().min(1),
+  enabled: z.boolean(),
+  requestId: z.string(),
+});
+
 export const ResumeAgentRequestMessageSchema = z.object({
   type: z.literal("resume_agent_request"),
   handle: AgentPersistenceHandleSchema,
@@ -2225,6 +2250,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ListProviderNativeMcpServersRequestMessageSchema,
   UpsertProviderNativeMcpServerRequestMessageSchema,
   RemoveProviderNativeMcpServerRequestMessageSchema,
+  SetProviderNativeExtensionEnabledRequestMessageSchema,
+  SetProviderNativeSkillEnabledRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -3883,6 +3910,22 @@ export const RemoveProviderNativeMcpServerResponseMessageSchema = z.object({
   }),
 });
 
+export const SetProviderNativeExtensionEnabledResponseMessageSchema = z.object({
+  type: z.literal("set_provider_native_extension_enabled_response"),
+  payload: z.object({
+    config: ProviderNativeConfigSnapshotSchema,
+    requestId: z.string(),
+  }),
+});
+
+export const SetProviderNativeSkillEnabledResponseMessageSchema = z.object({
+  type: z.literal("set_provider_native_skill_enabled_response"),
+  payload: z.object({
+    config: ProviderNativeConfigSnapshotSchema,
+    requestId: z.string(),
+  }),
+});
+
 const AgentSlashCommandSchema = z.object({
   name: z.string(),
   description: z.string(),
@@ -4128,6 +4171,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ListProviderNativeMcpServersResponseMessageSchema,
   UpsertProviderNativeMcpServerResponseMessageSchema,
   RemoveProviderNativeMcpServerResponseMessageSchema,
+  SetProviderNativeExtensionEnabledResponseMessageSchema,
+  SetProviderNativeSkillEnabledResponseMessageSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,
@@ -4313,6 +4358,12 @@ export type UpsertProviderNativeMcpServerResponseMessage = z.infer<
 >;
 export type RemoveProviderNativeMcpServerResponseMessage = z.infer<
   typeof RemoveProviderNativeMcpServerResponseMessageSchema
+>;
+export type SetProviderNativeExtensionEnabledResponseMessage = z.infer<
+  typeof SetProviderNativeExtensionEnabledResponseMessageSchema
+>;
+export type SetProviderNativeSkillEnabledResponseMessage = z.infer<
+  typeof SetProviderNativeSkillEnabledResponseMessageSchema
 >;
 export type ChatCreateResponse = z.infer<typeof ChatCreateResponseSchema>;
 export type ChatListResponse = z.infer<typeof ChatListResponseSchema>;
