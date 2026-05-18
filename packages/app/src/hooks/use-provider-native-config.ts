@@ -162,6 +162,10 @@ export function useProviderNativeConfig(serverId: string | null, provider?: Agen
       await queryClient.invalidateQueries({ queryKey });
     },
   });
+  const queryRefetch = query.refetch;
+  const refetch = useCallback(async () => {
+    await queryRefetch();
+  }, [queryRefetch]);
 
   return {
     config: query.data,
@@ -183,9 +187,7 @@ export function useProviderNativeConfig(serverId: string | null, provider?: Agen
     save: saveMutation.mutateAsync,
     setExtensionEnabled: extensionToggleMutation.mutateAsync,
     setSkillEnabled: skillToggleMutation.mutateAsync,
-    refetch: async () => {
-      await query.refetch();
-    },
+    refetch,
   };
 }
 

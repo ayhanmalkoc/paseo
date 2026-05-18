@@ -51,10 +51,12 @@ export class GeminiProviderAuthAdapter implements ProviderAuthAdapter {
     const profileRoot = getProviderAccountRoot(providerRoot, identity);
     const providerHomePath = getProviderAccountHomePath(providerRoot, identity);
     const targetStateDir = path.join(providerHomePath, GEMINI_HOME_DIR);
+    const extensionEnablement = await readGeminiExtensionEnablement(targetStateDir);
 
     await fs.rm(targetStateDir, { recursive: true, force: true });
     await fs.mkdir(targetStateDir, { recursive: true, mode: 0o700 });
     await copyGeminiStateDir(sourceStateDir, targetStateDir);
+    await restoreGeminiExtensionEnablement(targetStateDir, extensionEnablement);
     await writeAccountMetadata(profileRoot, {
       provider: GEMINI_PROVIDER,
       key: identity.key,
@@ -245,6 +247,28 @@ function shouldSkipGeminiStateEntry(name: string): boolean {
     name === "logs" ||
     name === "tmp"
   );
+}
+
+async function readGeminiExtensionEnablement(stateDir: string): Promise<string | null> {
+  const filePath = path.join(stateDir, "extensions", "extension-enablement.json");
+  return fs.readFile(filePath, "utf8").catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  });
+}
+
+async function restoreGeminiExtensionEnablement(
+  stateDir: string,
+  content: string | null,
+): Promise<void> {
+  if (!content) {
+    return;
+  }
+  const filePath = path.join(stateDir, "extensions", "extension-enablement.json");
+  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  await fs.writeFile(filePath, content, { mode: 0o600 });
 }
 
 async function hashDirectoryFiles(root: string): Promise<string> {

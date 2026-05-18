@@ -74,6 +74,58 @@ describe("GeminiProviderAuthAdapter", () => {
       restoreEnv({ GEMINI_CLI_HOME: previousGeminiHome });
     }
   });
+
+  test("preserves managed extension enablement when syncing the native Gemini home", async () => {
+    const root = await createTempRoot();
+    const nativeRoot = path.join(root, "native");
+    const nativeState = path.join(nativeRoot, ".gemini");
+    const paseoHome = path.join(root, "paseo-home");
+    await mkdir(path.join(nativeState, "extensions", "google-workspace-cli"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(nativeState, "google_accounts.json"),
+      JSON.stringify({ active: "Gemini.User@Example.com", old: [] }),
+    );
+    await writeFile(
+      path.join(nativeState, "oauth_creds.json"),
+      JSON.stringify({
+        id_token: createJwt({ email: "Gemini.User@Example.com", sub: "user-123" }),
+      }),
+    );
+    await writeFile(
+      path.join(nativeState, "extensions", "extension-enablement.json"),
+      JSON.stringify({ "google-workspace-cli": { overrides: ["/root/*"] } }),
+    );
+
+    const previousGeminiHome = process.env.GEMINI_CLI_HOME;
+    process.env.GEMINI_CLI_HOME = nativeRoot;
+    try {
+      const adapter = new GeminiProviderAuthAdapter();
+      const context = {
+        providerBaseDir: path.join(paseoHome, "providers", "gemini"),
+        now: () => new Date("2026-05-17T07:30:00.000Z"),
+        logger: createLogger(),
+      };
+      const imported = await adapter.importCurrent(context);
+      const managedEnablementPath = path.join(
+        imported.providerHomePath,
+        ".gemini",
+        "extensions",
+        "extension-enablement.json",
+      );
+      await writeFile(
+        managedEnablementPath,
+        JSON.stringify({ "google-workspace-cli": { overrides: ["!/*"] } }),
+      );
+
+      await adapter.importCurrent(context);
+
+      await expect(readFile(managedEnablementPath, "utf8")).resolves.toContain("!/*");
+    } finally {
+      restoreEnv({ GEMINI_CLI_HOME: previousGeminiHome });
+    }
+  });
 });
 
 async function createTempRoot(): Promise<string> {

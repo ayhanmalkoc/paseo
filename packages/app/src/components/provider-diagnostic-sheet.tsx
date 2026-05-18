@@ -1,4 +1,13 @@
-import { AlertCircle, Check, Pencil, RotateCw, Search, Trash2 } from "lucide-react-native";
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  RotateCw,
+  Search,
+  Trash2,
+} from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -1175,12 +1184,17 @@ function ProviderNativeExtensionsSheet(props: {
   onClose: () => void;
 }) {
   const { provider, providerLabel, serverId, visible, onClose } = props;
-  const { config, isLoading, isSaving, error, setExtensionEnabled, setSkillEnabled } =
+  const { config, isLoading, isSaving, error, setExtensionEnabled, setSkillEnabled, refetch } =
     useProviderNativeConfig(serverId, provider);
   const sortedExtensions = useMemo(
     () => [...(config?.extensions ?? [])].sort(compareProviderNativeExtensions),
     [config?.extensions],
   );
+  useEffect(() => {
+    if (visible) {
+      void refetch();
+    }
+  }, [refetch, visible]);
   const handleToggleExtension = useCallback(
     async (extension: ProviderNativeExtension, enabled: boolean) => {
       if (!extension.accountKey) {
@@ -1249,34 +1263,56 @@ function ProviderNativeExtensionRow(props: {
   onToggleExtension: (extension: ProviderNativeExtension, enabled: boolean) => void;
   onToggleSkill: (skill: ProviderNativeExtensionSkill, enabled: boolean) => void;
 }) {
+  const { theme } = useUnistyles();
   const { extension, busy, onToggleExtension, onToggleSkill } = props;
   const enabled = extension.enabled !== false;
   const skills =
     extension.skills.length > 0
       ? extension.skills
       : extension.skillIds.map((id) => ({ id, enabled: true }));
+  const [skillsExpanded, setSkillsExpanded] = useState(false);
+  const hasSkills = skills.length > 0;
   const handleToggleExtension = useCallback(
     (nextEnabled: boolean) => onToggleExtension(extension, nextEnabled),
     [extension, onToggleExtension],
   );
+  const handleToggleSkills = useCallback(() => {
+    if (hasSkills) {
+      setSkillsExpanded((expanded) => !expanded);
+    }
+  }, [hasSkills]);
+  const SkillChevronIcon = skillsExpanded ? ChevronDown : ChevronRight;
 
   return (
     <View style={MCP_SERVER_ROW_STYLE}>
       <View style={sheetStyles.mcpServerHeader}>
-        <View style={sheetStyles.mcpServerContent}>
-          <View style={sheetStyles.profileTitleRow}>
-            <Text style={sheetStyles.mcpServerTitle} numberOfLines={1}>
-              {extension.name ?? extension.id}
-            </Text>
-            <Text style={sheetStyles.nativeMcpBadge}>extension</Text>
+        <Pressable
+          style={sheetStyles.extensionSummaryButton}
+          onPress={handleToggleSkills}
+          disabled={!hasSkills}
+          accessibilityRole={hasSkills ? "button" : undefined}
+          accessibilityLabel={`${skillsExpanded ? "Collapse" : "Expand"} ${extension.name ?? extension.id} skills`}
+        >
+          <View style={sheetStyles.extensionChevron}>
+            {hasSkills ? (
+              <SkillChevronIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            ) : null}
           </View>
-          <Text style={sheetStyles.mutedText} numberOfLines={1}>
-            {formatProviderNativeExtensionSummary(extension)}
-          </Text>
-          <Text style={sheetStyles.monoHint} numberOfLines={2}>
-            {formatProviderNativeExtensionSkills(extension)}
-          </Text>
-        </View>
+          <View style={sheetStyles.mcpServerContent}>
+            <View style={sheetStyles.profileTitleRow}>
+              <Text style={sheetStyles.mcpServerTitle} numberOfLines={1}>
+                {extension.name ?? extension.id}
+              </Text>
+              <Text style={sheetStyles.nativeMcpBadge}>extension</Text>
+            </View>
+            <Text style={sheetStyles.mutedText} numberOfLines={1}>
+              {formatProviderNativeExtensionSummary(extension)}
+            </Text>
+            <Text style={sheetStyles.monoHint} numberOfLines={2}>
+              {formatProviderNativeExtensionSkills(extension)}
+            </Text>
+          </View>
+        </Pressable>
         <Switch
           value={enabled}
           onValueChange={handleToggleExtension}
@@ -1284,13 +1320,14 @@ function ProviderNativeExtensionRow(props: {
           accessibilityLabel={`${enabled ? "Disable" : "Enable"} ${extension.name ?? extension.id}`}
         />
       </View>
-      {skills.length > 0 ? (
+      {hasSkills && skillsExpanded ? (
         <View style={sheetStyles.extensionSkills}>
           {skills.map((skill) => (
             <ProviderNativeExtensionSkillRow
               key={skill.id}
               skill={skill}
-              busy={busy || !enabled}
+              extensionEnabled={enabled}
+              busy={busy}
               onToggle={onToggleSkill}
             />
           ))}
@@ -1302,10 +1339,18 @@ function ProviderNativeExtensionRow(props: {
 
 function ProviderNativeExtensionSkillRow(props: {
   skill: ProviderNativeExtensionSkill;
+  extensionEnabled: boolean;
   busy: boolean;
   onToggle: (skill: ProviderNativeExtensionSkill, enabled: boolean) => void;
 }) {
-  const { skill, busy, onToggle } = props;
+  const { skill, extensionEnabled, busy, onToggle } = props;
+  const effectiveEnabled = extensionEnabled && skill.enabled;
+  let statusLabel = "disabled";
+  if (!extensionEnabled) {
+    statusLabel = "extension disabled";
+  } else if (skill.enabled) {
+    statusLabel = "enabled";
+  }
   const handleToggle = useCallback(
     (enabled: boolean) => onToggle(skill, enabled),
     [onToggle, skill],
@@ -1316,13 +1361,13 @@ function ProviderNativeExtensionSkillRow(props: {
         <Text style={sheetStyles.extensionSkillTitle} numberOfLines={1}>
           {skill.id}
         </Text>
-        <Text style={sheetStyles.mutedText}>{skill.enabled ? "enabled" : "disabled"}</Text>
+        <Text style={sheetStyles.mutedText}>{statusLabel}</Text>
       </View>
       <Switch
-        value={skill.enabled}
+        value={effectiveEnabled}
         onValueChange={handleToggle}
-        disabled={busy}
-        accessibilityLabel={`${skill.enabled ? "Disable" : "Enable"} ${skill.id} skill`}
+        disabled={busy || !extensionEnabled}
+        accessibilityLabel={`${effectiveEnabled ? "Disable" : "Enable"} ${skill.id} skill`}
       />
     </View>
   );
@@ -2034,7 +2079,24 @@ const sheetStyles = StyleSheet.create((theme) => ({
   },
   extensionSkills: {
     gap: theme.spacing[2],
+    marginLeft: theme.spacing[6],
+    borderLeftColor: theme.colors.border,
+    borderLeftWidth: 1,
+    paddingLeft: theme.spacing[3],
     paddingTop: theme.spacing[2],
+  },
+  extensionSummaryButton: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    minWidth: 0,
+  },
+  extensionChevron: {
+    alignItems: "center",
+    height: 24,
+    justifyContent: "center",
+    width: 20,
   },
   extensionSkillRow: {
     alignItems: "center",
