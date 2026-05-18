@@ -5,10 +5,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   parseCodexNativeMcpConfigToml,
+  parseOpenCodeNativeMcpConfigJson,
   readProviderHomeNativeMcpEntries,
   removeCodexNativeMcpServerConfig,
+  removeOpenCodeNativeMcpServerConfig,
   resolveCodexNativeConfigPath,
   writeCodexNativeMcpServerConfig,
+  writeOpenCodeNativeMcpServerConfig,
 } from "./mcp-native-import.js";
 
 describe("parseCodexNativeMcpConfigToml", () => {
@@ -199,6 +202,79 @@ command = "npx"
   });
 });
 
+describe("OpenCode native MCP config", () => {
+  test("imports local and remote MCP servers from opencode config", () => {
+    const parsed = parseOpenCodeNativeMcpConfigJson(`{
+      "$schema": "https://opencode.ai/config.json",
+      // OpenCode accepts JSONC config files.
+      "mcp": {
+        "context-mode": {
+          "type": "local",
+          "command": ["context-mode", "serve"],
+          "environment": {
+            "CONTEXT_MODE": "1",
+          },
+          "enabled": false,
+        },
+        "remote": {
+          "type": "remote",
+          "url": "https://example.com/mcp",
+          "headers": {
+            "Authorization": "Bearer redacted",
+          },
+          "enabled": true,
+        },
+      },
+    }`);
+
+    expect(parsed.skipped).toEqual([]);
+    expect(parsed.servers).toEqual([
+      {
+        id: "context-mode",
+        config: {
+          type: "stdio",
+          command: "context-mode",
+          args: ["serve"],
+          env: { CONTEXT_MODE: "1" },
+        },
+        enabled: false,
+      },
+      {
+        id: "remote",
+        config: {
+          type: "http",
+          url: "https://example.com/mcp",
+          headers: { Authorization: "Bearer redacted" },
+        },
+        enabled: true,
+      },
+    ]);
+  });
+
+  test("upserts and removes OpenCode MCP servers", () => {
+    const updated = writeOpenCodeNativeMcpServerConfig({
+      content: '{ "$schema": "https://opencode.ai/config.json" }',
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode", args: ["serve"] },
+      enabled: false,
+    });
+
+    expect(parseOpenCodeNativeMcpConfigJson(updated).servers).toEqual([
+      {
+        id: "context-mode",
+        config: { type: "stdio", command: "context-mode", args: ["serve"] },
+        enabled: false,
+      },
+    ]);
+    expect(updated).toContain('"type": "local"');
+    expect(updated).toContain('"enabled": false');
+
+    const removed = removeOpenCodeNativeMcpServerConfig(updated, "context-mode");
+    expect(removed).toContain("opencode.ai/config.json");
+    expect(removed).not.toContain("context-mode");
+  });
+});
+
 describe("readProviderHomeNativeMcpEntries", () => {
   const tempRoots: string[] = [];
 
@@ -251,5 +327,44 @@ command = "context-mode"
         accountKey: "work",
       }),
     ).resolves.toEqual([]);
+  });
+
+  test("reads provider-scoped MCP entries from a managed OpenCode home", async () => {
+    const providerHomePath = mkdtempSync(path.join(tmpdir(), "paseo-opencode-home-"));
+    tempRoots.push(providerHomePath);
+    await fs.mkdir(path.join(providerHomePath, "config", "opencode"), { recursive: true });
+    await fs.writeFile(
+      path.join(providerHomePath, "config", "opencode", "opencode.json"),
+      JSON.stringify(
+        {
+          mcp: {
+            "context-mode": {
+              type: "local",
+              command: ["context-mode"],
+              enabled: true,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const entries = await readProviderHomeNativeMcpEntries({
+      provider: "opencode",
+      providerHomePath,
+      accountKey: null,
+    });
+
+    expect(entries).toEqual([
+      {
+        id: "context-mode",
+        scope: { kind: "provider", provider: "opencode" },
+        config: { type: "stdio", command: "context-mode" },
+        enabled: true,
+        source: "native-config",
+      },
+    ]);
   });
 });

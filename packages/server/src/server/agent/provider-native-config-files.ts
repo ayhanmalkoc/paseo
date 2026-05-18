@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 
 import type { AgentProvider } from "./agent-sdk-types.js";
@@ -6,6 +6,8 @@ import type { AgentProvider } from "./agent-sdk-types.js";
 const CODEX_CONFIG_FILENAME = "config.toml";
 const CODEX_HOOKS_FILENAME = "hooks.json";
 const GEMINI_CONFIG_FILENAME = "settings.json";
+const OPENCODE_CONFIG_FILENAME = "opencode.json";
+const OPENCODE_CONFIG_JSONC_FILENAME = "opencode.jsonc";
 
 export function resolveProviderNativeConfigPath(
   providerRoot: string,
@@ -16,6 +18,9 @@ export function resolveProviderNativeConfigPath(
   }
   if (provider === "gemini") {
     return path.join(providerRoot, "config", GEMINI_CONFIG_FILENAME);
+  }
+  if (provider === "opencode") {
+    return resolveOpenCodeConfigPath(path.join(providerRoot, "config", "opencode"));
   }
   throw new Error(`Native config is not supported for provider '${provider}'`);
 }
@@ -39,6 +44,9 @@ export function resolveProviderHomeNativeConfigPath(
   }
   if (provider === "gemini") {
     return path.join(providerHomePath, GEMINI_CONFIG_FILENAME);
+  }
+  if (provider === "opencode") {
+    return resolveProviderNativeConfigPath(providerHomePath, provider);
   }
   throw new Error(`Native config is not supported for provider '${provider}'`);
 }
@@ -189,6 +197,18 @@ async function materializeProviderNativeHooksToHome(input: {
 
 function providerSupportsNativeHooks(provider: AgentProvider): boolean {
   return provider === "codex";
+}
+
+export function resolveOpenCodeConfigPath(configDir: string): string {
+  const jsonPath = path.join(configDir, OPENCODE_CONFIG_FILENAME);
+  if (existsSync(jsonPath)) {
+    return jsonPath;
+  }
+  const jsoncPath = path.join(configDir, OPENCODE_CONFIG_JSONC_FILENAME);
+  if (existsSync(jsoncPath)) {
+    return jsoncPath;
+  }
+  return jsonPath;
 }
 
 async function copyOptionalFile(

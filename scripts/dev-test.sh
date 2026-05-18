@@ -69,6 +69,7 @@ run_web() {
   cd "$REPO_ROOT/packages/app"
   export APP_VARIANT="${APP_VARIANT:-development}"
   export BROWSER="${BROWSER:-none}"
+  unset EXPO_PUBLIC_LOCAL_DAEMON
 
   echo "Branch: $BRANCH"
   echo "Web:    http://localhost:$WEB_PORT"

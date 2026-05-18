@@ -157,4 +157,33 @@ describe("resolveMcpServers", () => {
     expect(resolved.servers).toBeUndefined();
     expect(resolved.sources).toEqual({});
   });
+
+  it("applies provider-scoped native MCP entries without an account profile key", () => {
+    const resolved = resolveMcpServers({
+      provider: "opencode",
+      providerHomeRef: {
+        kind: "native-default",
+        provider: "opencode",
+        homePath: "/tmp/paseo/providers/opencode",
+      },
+      agentId: "agent-1",
+      entries: [
+        entry({
+          id: "context-mode",
+          scope: { kind: "provider", provider: "opencode" },
+          command: "context-mode",
+        }),
+      ],
+    });
+
+    expect(resolved.servers).toEqual({
+      "context-mode": stdio("context-mode"),
+    });
+    expect(resolved.sources["context-mode"]).toEqual({
+      scope: "provider",
+      source: "native-config",
+      entryId: "context-mode",
+      provider: "opencode",
+    });
+  });
 });

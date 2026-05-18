@@ -7,16 +7,20 @@ import type { AgentProvider, McpServerConfig } from "./agent-sdk-types.js";
 import {
   parseGeminiNativeMcpConfigJson,
   parseCodexNativeMcpConfigToml,
+  parseOpenCodeNativeMcpConfigJson,
   removeGeminiNativeMcpServerConfig,
   removeCodexNativeMcpServerConfig,
+  removeOpenCodeNativeMcpServerConfig,
   writeGeminiNativeMcpServerConfig,
   writeCodexNativeMcpServerConfig,
+  writeOpenCodeNativeMcpServerConfig,
 } from "./mcp-native-import.js";
 import type { ProviderAuthService } from "./provider-auth-service.js";
 import {
   materializeProviderNativeConfigToHome,
   normalizeConfigContent,
   normalizeProviderNativeConfigContentFromHome,
+  resolveOpenCodeConfigPath,
   resolveProviderHomeNativeConfigPath,
   resolveProviderNativeConfigPath,
   syncProviderNativeHooksFromHome,
@@ -62,6 +66,7 @@ export class ProviderNativeConfigService {
   private readonly providerAuthService: ProviderAuthService;
   private readonly codexNativeHomeResolver: () => string;
   private readonly geminiNativeHomeResolver: () => string;
+  private readonly opencodeNativeConfigHomeResolver: () => string;
 
   constructor(options: {
     paseoHome: string;
@@ -69,16 +74,19 @@ export class ProviderNativeConfigService {
     providerAuthService: ProviderAuthService;
     codexNativeHomeResolver?: () => string;
     geminiNativeHomeResolver?: () => string;
+    opencodeNativeConfigHomeResolver?: () => string;
   }) {
     this.logger = options.logger.child({ module: "provider-native-config" });
     this.paseoHome = options.paseoHome;
     this.providerAuthService = options.providerAuthService;
     this.codexNativeHomeResolver = options.codexNativeHomeResolver ?? resolveDefaultCodexHome;
     this.geminiNativeHomeResolver = options.geminiNativeHomeResolver ?? resolveDefaultGeminiHome;
+    this.opencodeNativeConfigHomeResolver =
+      options.opencodeNativeConfigHomeResolver ?? resolveDefaultOpenCodeConfigHome;
   }
 
   getSupportedProviders(): AgentProvider[] {
-    return ["codex", "gemini"];
+    return ["codex", "gemini", "opencode"];
   }
 
   async readProviderConfig(input: {
@@ -340,6 +348,11 @@ export class ProviderNativeConfigService {
     if (provider === "gemini") {
       return resolveProviderHomeNativeConfigPath(provider, this.geminiNativeHomeResolver());
     }
+    if (provider === "opencode") {
+      return resolveOpenCodeConfigPath(
+        path.join(this.opencodeNativeConfigHomeResolver(), "opencode"),
+      );
+    }
     throw new Error(`Native config sync is not supported for provider '${provider}'`);
   }
 
@@ -349,6 +362,9 @@ export class ProviderNativeConfigService {
     }
     if (provider === "gemini") {
       return parseGeminiNativeMcpConfigJson(content);
+    }
+    if (provider === "opencode") {
+      return parseOpenCodeNativeMcpConfigJson(content);
     }
     throw new Error(`Native MCP editing is not supported for provider '${provider}'`);
   }
@@ -387,6 +403,9 @@ export class ProviderNativeConfigService {
     if (input.provider === "gemini") {
       return writeGeminiNativeMcpServerConfig(input);
     }
+    if (input.provider === "opencode") {
+      return writeOpenCodeNativeMcpServerConfig(input);
+    }
     throw new Error(`Native MCP editing is not supported for provider '${input.provider}'`);
   }
 
@@ -401,6 +420,9 @@ export class ProviderNativeConfigService {
     if (provider === "gemini") {
       return removeGeminiNativeMcpServerConfig(content, id);
     }
+    if (provider === "opencode") {
+      return removeOpenCodeNativeMcpServerConfig(content, id);
+    }
     throw new Error(`Native MCP editing is not supported for provider '${provider}'`);
   }
 }
@@ -411,6 +433,10 @@ function resolveDefaultCodexHome(): string {
 
 function resolveDefaultGeminiHome(): string {
   return path.resolve(path.join(homedir(), ".gemini"));
+}
+
+function resolveDefaultOpenCodeConfigHome(): string {
+  return path.resolve(path.join(homedir(), ".config"));
 }
 
 async function readGeminiExtensionsForAccount(input: {

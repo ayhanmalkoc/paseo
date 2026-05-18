@@ -17,6 +17,8 @@ describe("ProviderNativeConfigService", () => {
   let nativeCodexHome: string;
   let geminiProviderConfigPath: string;
   let nativeGeminiHome: string;
+  let opencodeProviderConfigPath: string;
+  let nativeOpenCodeConfigHome: string;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(path.join(tmpdir(), "paseo-provider-native-config-"));
@@ -32,9 +34,19 @@ describe("ProviderNativeConfigService", () => {
       "settings.json",
     );
     nativeGeminiHome = path.join(tempRoot, "native-gemini");
+    opencodeProviderConfigPath = path.join(
+      tempRoot,
+      "providers",
+      "opencode",
+      "config",
+      "opencode",
+      "opencode.json",
+    );
+    nativeOpenCodeConfigHome = path.join(tempRoot, "native-opencode-config");
     await fs.mkdir(providerHomePath, { recursive: true });
     await fs.mkdir(nativeCodexHome, { recursive: true });
     await fs.mkdir(nativeGeminiHome, { recursive: true });
+    await fs.mkdir(path.join(nativeOpenCodeConfigHome, "opencode"), { recursive: true });
   });
 
   afterEach(() => {
@@ -52,6 +64,7 @@ describe("ProviderNativeConfigService", () => {
       providerAuthService,
       codexNativeHomeResolver: () => nativeCodexHome,
       geminiNativeHomeResolver: () => nativeGeminiHome,
+      opencodeNativeConfigHomeResolver: () => nativeOpenCodeConfigHome,
     });
   }
 
@@ -466,6 +479,122 @@ describe("ProviderNativeConfigService", () => {
       }),
     ).resolves.toBe(true);
     await expect(service.listProviderMcpServers({ provider: "gemini" })).resolves.toEqual([http]);
+  });
+
+  it("syncs OpenCode opencode.jsonc from native config into provider config", async () => {
+    const service = createService();
+    await fs.writeFile(
+      path.join(nativeOpenCodeConfigHome, "opencode", "opencode.jsonc"),
+      `{
+        "$schema": "https://opencode.ai/config.json",
+        // local MCP server
+        "mcp": {
+          "context-mode": {
+            "type": "local",
+            "command": ["context-mode", "serve"],
+            "environment": {
+              "CONTEXT_MODE": "1",
+            },
+            "enabled": false,
+          },
+        },
+      }`,
+    );
+
+    const snapshot = await service.syncProviderConfigFromNative({
+      provider: "opencode",
+    });
+
+    expect(snapshot).toMatchObject({
+      provider: "opencode",
+      path: opencodeProviderConfigPath,
+      exists: true,
+    });
+    await expect(service.listProviderMcpServers({ provider: "opencode" })).resolves.toEqual([
+      {
+        id: "context-mode",
+        config: {
+          type: "stdio",
+          command: "context-mode",
+          args: ["serve"],
+          env: { CONTEXT_MODE: "1" },
+        },
+        enabled: false,
+      },
+    ]);
+  });
+
+  it("keeps managed OpenCode MCP servers when syncing native config", async () => {
+    const service = createService();
+    await service.upsertProviderMcpServer({
+      provider: "opencode",
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode" },
+      enabled: true,
+    });
+    await fs.writeFile(
+      path.join(nativeOpenCodeConfigHome, "opencode", "opencode.json"),
+      JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2),
+    );
+
+    await service.syncProviderConfigFromNative({ provider: "opencode" });
+
+    await expect(service.listProviderMcpServers({ provider: "opencode" })).resolves.toEqual([
+      {
+        id: "context-mode",
+        config: { type: "stdio", command: "context-mode" },
+        enabled: true,
+      },
+    ]);
+  });
+
+  it("manages OpenCode MCP servers inside opencode.json", async () => {
+    const service = createService();
+
+    const created = await service.upsertProviderMcpServer({
+      provider: "opencode",
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode", args: ["serve"] },
+      enabled: false,
+    });
+
+    expect(created).toEqual({
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode", args: ["serve"] },
+      enabled: false,
+    });
+    await expect(service.listProviderMcpServers({ provider: "opencode" })).resolves.toEqual([
+      created,
+    ]);
+    await expect(fs.readFile(opencodeProviderConfigPath, "utf8")).resolves.toContain('"mcp"');
+    await expect(fs.readFile(opencodeProviderConfigPath, "utf8")).resolves.toContain(
+      '"enabled": false',
+    );
+
+    const remote = await service.upsertProviderMcpServer({
+      provider: "opencode",
+      id: "remote",
+      config: { type: "http", url: "https://example.com/mcp" },
+    });
+
+    expect(remote).toEqual({
+      id: "remote",
+      config: { type: "http", url: "https://example.com/mcp" },
+      enabled: true,
+    });
+    await expect(fs.readFile(opencodeProviderConfigPath, "utf8")).resolves.toContain(
+      '"type": "remote"',
+    );
+
+    await expect(
+      service.removeProviderMcpServer({
+        provider: "opencode",
+        id: "context-mode",
+      }),
+    ).resolves.toBe(true);
+    await expect(service.listProviderMcpServers({ provider: "opencode" })).resolves.toEqual([
+      remote,
+    ]);
   });
 
   it("rejects unsupported providers", async () => {
