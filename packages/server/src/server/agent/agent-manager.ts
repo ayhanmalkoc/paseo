@@ -257,6 +257,7 @@ export interface AgentManagerOptions {
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
+  mcpServerHeaders?: Record<string, string>;
   providerAuthService?: ProviderAuthService;
   runtimeProfileService?: RuntimeProfileService;
   agentStreamCoalesceWindowMs?: number;
@@ -296,6 +297,56 @@ function resolveInitialAttention(input: AttentionState | undefined): AttentionSt
     attentionReason: input.attentionReason,
     attentionTimestamp: new Date(input.attentionTimestamp),
   };
+}
+
+function mergeMcpServerHeaders(
+  base: Record<string, string> | undefined,
+  override: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!base && !override) {
+    return undefined;
+  }
+  return {
+    ...override,
+    ...base,
+  };
+}
+
+function appendMcpAuthPathToken(url: string, headers: Record<string, string>): string {
+  const token = extractBearerHeaderToken(headers);
+  if (!token) {
+    return url;
+  }
+  try {
+    const parsed = new URL(url);
+    const callerAgentId = parsed.searchParams.get("callerAgentId");
+    parsed.searchParams.delete("callerAgentId");
+    parsed.searchParams.delete("mcpAuthToken");
+    parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/${encodeURIComponent(token)}${
+      callerAgentId ? `/${encodeURIComponent(callerAgentId)}` : ""
+    }`;
+    return parsed.toString();
+  } catch {
+    const [baseUrl, query = ""] = url.split("?", 2);
+    const searchParams = new URLSearchParams(query);
+    const callerAgentId = searchParams.get("callerAgentId");
+    searchParams.delete("callerAgentId");
+    searchParams.delete("mcpAuthToken");
+    const nextUrl = `${baseUrl.replace(/\/+$/, "")}/${encodeURIComponent(token)}${
+      callerAgentId ? `/${encodeURIComponent(callerAgentId)}` : ""
+    }`;
+    const nextQuery = searchParams.toString();
+    return nextQuery ? `${nextUrl}?${nextQuery}` : nextUrl;
+  }
+}
+
+function extractBearerHeaderToken(headers: Record<string, string>): string | null {
+  const authorization = headers.Authorization ?? headers.authorization;
+  if (!authorization) {
+    return null;
+  }
+  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+  return match?.[1] ?? null;
 }
 
 interface StreamEventFlags {
@@ -436,12 +487,69 @@ function sanitizePersistenceMetadata(metadata: AgentMetadata | undefined): Agent
       continue;
     }
     const { headers: _headers, ...rest } = serverConfig as Record<string, unknown>;
-    sanitizedMcpServers[name] = rest;
+    sanitizedMcpServers[name] = sanitizeMcpServerPersistenceConfig(rest);
   }
 
   return {
     ...metadata,
     mcpServers: sanitizedMcpServers,
+  };
+}
+
+function sanitizeMcpServerPersistenceConfig(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  if (
+    typeof config.url !== "string" ||
+    (!config.url.includes("mcpAuthToken=") && !config.url.includes("/mcp/agents/"))
+  ) {
+    return config;
+  }
+  try {
+    const parsed = new URL(config.url);
+    parsed.searchParams.delete("mcpAuthToken");
+    const sanitizedPath = sanitizeAgentMcpAuthPath(parsed.pathname);
+    if (sanitizedPath) {
+      parsed.pathname = sanitizedPath.pathname;
+      if (sanitizedPath.callerAgentId && !parsed.searchParams.has("callerAgentId")) {
+        parsed.searchParams.set("callerAgentId", sanitizedPath.callerAgentId);
+      }
+    }
+    return { ...config, url: parsed.toString() };
+  } catch {
+    const withoutPathToken = config.url.replace(
+      /(\/mcp\/agents)\/[^/?#]+\/([^/?#]+)/,
+      (_match, prefix: string, callerAgentId: string) =>
+        `${prefix}?callerAgentId=${encodeURIComponent(decodeURIComponent(callerAgentId))}`,
+    );
+    return {
+      ...config,
+      url: withoutPathToken.replace(/([?&])mcpAuthToken=[^&]*&?/, (_match, prefix: string) =>
+        prefix === "?" ? "?" : "",
+      ),
+    };
+  }
+}
+
+function sanitizeAgentMcpAuthPath(
+  pathname: string,
+): { pathname: string; callerAgentId?: string } | null {
+  const marker = "/mcp/agents/";
+  const markerIndex = pathname.indexOf(marker);
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  const sanitizedPathname = pathname.slice(0, markerIndex + "/mcp/agents".length);
+  const suffix = pathname.slice(markerIndex + marker.length);
+  const [tokenSegment, callerAgentIdSegment] = suffix.split("/", 3);
+  if (!tokenSegment) {
+    return null;
+  }
+
+  return {
+    pathname: sanitizedPathname,
+    ...(callerAgentIdSegment ? { callerAgentId: decodeURIComponent(callerAgentIdSegment) } : {}),
   };
 }
 
@@ -549,6 +657,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
+  private readonly mcpServerHeaders: Record<string, string> | undefined;
   private readonly providerAuthService: ProviderAuthService | null;
   private readonly launchResolver: LaunchResolver;
   private onAgentAttention?: AgentAttentionCallback;
@@ -561,6 +670,7 @@ export class AgentManager {
     this.durableTimelineStore = options?.durableTimelineStore;
     this.onAgentAttention = options?.onAgentAttention;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
+    this.mcpServerHeaders = options?.mcpServerHeaders;
     this.providerAuthService = options?.providerAuthService ?? null;
     this.launchResolver = new LaunchResolver({
       providerAuthService: this.providerAuthService,
@@ -641,6 +751,7 @@ export class AgentManager {
         ...config.mcpServers,
         paseo: {
           ...paseo,
+          url: appendMcpAuthPathToken(paseo.url, headers),
           headers: {
             ...headers,
             ...paseo.headers,
@@ -1084,7 +1195,7 @@ export class AgentManager {
     const launchConfig = this.withInjectedMcpHeaders(
       resolvedLaunch.config,
       resolvedAgentId,
-      options?.mcpServerHeaders,
+      mergeMcpServerHeaders(this.mcpServerHeaders, options?.mcpServerHeaders),
     );
     const client = await this.requireAvailableClient({
       provider: launchConfig.provider,

@@ -26,7 +26,7 @@
     "tailnet dev app": {
       "type": "service",
       "port": 8081,
-      "command": "TS_HOST=\"$(tailscale status --json | node -e 'let s=\"\";process.stdin.on(\"data\",d=>s+=d);process.stdin.on(\"end\",()=>{const j=JSON.parse(s);console.log((j.Self.DNSName||\"\").replace(/\\.$/,\"\"));});')\" && cd packages/app && BROWSER=none APP_VARIANT=development EXPO_PUBLIC_LOCAL_DAEMON=\"$TS_HOST:${PASEO_SERVICE_TAILNET_DEV_DAEMON_PORT}\" npx expo start --host lan --port \"$PASEO_PORT\" --clear"
+      "command": "cd packages/app && unset EXPO_PUBLIC_LOCAL_DAEMON && BROWSER=none APP_VARIANT=development npx expo start --web --host localhost --port \"$PASEO_PORT\" --clear"
     }
   }
 }

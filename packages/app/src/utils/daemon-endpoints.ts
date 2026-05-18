@@ -1,5 +1,5 @@
 import {
-  buildDaemonWebSocketUrl,
+  buildDaemonWebSocketUrl as buildSharedDaemonWebSocketUrl,
   buildRelayWebSocketUrl as buildSharedRelayWebSocketUrl,
   deriveLabelFromEndpoint,
   extractHostPortFromWebSocketUrl,
@@ -9,15 +9,16 @@ import {
   serializeConnectionUri,
   serializeConnectionUriForStorage,
   shouldUseTlsForDefaultHostedRelay,
+  type WebSocketUrlOptions,
   type HostPortParts,
 } from "@server/shared/daemon-endpoints";
+import { isWeb } from "@/constants/platform";
 
 export { decodeOfferFragmentPayload } from "@server/shared/connection-offer";
 
 export type { HostPortParts };
 
 export {
-  buildDaemonWebSocketUrl,
   deriveLabelFromEndpoint,
   extractHostPortFromWebSocketUrl,
   normalizeHostPort,
@@ -27,6 +28,21 @@ export {
   serializeConnectionUriForStorage,
   shouldUseTlsForDefaultHostedRelay,
 };
+
+function shouldForceDirectDaemonTlsOnWeb(): boolean {
+  if (!isWeb) {
+    return false;
+  }
+  const protocol = (globalThis as { location?: { protocol?: string } }).location?.protocol;
+  return protocol === "https:";
+}
+
+export function buildDaemonWebSocketUrl(endpoint: string, opts: WebSocketUrlOptions): string {
+  return buildSharedDaemonWebSocketUrl(endpoint, {
+    ...opts,
+    useTls: opts.useTls || shouldForceDirectDaemonTlsOnWeb(),
+  });
+}
 
 export function buildRelayWebSocketUrl(params: {
   endpoint: string;

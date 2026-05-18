@@ -1,6 +1,8 @@
-import { describe, expect, test } from "vitest";
+import type { NextFunction, Request, Response } from "express";
+import { describe, expect, test, vi } from "vitest";
 
 import {
+  createRequireBearerMiddleware,
   extractHttpBearerToken,
   extractWsBearerProtocol,
   extractWsBearerToken,
@@ -51,5 +53,30 @@ describe("daemon bearer validator", () => {
     expect(protocol).toBe("paseo.bearer.secret.with.dots");
     expect(extractWsBearerToken(protocol)).toBe("secret.with.dots");
     expect(extractWsBearerToken("paseo.other.secret")).toBeNull();
+  });
+
+  test("allows a custom middleware bypass before bearer validation", () => {
+    const middleware = createRequireBearerMiddleware(
+      { password: CORRECT_PASSWORD_HASH },
+      undefined,
+      {
+        shouldBypass: (req) => req.path === "/mcp/agents",
+      },
+    );
+    const req = {
+      method: "GET",
+      path: "/mcp/agents",
+      header: () => undefined,
+    } as unknown as Request;
+    const res = {
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn(),
+    } as unknown as Response;
+    const next = vi.fn();
+
+    middleware(req, res, next as unknown as NextFunction);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.status).not.toHaveBeenCalled();
   });
 });

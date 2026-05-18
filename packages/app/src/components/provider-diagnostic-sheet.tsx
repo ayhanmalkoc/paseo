@@ -1,4 +1,13 @@
-import { AlertCircle, Check, Pencil, RotateCw, Search, Trash2 } from "lucide-react-native";
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  RotateCw,
+  Search,
+  Trash2,
+} from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -42,7 +51,14 @@ import type {
   ProviderAuthProfile,
 } from "@server/server/agent/agent-sdk-types";
 import type { ProviderProfileModel } from "@server/server/agent/provider-launch-config";
-import type { McpServerConfig, ProviderNativeMcpServer } from "@server/shared/messages";
+import type {
+  McpServerConfig,
+  ProviderNativeConfigSnapshot,
+  ProviderNativeMcpServer,
+} from "@server/shared/messages";
+
+type ProviderNativeExtension = NonNullable<ProviderNativeConfigSnapshot["extensions"]>[number];
+type ProviderNativeExtensionSkill = ProviderNativeExtension["skills"][number];
 
 interface ProviderDiagnosticSheetProps {
   provider: string;
@@ -474,6 +490,35 @@ function compareProviderNativeMcpServers(
   return left.id.localeCompare(right.id);
 }
 
+function compareProviderNativeExtensions(
+  left: ProviderNativeExtension,
+  right: ProviderNativeExtension,
+): number {
+  const byAccount = (left.accountAlias ?? "").localeCompare(right.accountAlias ?? "");
+  return byAccount || left.id.localeCompare(right.id);
+}
+
+function formatProviderNativeExtensionSummary(extension: ProviderNativeExtension): string {
+  const parts = [
+    extension.accountAlias ? `account ${extension.accountAlias}` : null,
+    extension.version ? `v${extension.version}` : null,
+    extension.enabled === false ? "disabled" : "enabled",
+    `${extension.skillIds.length} skills`,
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function formatProviderNativeExtensionSkills(extension: ProviderNativeExtension): string {
+  const skillIds =
+    extension.skills.length > 0 ? extension.skills.map((skill) => skill.id) : extension.skillIds;
+  if (skillIds.length === 0) {
+    return extension.contextFileName ? `context ${extension.contextFileName}` : extension.path;
+  }
+  const visibleSkills = skillIds.slice(0, 4);
+  const suffix = skillIds.length > visibleSkills.length ? " · …" : "";
+  return `${visibleSkills.join(" · ")}${suffix}`;
+}
+
 function formatNativeMcpError(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -503,6 +548,7 @@ function ProviderAuthProfilesSection(props: {
   const [loginSessionId, setLoginSessionId] = useState<string | null>(null);
   const [nativeConfigVisible, setNativeConfigVisible] = useState(false);
   const [nativeMcpVisible, setNativeMcpVisible] = useState(false);
+  const [nativeExtensionsVisible, setNativeExtensionsVisible] = useState(false);
   const autoRefreshedKeysRef = useRef<Set<string>>(new Set());
   const autoRefreshInFlightRef = useRef(false);
   const lastForcedRefreshNonceRef = useRef(0);
@@ -517,8 +563,10 @@ function ProviderAuthProfilesSection(props: {
   const sortedProfiles = useMemo(() => sortAuthProfiles(profiles), [profiles]);
   const handleCloseNativeConfig = useCallback(() => setNativeConfigVisible(false), []);
   const handleCloseNativeMcp = useCallback(() => setNativeMcpVisible(false), []);
+  const handleCloseNativeExtensions = useCallback(() => setNativeExtensionsVisible(false), []);
   const handleOpenNativeConfig = useCallback(() => setNativeConfigVisible(true), []);
   const handleOpenNativeMcp = useCallback(() => setNativeMcpVisible(true), []);
+  const handleOpenNativeExtensions = useCallback(() => setNativeExtensionsVisible(true), []);
 
   const runAuthAction = useCallback(async (action: () => Promise<unknown>) => {
     setError(null);
@@ -569,7 +617,7 @@ function ProviderAuthProfilesSection(props: {
     void (async () => {
       const confirmed = await confirmDialog({
         title: `Sync ${providerLabel} config?`,
-        message: `This replaces the shared ${providerLabel} provider config with the current native ${providerLabel} config. Account auth and usage are not changed.`,
+        message: `This imports the current native ${providerLabel} config and keeps MCP servers managed in Paseo. Account auth and usage are not changed.`,
         confirmLabel: "Sync config",
       });
       if (!confirmed) {
@@ -684,7 +732,7 @@ function ProviderAuthProfilesSection(props: {
           <View style={settingsStyles.rowContent}>
             <Text style={settingsStyles.rowTitle}>{providerLabel} config</Text>
             <Text style={settingsStyles.rowHint}>
-              Shared MCP, skills, plugins, hooks, and native provider settings.
+              Shared MCP, extensions, hooks, and native provider settings.
             </Text>
           </View>
           <View style={sheetStyles.providerConfigActions}>
@@ -724,6 +772,19 @@ function ProviderAuthProfilesSection(props: {
             >
               MCP
             </Button>
+            {providerId === "gemini" ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                style={sheetStyles.profileActionButton}
+                textStyle={sheetStyles.profileActionButtonText}
+                onPress={handleOpenNativeExtensions}
+                disabled={nativeConfigSync.isSyncing}
+                accessibilityLabel={`View ${providerLabel} extensions`}
+              >
+                Extensions
+              </Button>
+            ) : null}
           </View>
         </View>
       </View>
@@ -795,6 +856,15 @@ function ProviderAuthProfilesSection(props: {
             visible={nativeMcpVisible}
             onClose={handleCloseNativeMcp}
           />
+          {providerId === "gemini" ? (
+            <ProviderNativeExtensionsSheet
+              provider={providerId}
+              providerLabel={providerLabel}
+              serverId={serverId}
+              visible={nativeExtensionsVisible}
+              onClose={handleCloseNativeExtensions}
+            />
+          ) : null}
         </>
       ) : null}
     </>
@@ -1102,6 +1172,203 @@ function ProviderNativeMcpRow(props: {
           <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />
         </Pressable>
       </View>
+    </View>
+  );
+}
+
+function ProviderNativeExtensionsSheet(props: {
+  provider: AgentProvider;
+  providerLabel: string;
+  serverId: string;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { provider, providerLabel, serverId, visible, onClose } = props;
+  const { config, isLoading, isSaving, error, setExtensionEnabled, setSkillEnabled, refetch } =
+    useProviderNativeConfig(serverId, provider);
+  const sortedExtensions = useMemo(
+    () => [...(config?.extensions ?? [])].sort(compareProviderNativeExtensions),
+    [config?.extensions],
+  );
+  useEffect(() => {
+    if (visible) {
+      void refetch();
+    }
+  }, [refetch, visible]);
+  const handleToggleExtension = useCallback(
+    async (extension: ProviderNativeExtension, enabled: boolean) => {
+      if (!extension.accountKey) {
+        return;
+      }
+      await setExtensionEnabled({
+        accountKey: extension.accountKey,
+        extensionId: extension.id,
+        enabled,
+      });
+    },
+    [setExtensionEnabled],
+  );
+  const handleToggleSkill = useCallback(
+    async (skill: ProviderNativeExtensionSkill, enabled: boolean) => {
+      await setSkillEnabled({ skillId: skill.id, enabled });
+    },
+    [setSkillEnabled],
+  );
+
+  function renderBody() {
+    if (isLoading && sortedExtensions.length === 0) {
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <ActivityIndicator size="small" />
+          <Text style={sheetStyles.mutedText}>Loading extensions…</Text>
+        </View>
+      );
+    }
+    if (sortedExtensions.length === 0) {
+      return (
+        <View style={sheetStyles.emptyRow}>
+          <Text style={sheetStyles.mutedText}>No Gemini extensions in managed accounts.</Text>
+        </View>
+      );
+    }
+    return sortedExtensions.map((extension) => (
+      <ProviderNativeExtensionRow
+        key={`${extension.accountKey ?? "provider"}:${extension.id}`}
+        extension={extension}
+        busy={isSaving}
+        onToggleExtension={handleToggleExtension}
+        onToggleSkill={handleToggleSkill}
+      />
+    ));
+  }
+
+  return (
+    <AdaptiveModalSheet
+      title={`${providerLabel} extensions`}
+      visible={visible}
+      onClose={onClose}
+      snapPoints={NATIVE_MCP_SNAP_POINTS}
+    >
+      <SettingsSection title="Extensions">
+        <View style={settingsStyles.card}>{renderBody()}</View>
+        {error ? <Text style={sheetStyles.errorText}>{error}</Text> : null}
+      </SettingsSection>
+    </AdaptiveModalSheet>
+  );
+}
+
+function ProviderNativeExtensionRow(props: {
+  extension: ProviderNativeExtension;
+  busy: boolean;
+  onToggleExtension: (extension: ProviderNativeExtension, enabled: boolean) => void;
+  onToggleSkill: (skill: ProviderNativeExtensionSkill, enabled: boolean) => void;
+}) {
+  const { theme } = useUnistyles();
+  const { extension, busy, onToggleExtension, onToggleSkill } = props;
+  const enabled = extension.enabled !== false;
+  const skills =
+    extension.skills.length > 0
+      ? extension.skills
+      : extension.skillIds.map((id) => ({ id, enabled: true }));
+  const [skillsExpanded, setSkillsExpanded] = useState(false);
+  const hasSkills = skills.length > 0;
+  const handleToggleExtension = useCallback(
+    (nextEnabled: boolean) => onToggleExtension(extension, nextEnabled),
+    [extension, onToggleExtension],
+  );
+  const handleToggleSkills = useCallback(() => {
+    if (hasSkills) {
+      setSkillsExpanded((expanded) => !expanded);
+    }
+  }, [hasSkills]);
+  const SkillChevronIcon = skillsExpanded ? ChevronDown : ChevronRight;
+
+  return (
+    <View style={MCP_SERVER_ROW_STYLE}>
+      <View style={sheetStyles.mcpServerHeader}>
+        <Pressable
+          style={sheetStyles.extensionSummaryButton}
+          onPress={handleToggleSkills}
+          disabled={!hasSkills}
+          accessibilityRole={hasSkills ? "button" : undefined}
+          accessibilityLabel={`${skillsExpanded ? "Collapse" : "Expand"} ${extension.name ?? extension.id} skills`}
+        >
+          <View style={sheetStyles.extensionChevron}>
+            {hasSkills ? (
+              <SkillChevronIcon size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+            ) : null}
+          </View>
+          <View style={sheetStyles.mcpServerContent}>
+            <View style={sheetStyles.profileTitleRow}>
+              <Text style={sheetStyles.mcpServerTitle} numberOfLines={1}>
+                {extension.name ?? extension.id}
+              </Text>
+              <Text style={sheetStyles.nativeMcpBadge}>extension</Text>
+            </View>
+            <Text style={sheetStyles.mutedText} numberOfLines={1}>
+              {formatProviderNativeExtensionSummary(extension)}
+            </Text>
+            <Text style={sheetStyles.monoHint} numberOfLines={2}>
+              {formatProviderNativeExtensionSkills(extension)}
+            </Text>
+          </View>
+        </Pressable>
+        <Switch
+          value={enabled}
+          onValueChange={handleToggleExtension}
+          disabled={busy || !extension.accountKey}
+          accessibilityLabel={`${enabled ? "Disable" : "Enable"} ${extension.name ?? extension.id}`}
+        />
+      </View>
+      {hasSkills && skillsExpanded ? (
+        <View style={sheetStyles.extensionSkills}>
+          {skills.map((skill) => (
+            <ProviderNativeExtensionSkillRow
+              key={skill.id}
+              skill={skill}
+              extensionEnabled={enabled}
+              busy={busy}
+              onToggle={onToggleSkill}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function ProviderNativeExtensionSkillRow(props: {
+  skill: ProviderNativeExtensionSkill;
+  extensionEnabled: boolean;
+  busy: boolean;
+  onToggle: (skill: ProviderNativeExtensionSkill, enabled: boolean) => void;
+}) {
+  const { skill, extensionEnabled, busy, onToggle } = props;
+  const effectiveEnabled = extensionEnabled && skill.enabled;
+  let statusLabel = "disabled";
+  if (!extensionEnabled) {
+    statusLabel = "extension disabled";
+  } else if (skill.enabled) {
+    statusLabel = "enabled";
+  }
+  const handleToggle = useCallback(
+    (enabled: boolean) => onToggle(skill, enabled),
+    [onToggle, skill],
+  );
+  return (
+    <View style={sheetStyles.extensionSkillRow}>
+      <View style={sheetStyles.extensionSkillContent}>
+        <Text style={sheetStyles.extensionSkillTitle} numberOfLines={1}>
+          {skill.id}
+        </Text>
+        <Text style={sheetStyles.mutedText}>{statusLabel}</Text>
+      </View>
+      <Switch
+        value={effectiveEnabled}
+        onValueChange={handleToggle}
+        disabled={busy || !extensionEnabled}
+        accessibilityLabel={`${effectiveEnabled ? "Disable" : "Enable"} ${skill.id} skill`}
+      />
     </View>
   );
 }
@@ -1809,6 +2076,45 @@ const sheetStyles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     minHeight: 30,
     minWidth: 30,
+  },
+  extensionSkills: {
+    gap: theme.spacing[2],
+    marginLeft: theme.spacing[6],
+    borderLeftColor: theme.colors.border,
+    borderLeftWidth: 1,
+    paddingLeft: theme.spacing[3],
+    paddingTop: theme.spacing[2],
+  },
+  extensionSummaryButton: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    minWidth: 0,
+  },
+  extensionChevron: {
+    alignItems: "center",
+    height: 24,
+    justifyContent: "center",
+    width: 20,
+  },
+  extensionSkillRow: {
+    alignItems: "center",
+    borderTopColor: theme.colors.border,
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: theme.spacing[3],
+    justifyContent: "space-between",
+    paddingTop: theme.spacing[2],
+  },
+  extensionSkillContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  extensionSkillTitle: {
+    color: theme.colors.foreground,
+    fontFamily: Fonts.mono,
+    fontSize: theme.fontSize.sm,
   },
   deviceCode: {
     fontFamily: Fonts.mono,

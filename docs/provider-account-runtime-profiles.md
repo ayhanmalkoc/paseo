@@ -80,10 +80,11 @@ Implemented surfaces:
   account surface. OpenCode does not model Codex-style per-account homes; Paseo
   syncs the native `auth.json` into the managed OpenCode root and preserves every
   linked provider credential such as `opencode`, `openai`, or `anthropic`.
-- Gemini provider settings can sync and edit Gemini CLI `settings.json`.
-  Gemini launches with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` pointed at the managed
-  provider config when it exists, so MCP server edits are resolved by Gemini CLI
-  without inventing a Paseo account model for Gemini.
+- Gemini account settings can import native Gemini CLI state from
+  `$GEMINI_CLI_HOME/.gemini` or `~/.gemini` into a managed account home. Gemini
+  launches with `GEMINI_CLI_HOME` pointed at that account root. Gemini provider
+  settings still own the provider-global `settings.json`, applied through
+  `GEMINI_CLI_SYSTEM_SETTINGS_PATH`.
 - Native Codex config is copied into a managed account only when the managed
   `config.toml` does not already exist. Refresh/import must not overwrite an
   existing managed config, because account-local MCP toggles and power-user
@@ -124,6 +125,14 @@ $PASEO_HOME/providers/
   gemini/
     config/
       settings.json
+    accounts/
+      <account-alias-key>/
+        metadata.json
+        home/
+          .gemini/
+            oauth_creds.json
+            google_accounts.json
+            settings.json
 ```
 
 The old `provider-auth` tree is not the canonical layout. During development,
@@ -133,9 +142,9 @@ first time the new registry is created. New code reads and writes
 
 Runtime profiles remain launch presets. They select provider/account/model and
 runtime behavior. Provider-native configuration such as Codex `config.toml`,
-Codex `hooks.json`, Gemini `settings.json`, MCP server details, plugins, hooks,
-and future provider extras is owned by the provider config tree and resolved by
-the provider adapter at launch.
+Codex `hooks.json`, Gemini provider `settings.json`, MCP server details,
+plugins, hooks, and future provider extras is owned by provider config/account
+homes and resolved by the provider adapter at launch.
 
 ## Codex Session Continuity
 
@@ -203,8 +212,8 @@ Server capability payloads expose provider-specific support lists:
 - `providerAuthProfileProviders`
 - `providerAccountOnboardingProviders`
 
-Current value includes Codex and OpenCode for account surfaces, while onboarding
-is provider-specific. Old daemons that only send the global boolean are still
+Current value includes Codex, OpenCode, and Gemini for account surfaces, while
+onboarding is provider-specific. Old daemons that only send the global boolean are still
 accepted by the client for protocol compatibility.
 
 Unsupported providers should not pretend to support managed account continuity.

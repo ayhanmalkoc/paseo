@@ -33,17 +33,17 @@ second level.
 | Provider list                     | Generic. Claude, Codex, Copilot, OpenCode, Pi, Mock, and custom/ACP providers can appear.                                               |
 | Provider launch                   | Generic. Non-Codex providers can be launched through their provider clients.                                                            |
 | Runtime profile model             | Mostly generic. Profiles store provider, model, mode, thinking, feature values, env, MCP JSON, account selection, and session behavior. |
-| Runtime profile account selection | Codex-backed in practice. Provider default and managed account resolution depend on Codex account support today.                        |
-| Provider account list             | Codex-backed. Listing/import/default/remove/refresh are implemented through the Codex account adapter.                                  |
+| Runtime profile account selection | Codex, OpenCode, and Gemini have managed account resolution. Codex remains the reference for session continuity.                        |
+| Provider account list             | Codex, OpenCode, and Gemini expose account surfaces. Gemini currently supports importing the native CLI account state.                  |
 | Account onboarding                | Codex only. Device-code login is implemented through the Codex app-server flow.                                                         |
 | Usage refresh                     | Codex only. Usage is refreshed from the Codex provider API/app-server path.                                                             |
-| Native provider config            | Codex only. The provider config service currently supports Codex config and hooks.                                                      |
-| MCP controls in settings          | Codex-backed. The UI edits provider-native Codex config instead of a separate Paseo MCP registry.                                       |
+| Native provider config            | Codex and Gemini are wired. Codex uses `config.toml`/hooks; Gemini uses provider-global `settings.json`.                                |
+| MCP controls in settings          | Codex and Gemini edit provider-native config instead of a separate Paseo MCP registry.                                                  |
 | Hooks materialization             | Codex only. `hooks.json` is synced with provider config and materialized into managed Codex homes.                                      |
 | Import session list               | Provider-generic for importable providers: Claude, Codex, and OpenCode.                                                                 |
 | Import with selected account      | Codex-specific for account-aware native session continuity.                                                                             |
 | Cross-account continuity          | Codex-specific. Rollout/session continuity is implemented around Codex native session files.                                            |
-| Gemini provider launch            | Enabled through Gemini CLI ACP. Managed account/native-config integration is not implemented yet.                                       |
+| Gemini provider launch            | Enabled through Gemini CLI ACP. Managed account home and provider-global native config are wired.                                       |
 
 ## Codex Integration Baseline
 
@@ -115,17 +115,18 @@ Missing pieces depend on each provider:
 ### Gemini
 
 Gemini is available as a built-in ACP-backed provider using the local Gemini CLI
-binary with `gemini --acp`. It uses Gemini CLI's native authentication and
-configuration by default. Paseo can sync `~/.gemini/settings.json` into
+binary with `gemini --acp`. Paseo imports native Gemini CLI state from
+`$GEMINI_CLI_HOME/.gemini` or `~/.gemini` into a managed account root, then
+launches selected Gemini accounts with `GEMINI_CLI_HOME` pointing at that root.
+Paseo can also sync `~/.gemini/settings.json` into
 `$PASEO_HOME/providers/gemini/config/settings.json`, edit that JSON, and manage
 the `mcpServers` map through the provider MCP controls. When the managed config
-exists, Gemini launches with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` pointing at that
-file.
+exists, Gemini launches with `GEMINI_CLI_SYSTEM_SETTINGS_PATH` pointing at it.
 
 Missing pieces:
 
-- Gemini account/auth adapter, if Gemini CLI exposes a stable multi-account
-  boundary beyond native `~/.gemini` auth files.
+- Gemini interactive account onboarding is not implemented; use native Gemini CLI
+  login, then import the current account.
 - Gemini usage/limit refresh, if a reliable native/API source exists.
 - Import/session continuity design for Gemini CLI session history.
 

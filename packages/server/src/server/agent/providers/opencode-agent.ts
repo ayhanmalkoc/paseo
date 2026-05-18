@@ -3140,11 +3140,7 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
 
-    const mcpServers = this.config.mcpServers;
-    if (!mcpServers || Object.keys(mcpServers).length === 0) {
-      this.mcpConfigured = true;
-      return;
-    }
+    const mcpServers = this.config.mcpServers ?? {};
 
     if (!this.mcpSetupPromise) {
       this.mcpSetupPromise = this.configureMcpServers(mcpServers);
@@ -3160,6 +3156,12 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async configureMcpServers(mcpServers: Record<string, McpServerConfig>): Promise<void> {
+    await this.disconnectStaleMcpServers(new Set(Object.keys(mcpServers)));
+
+    if (Object.keys(mcpServers).length === 0) {
+      return;
+    }
+
     await Promise.all(
       Object.entries(mcpServers).map(([name, serverConfig]) =>
         this.registerMcpServer(name, toOpenCodeMcpConfig(serverConfig)),
@@ -3183,8 +3185,30 @@ class OpenCodeAgentSession implements AgentSession {
     );
   }
 
+  private async disconnectStaleMcpServers(activeNames: Set<string>): Promise<void> {
+    const response = await this.client.mcp.status({ directory: this.config.cwd });
+    const error = response.error;
+    if (error) {
+      throw new Error(`Failed to inspect OpenCode MCP servers: ${toDiagnosticErrorMessage(error)}`);
+    }
+
+    const statuses = (response.data ?? {}) as Record<string, { status?: string }>;
+    await Promise.all(
+      Object.entries(statuses)
+        .filter(([name, status]) => !activeNames.has(name) && status?.status === "connected")
+        .map(([name]) =>
+          this.runMcpOperation("disconnect", name, () =>
+            this.client.mcp.disconnect({
+              directory: this.config.cwd,
+              name,
+            }),
+          ),
+        ),
+    );
+  }
+
   private async runMcpOperation(
-    operation: "add" | "connect",
+    operation: "add" | "connect" | "disconnect",
     name: string,
     run: () => Promise<{ error?: unknown }>,
   ): Promise<void> {

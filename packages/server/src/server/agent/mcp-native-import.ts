@@ -4,8 +4,10 @@ import path from "node:path";
 
 import type { AgentProvider, McpServerConfig } from "./agent-sdk-types.js";
 import { isReservedMcpServerId, type McpLaunchEntry } from "./mcp-resolver.js";
+import { resolveProviderHomeNativeConfigPath } from "./provider-native-config-files.js";
 
 const CODEX_PROVIDER = "codex" as const;
+const OPENCODE_PROVIDER = "opencode" as const;
 const CODEX_CONFIG_FILENAME = "config.toml";
 const PASEO_DISABLED_MCP_BEGIN_PREFIX = "# paseo-disabled-mcp-server ";
 const PASEO_DISABLED_MCP_END = "# /paseo-disabled-mcp-server";
@@ -37,9 +39,28 @@ export async function readProviderHomeNativeMcpEntries(options: {
   providerHomePath?: string | null;
   accountKey?: string | null;
 }): Promise<McpLaunchEntry[]> {
-  if (options.provider !== CODEX_PROVIDER || !options.providerHomePath || !options.accountKey) {
+  if (!options.providerHomePath) {
     return [];
   }
+  if (options.provider === CODEX_PROVIDER) {
+    if (!options.accountKey) {
+      return [];
+    }
+    return readCodexProviderHomeNativeMcpEntries({
+      providerHomePath: options.providerHomePath,
+      accountKey: options.accountKey,
+    });
+  }
+  if (options.provider === OPENCODE_PROVIDER) {
+    return readOpenCodeProviderHomeNativeMcpEntries(options.providerHomePath);
+  }
+  return [];
+}
+
+async function readCodexProviderHomeNativeMcpEntries(options: {
+  providerHomePath: string;
+  accountKey: string;
+}): Promise<McpLaunchEntry[]> {
   const configPath = resolveCodexNativeConfigPath(options.providerHomePath);
   const content = await fs.readFile(configPath, "utf8").catch((error) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -57,8 +78,36 @@ export async function readProviderHomeNativeMcpEntries(options: {
       id: server.id,
       scope: {
         kind: "account",
-        provider: options.provider,
-        accountKey: options.accountKey ?? "",
+        provider: CODEX_PROVIDER,
+        accountKey: options.accountKey,
+      },
+      config: server.config,
+      enabled: true,
+      source: "native-config",
+    }));
+}
+
+async function readOpenCodeProviderHomeNativeMcpEntries(
+  providerHomePath: string,
+): Promise<McpLaunchEntry[]> {
+  const configPath = resolveProviderHomeNativeConfigPath(OPENCODE_PROVIDER, providerHomePath);
+  const content = await fs.readFile(configPath, "utf8").catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  });
+  if (content === null) {
+    return [];
+  }
+  const parsed = parseOpenCodeNativeMcpConfigJson(content);
+  return parsed.servers
+    .filter((server) => server.enabled)
+    .map((server) => ({
+      id: server.id,
+      scope: {
+        kind: "provider",
+        provider: OPENCODE_PROVIDER,
       },
       config: server.config,
       enabled: true,
@@ -345,6 +394,53 @@ export function removeGeminiNativeMcpServerConfig(content: string, id: string): 
   }
   removeGeminiMcpServerFromLists(settings, id);
   return stringifyGeminiSettings(settings);
+}
+
+export function parseOpenCodeNativeMcpConfigJson(content: string): NativeMcpImportParseResult {
+  const skipped: NativeMcpImportSkipped[] = [];
+  const settings = parseOpenCodeConfigJson(content);
+  const mcpRecord = readRecord(settings.mcp);
+  const servers: NativeMcpServerCandidate[] = [];
+
+  for (const [id, value] of Object.entries(mcpRecord ?? {})) {
+    if (isReservedMcpServerId(id)) {
+      skipped.push({ id, reason: "Reserved MCP server id" });
+      continue;
+    }
+    const candidate = buildOpenCodeNativeMcpServerCandidate(id, value);
+    if (!candidate) {
+      skipped.push({ id, reason: "Unsupported OpenCode MCP server config" });
+      continue;
+    }
+    servers.push(candidate);
+  }
+
+  return { servers, skipped };
+}
+
+export function writeOpenCodeNativeMcpServerConfig(input: {
+  content: string;
+  id: string;
+  config: McpServerConfig;
+  enabled: boolean;
+}): string {
+  const settings = parseOpenCodeConfigJson(input.content);
+  const mcp = ensureOpenCodeRecord(settings, "mcp");
+  const previous = readRecord(mcp[input.id]);
+  mcp[input.id] = formatOpenCodeNativeMcpServerConfig(input.config, previous, input.enabled);
+  return stringifyOpenCodeConfig(settings);
+}
+
+export function removeOpenCodeNativeMcpServerConfig(content: string, id: string): string {
+  const settings = parseOpenCodeConfigJson(content);
+  const mcp = readRecord(settings.mcp);
+  if (mcp) {
+    delete mcp[id];
+    if (Object.keys(mcp).length === 0) {
+      delete settings.mcp;
+    }
+  }
+  return stringifyOpenCodeConfig(settings);
 }
 
 function removeCodexNativeActiveMcpServerConfig(content: string, id: string): string {
@@ -636,6 +732,168 @@ function ensureGeminiRecord(record: Record<string, unknown>, key: string): Recor
 
 function stringifyGeminiSettings(settings: Record<string, unknown>): string {
   return `${JSON.stringify(settings, null, 2)}\n`;
+}
+
+function parseOpenCodeConfigJson(content: string): Record<string, unknown> {
+  if (!content.trim()) {
+    return {};
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (jsonError) {
+    try {
+      parsed = JSON.parse(stripJsonCommentsAndTrailingCommas(content));
+    } catch (jsoncError) {
+      let message = String(jsoncError);
+      if (jsoncError instanceof Error) {
+        message = jsoncError.message;
+      } else if (jsonError instanceof Error) {
+        message = jsonError.message;
+      }
+      throw new Error(`OpenCode config is invalid: ${message}`, { cause: jsoncError });
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("OpenCode config must contain a JSON object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function buildOpenCodeNativeMcpServerCandidate(
+  id: string,
+  value: unknown,
+): NativeMcpServerCandidate | null {
+  const record = readRecord(value);
+  if (!record) {
+    return null;
+  }
+  const type = asString(record.type)?.toLowerCase();
+  const enabled = asBoolean(record.enabled) ?? true;
+  if (type === "local") {
+    const commandParts = asStringArray(record.command);
+    const command = commandParts[0] ?? asString(record.command);
+    if (!command) {
+      return null;
+    }
+    const args = commandParts.length > 1 ? commandParts.slice(1) : [];
+    const env = mergeStringRecords(asStringRecord(record.environment), asStringRecord(record.env));
+    return {
+      id,
+      enabled,
+      config: {
+        type: "stdio",
+        command,
+        ...(args.length > 0 ? { args } : {}),
+        ...(Object.keys(env).length > 0 ? { env } : {}),
+      },
+    };
+  }
+  if (type === "remote") {
+    const url = asString(record.url);
+    if (!url) {
+      return null;
+    }
+    const headers = asStringRecord(record.headers);
+    return {
+      id,
+      enabled,
+      config: {
+        type: "http",
+        url,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      },
+    };
+  }
+  return null;
+}
+
+function formatOpenCodeNativeMcpServerConfig(
+  config: McpServerConfig,
+  previous: Record<string, unknown> | null,
+  enabled: boolean,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...previous };
+  delete next.command;
+  delete next.environment;
+  delete next.env;
+  delete next.url;
+  delete next.headers;
+  if (config.type === "stdio") {
+    next.type = "local";
+    next.command = [config.command, ...(config.args ?? [])];
+    if (config.env && Object.keys(config.env).length > 0) {
+      next.environment = config.env;
+    }
+  } else {
+    next.type = "remote";
+    next.url = config.url;
+    if (config.headers && Object.keys(config.headers).length > 0) {
+      next.headers = config.headers;
+    }
+  }
+  next.enabled = enabled;
+  return next;
+}
+
+function ensureOpenCodeRecord(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  const existing = readRecord(record[key]);
+  if (existing) {
+    return existing;
+  }
+  const next: Record<string, unknown> = {};
+  record[key] = next;
+  return next;
+}
+
+function stringifyOpenCodeConfig(settings: Record<string, unknown>): string {
+  return `${JSON.stringify(settings, null, 2)}\n`;
+}
+
+function stripJsonCommentsAndTrailingCommas(content: string): string {
+  const withoutComments: string[] = [];
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    const next = content[index + 1];
+    if (quote) {
+      withoutComments.push(char);
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      withoutComments.push(char);
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      while (index < content.length && content[index] !== "\n") {
+        index += 1;
+      }
+      withoutComments.push("\n");
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      index += 2;
+      while (index < content.length && !(content[index] === "*" && content[index + 1] === "/")) {
+        index += 1;
+      }
+      index += 1;
+      continue;
+    }
+    withoutComments.push(char);
+  }
+  return withoutComments.join("").replace(/,\s*([}\]])/g, "$1");
 }
 
 function formatCodexNativeMcpServerBlock(input: { id: string; config: McpServerConfig }): string {

@@ -98,6 +98,7 @@ import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { CodexProviderAuthAdapter } from "./agent/provider-auth-codex.js";
+import { GeminiProviderAuthAdapter } from "./agent/provider-auth-gemini.js";
 import { OpenCodeProviderAuthAdapter } from "./agent/provider-auth-opencode.js";
 import { ProviderAuthService } from "./agent/provider-auth-service.js";
 import { RuntimeProfileService } from "./agent/runtime-profile-service.js";
@@ -168,6 +169,36 @@ function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null
     "/mcp/agents",
     `http://${formatHostForHttpUrl(listenTarget.host)}:${listenTarget.port}`,
   ).toString();
+}
+
+function extractAgentMcpPathAuth(
+  requestPath: string,
+  route: string,
+): { mcpAuthToken?: string; callerAgentId?: string } {
+  const prefix = `${route}/`;
+  if (!requestPath.startsWith(prefix)) {
+    return {};
+  }
+  const [mcpAuthToken, callerAgentId] = requestPath
+    .slice(prefix.length)
+    .split("/")
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        return segment;
+      }
+    });
+  return {
+    ...(mcpAuthToken ? { mcpAuthToken } : {}),
+    ...(callerAgentId ? { callerAgentId } : {}),
+  };
+}
+
+function redactAgentMcpDebugUrl(url: string, route: string): string {
+  return url
+    .replace(new RegExp(`(${route}/)[^/?#]+(?:/[^/?#]+)?`), `$1${REDACTED_LOG_VALUE}`)
+    .replace(/([?&])mcpAuthToken=[^&]*/g, `$1mcpAuthToken=${REDACTED_LOG_VALUE}`);
 }
 
 function summarizeAgentMcpDebugMessage(body: unknown): Record<string, unknown> {
@@ -378,10 +409,27 @@ export async function createPaseoDaemon(
     next();
   });
 
+  const agentMcpRoute = "/mcp/agents";
+  const agentMcpInternalAuthToken = randomUUID();
+  const agentMcpInternalHeaders = {
+    Authorization: `Bearer ${agentMcpInternalAuthToken}`,
+  };
+
   app.use(
-    createRequireBearerMiddleware(config.auth, (context) => {
-      logger.warn(context, "Rejected HTTP request with invalid daemon password");
-    }),
+    createRequireBearerMiddleware(
+      config.auth,
+      (context) => {
+        logger.warn(context, "Rejected HTTP request with invalid daemon password");
+      },
+      {
+        shouldBypass: (req) =>
+          req.path.startsWith("/mcp/agents") &&
+          (extractHttpBearerToken(req.header("authorization")) === agentMcpInternalAuthToken ||
+            req.query.mcpAuthToken === agentMcpInternalAuthToken ||
+            extractAgentMcpPathAuth(req.path, agentMcpRoute).mcpAuthToken ===
+              agentMcpInternalAuthToken),
+      },
+    ),
   );
 
   // Script proxy — intercepts requests for registered *.localhost hostnames
@@ -510,7 +558,11 @@ export async function createPaseoDaemon(
   const providerAuthService = new ProviderAuthService({
     paseoHome: config.paseoHome,
     logger,
-    adapters: [new CodexProviderAuthAdapter(), new OpenCodeProviderAuthAdapter()],
+    adapters: [
+      new CodexProviderAuthAdapter(),
+      new GeminiProviderAuthAdapter(),
+      new OpenCodeProviderAuthAdapter(),
+    ],
     ...(config.agentProviderSettings ? { runtimeSettings: config.agentProviderSettings } : {}),
   });
   const runtimeProfileService = new RuntimeProfileService({
@@ -538,6 +590,7 @@ export async function createPaseoDaemon(
     },
     providerDefinitions: providerRegistry,
     registry: agentStorage,
+    mcpServerHeaders: agentMcpInternalHeaders,
     providerAuthService,
     runtimeProfileService,
     logger,
@@ -594,7 +647,6 @@ export async function createPaseoDaemon(
   const mcpEnabled = config.mcpEnabled ?? true;
   let agentMcpBaseUrl: string | null = null;
   if (mcpEnabled) {
-    const agentMcpRoute = "/mcp/agents";
     const agentMcpTransports: AgentMcpTransportMap = new Map();
     const archiveWorkspaceRecordForMcp = async (workspaceId: string) => {
       const sessions = wsServer?.listActiveSessions() ?? [];
@@ -754,7 +806,7 @@ export async function createPaseoDaemon(
         logger.debug(
           {
             method: req.method,
-            url: req.originalUrl,
+            url: redactAgentMcpDebugUrl(req.originalUrl, agentMcpRoute),
             sessionId: req.header("mcp-session-id"),
             authorization: req.header("authorization") ? REDACTED_LOG_VALUE : undefined,
             body: summarizeAgentMcpDebugBody(req.body),
@@ -789,7 +841,8 @@ export async function createPaseoDaemon(
             });
             return;
           }
-          const callerAgentIdRaw = req.query.callerAgentId;
+          const pathAuth = extractAgentMcpPathAuth(req.path, agentMcpRoute);
+          const callerAgentIdRaw = req.query.callerAgentId ?? pathAuth.callerAgentId;
           let callerAgentId: string | undefined;
           if (typeof callerAgentIdRaw === "string") {
             callerAgentId = callerAgentIdRaw;
@@ -830,6 +883,12 @@ export async function createPaseoDaemon(
     app.post(agentMcpRoute, handleAgentMcpRequest);
     app.get(agentMcpRoute, handleAgentMcpRequest);
     app.delete(agentMcpRoute, handleAgentMcpRequest);
+    app.post(`${agentMcpRoute}/:mcpAuthToken`, handleAgentMcpRequest);
+    app.get(`${agentMcpRoute}/:mcpAuthToken`, handleAgentMcpRequest);
+    app.delete(`${agentMcpRoute}/:mcpAuthToken`, handleAgentMcpRequest);
+    app.post(`${agentMcpRoute}/:mcpAuthToken/:callerAgentId`, handleAgentMcpRequest);
+    app.get(`${agentMcpRoute}/:mcpAuthToken/:callerAgentId`, handleAgentMcpRequest);
+    app.delete(`${agentMcpRoute}/:mcpAuthToken/:callerAgentId`, handleAgentMcpRequest);
     logger.info({ route: agentMcpRoute }, "Agent MCP server mounted on main app");
   } else {
     logger.info("Agent MCP HTTP endpoint disabled");

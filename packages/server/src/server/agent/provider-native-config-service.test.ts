@@ -17,6 +17,8 @@ describe("ProviderNativeConfigService", () => {
   let nativeCodexHome: string;
   let geminiProviderConfigPath: string;
   let nativeGeminiHome: string;
+  let opencodeProviderConfigPath: string;
+  let nativeOpenCodeConfigHome: string;
 
   beforeEach(async () => {
     tempRoot = mkdtempSync(path.join(tmpdir(), "paseo-provider-native-config-"));
@@ -32,9 +34,19 @@ describe("ProviderNativeConfigService", () => {
       "settings.json",
     );
     nativeGeminiHome = path.join(tempRoot, "native-gemini");
+    opencodeProviderConfigPath = path.join(
+      tempRoot,
+      "providers",
+      "opencode",
+      "config",
+      "opencode",
+      "opencode.json",
+    );
+    nativeOpenCodeConfigHome = path.join(tempRoot, "native-opencode-config");
     await fs.mkdir(providerHomePath, { recursive: true });
     await fs.mkdir(nativeCodexHome, { recursive: true });
     await fs.mkdir(nativeGeminiHome, { recursive: true });
+    await fs.mkdir(path.join(nativeOpenCodeConfigHome, "opencode"), { recursive: true });
   });
 
   afterEach(() => {
@@ -52,6 +64,7 @@ describe("ProviderNativeConfigService", () => {
       providerAuthService,
       codexNativeHomeResolver: () => nativeCodexHome,
       geminiNativeHomeResolver: () => nativeGeminiHome,
+      opencodeNativeConfigHomeResolver: () => nativeOpenCodeConfigHome,
     });
   }
 
@@ -89,6 +102,142 @@ describe("ProviderNativeConfigService", () => {
       exists: false,
     });
     expect(snapshot.updatedAt).toBeUndefined();
+  });
+
+  it("reads Gemini extensions from managed account homes", async () => {
+    const geminiHomePath = path.join(tempRoot, "providers", "gemini", "accounts", "malkoc", "home");
+    const extensionsRoot = path.join(geminiHomePath, ".gemini", "extensions");
+    const extensionPath = path.join(extensionsRoot, "google-workspace-cli");
+    await fs.mkdir(path.join(extensionPath, "skills", "gws-calendar"), { recursive: true });
+    await fs.writeFile(
+      path.join(extensionPath, "gemini-extension.json"),
+      JSON.stringify({
+        name: "Google Workspace",
+        version: "1.2.3",
+        contextFileName: "GEMINI.md",
+      }),
+    );
+    await fs.writeFile(
+      path.join(extensionsRoot, "extension-enablement.json"),
+      JSON.stringify({
+        "google-workspace-cli": { overrides: ["/*"] },
+      }),
+    );
+    await fs.writeFile(
+      path.join(extensionPath, "skills", "gws-calendar", "SKILL.md"),
+      "calendar skill",
+    );
+    await fs.mkdir(path.dirname(geminiProviderConfigPath), { recursive: true });
+    await fs.writeFile(
+      geminiProviderConfigPath,
+      JSON.stringify({ skills: { disabled: ["gws-calendar"] } }, null, 2),
+    );
+
+    const service = createService([
+      createProfile({
+        provider: "gemini",
+        key: "malkoc",
+        alias: "malkoc.a",
+        authMode: "oauth",
+        providerHomeRef: {
+          kind: "managed-profile",
+          provider: "gemini",
+          profileKey: "malkoc",
+          homePath: geminiHomePath,
+          label: "malkoc.a",
+        },
+      }),
+    ]);
+
+    await expect(service.readProviderConfig({ provider: "gemini" })).resolves.toMatchObject({
+      extensions: [
+        {
+          id: "google-workspace-cli",
+          name: "Google Workspace",
+          version: "1.2.3",
+          enabled: true,
+          contextFileName: "GEMINI.md",
+          accountKey: "malkoc",
+          accountAlias: "malkoc.a",
+          skillIds: ["gws-calendar"],
+          skills: [{ id: "gws-calendar", enabled: false }],
+        },
+      ],
+    });
+  });
+
+  it("toggles Gemini extensions using native extension enablement overrides", async () => {
+    const geminiHomePath = path.join(tempRoot, "providers", "gemini", "accounts", "malkoc", "home");
+    const extensionsRoot = path.join(geminiHomePath, ".gemini", "extensions");
+    const extensionPath = path.join(extensionsRoot, "google-workspace-cli");
+    await fs.mkdir(extensionPath, { recursive: true });
+    await fs.writeFile(path.join(extensionPath, "gemini-extension.json"), JSON.stringify({}));
+
+    const service = createService([
+      createProfile({
+        provider: "gemini",
+        key: "malkoc",
+        alias: "malkoc.a",
+        authMode: "oauth",
+        providerHomeRef: {
+          kind: "managed-profile",
+          provider: "gemini",
+          profileKey: "malkoc",
+          homePath: geminiHomePath,
+          label: "malkoc.a",
+        },
+      }),
+    ]);
+
+    await service.setProviderExtensionEnabled({
+      provider: "gemini",
+      accountKey: "malkoc",
+      extensionId: "google-workspace-cli",
+      enabled: false,
+    });
+
+    await expect(
+      fs.readFile(path.join(extensionsRoot, "extension-enablement.json"), "utf8"),
+    ).resolves.toContain('"!/*"');
+    await expect(service.readProviderConfig({ provider: "gemini" })).resolves.toMatchObject({
+      extensions: [{ id: "google-workspace-cli", enabled: false }],
+    });
+
+    await service.setProviderExtensionEnabled({
+      provider: "gemini",
+      accountKey: "malkoc",
+      extensionId: "google-workspace-cli",
+      enabled: true,
+    });
+
+    await expect(
+      fs.readFile(path.join(extensionsRoot, "extension-enablement.json"), "utf8"),
+    ).resolves.toContain('"/*"');
+    await expect(service.readProviderConfig({ provider: "gemini" })).resolves.toMatchObject({
+      extensions: [{ id: "google-workspace-cli", enabled: true }],
+    });
+  });
+
+  it("toggles Gemini skills using settings.json skills.disabled", async () => {
+    const service = createService();
+
+    await service.setProviderSkillEnabled({
+      provider: "gemini",
+      skillId: "gws-calendar",
+      enabled: false,
+    });
+
+    await expect(fs.readFile(geminiProviderConfigPath, "utf8")).resolves.toContain('"disabled"');
+
+    await service.setProviderSkillEnabled({
+      provider: "gemini",
+      skillId: "gws-calendar",
+      enabled: true,
+    });
+
+    await expect(fs.readFile(geminiProviderConfigPath, "utf8")).resolves.not.toContain(
+      "gws-calendar",
+    );
   });
 
   it("writes Codex config.toml into the provider config and materializes account homes", async () => {
@@ -253,6 +402,30 @@ describe("ProviderNativeConfigService", () => {
     ]);
   });
 
+  it("keeps managed Gemini MCP servers when syncing native settings", async () => {
+    const service = createService();
+    await service.upsertProviderMcpServer({
+      provider: "gemini",
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode" },
+      enabled: true,
+    });
+    await fs.writeFile(
+      path.join(nativeGeminiHome, "settings.json"),
+      JSON.stringify({ ui: { theme: "Default Light" } }, null, 2),
+    );
+
+    await service.syncProviderConfigFromNative({ provider: "gemini" });
+
+    await expect(service.listProviderMcpServers({ provider: "gemini" })).resolves.toEqual([
+      {
+        id: "context-mode",
+        config: { type: "stdio", command: "context-mode" },
+        enabled: true,
+      },
+    ]);
+  });
+
   it("manages Gemini MCP servers inside settings.json", async () => {
     const service = createService();
 
@@ -306,6 +479,122 @@ describe("ProviderNativeConfigService", () => {
       }),
     ).resolves.toBe(true);
     await expect(service.listProviderMcpServers({ provider: "gemini" })).resolves.toEqual([http]);
+  });
+
+  it("syncs OpenCode opencode.jsonc from native config into provider config", async () => {
+    const service = createService();
+    await fs.writeFile(
+      path.join(nativeOpenCodeConfigHome, "opencode", "opencode.jsonc"),
+      `{
+        "$schema": "https://opencode.ai/config.json",
+        // local MCP server
+        "mcp": {
+          "context-mode": {
+            "type": "local",
+            "command": ["context-mode", "serve"],
+            "environment": {
+              "CONTEXT_MODE": "1",
+            },
+            "enabled": false,
+          },
+        },
+      }`,
+    );
+
+    const snapshot = await service.syncProviderConfigFromNative({
+      provider: "opencode",
+    });
+
+    expect(snapshot).toMatchObject({
+      provider: "opencode",
+      path: opencodeProviderConfigPath,
+      exists: true,
+    });
+    await expect(service.listProviderMcpServers({ provider: "opencode" })).resolves.toEqual([
+      {
+        id: "context-mode",
+        config: {
+          type: "stdio",
+          command: "context-mode",
+          args: ["serve"],
+          env: { CONTEXT_MODE: "1" },
+        },
+        enabled: false,
+      },
+    ]);
+  });
+
+  it("keeps managed OpenCode MCP servers when syncing native config", async () => {
+    const service = createService();
+    await service.upsertProviderMcpServer({
+      provider: "opencode",
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode" },
+      enabled: true,
+    });
+    await fs.writeFile(
+      path.join(nativeOpenCodeConfigHome, "opencode", "opencode.json"),
+      JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2),
+    );
+
+    await service.syncProviderConfigFromNative({ provider: "opencode" });
+
+    await expect(service.listProviderMcpServers({ provider: "opencode" })).resolves.toEqual([
+      {
+        id: "context-mode",
+        config: { type: "stdio", command: "context-mode" },
+        enabled: true,
+      },
+    ]);
+  });
+
+  it("manages OpenCode MCP servers inside opencode.json", async () => {
+    const service = createService();
+
+    const created = await service.upsertProviderMcpServer({
+      provider: "opencode",
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode", args: ["serve"] },
+      enabled: false,
+    });
+
+    expect(created).toEqual({
+      id: "context-mode",
+      config: { type: "stdio", command: "context-mode", args: ["serve"] },
+      enabled: false,
+    });
+    await expect(service.listProviderMcpServers({ provider: "opencode" })).resolves.toEqual([
+      created,
+    ]);
+    await expect(fs.readFile(opencodeProviderConfigPath, "utf8")).resolves.toContain('"mcp"');
+    await expect(fs.readFile(opencodeProviderConfigPath, "utf8")).resolves.toContain(
+      '"enabled": false',
+    );
+
+    const remote = await service.upsertProviderMcpServer({
+      provider: "opencode",
+      id: "remote",
+      config: { type: "http", url: "https://example.com/mcp" },
+    });
+
+    expect(remote).toEqual({
+      id: "remote",
+      config: { type: "http", url: "https://example.com/mcp" },
+      enabled: true,
+    });
+    await expect(fs.readFile(opencodeProviderConfigPath, "utf8")).resolves.toContain(
+      '"type": "remote"',
+    );
+
+    await expect(
+      service.removeProviderMcpServer({
+        provider: "opencode",
+        id: "context-mode",
+      }),
+    ).resolves.toBe(true);
+    await expect(service.listProviderMcpServers({ provider: "opencode" })).resolves.toEqual([
+      remote,
+    ]);
   });
 
   it("rejects unsupported providers", async () => {

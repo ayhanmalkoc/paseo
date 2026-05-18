@@ -1,5 +1,5 @@
 import { compare, compareSync, hashSync } from "bcryptjs";
-import type { RequestHandler } from "express";
+import type { Request, RequestHandler } from "express";
 
 export const DAEMON_PASSWORD_BCRYPT_COST = 12;
 
@@ -11,6 +11,10 @@ export interface BearerAuthRejectContext {
   path: string;
   method: string;
   hasToken: boolean;
+}
+
+export interface RequireBearerMiddlewareOptions {
+  shouldBypass?: (req: Request) => boolean;
 }
 
 interface BearerValidationInput {
@@ -89,10 +93,11 @@ export function extractWsBearerToken(protocol: string | null): string | null {
 export function createRequireBearerMiddleware(
   auth: DaemonAuthConfig | undefined,
   onReject?: (context: BearerAuthRejectContext) => void,
+  options?: RequireBearerMiddlewareOptions,
 ): RequestHandler {
   const password = auth?.password;
   return (req, res, next) => {
-    if (!password || shouldBypassBearerAuth(req.method, req.path)) {
+    if (!password || shouldBypassBearerAuth(req.method, req.path) || options?.shouldBypass?.(req)) {
       next();
       return;
     }

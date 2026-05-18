@@ -3,11 +3,16 @@ import { getManagedProviderHomeProfileKey } from "./provider-home-ref.js";
 
 export const SYSTEM_PASEO_MCP_SERVER_ID = "paseo";
 
-export interface McpLaunchScope {
-  kind: "account";
-  provider: AgentProvider;
-  accountKey: string;
-}
+export type McpLaunchScope =
+  | {
+      kind: "provider";
+      provider: AgentProvider;
+    }
+  | {
+      kind: "account";
+      provider: AgentProvider;
+      accountKey: string;
+    };
 
 export type McpLaunchEntrySource = "native-config";
 
@@ -19,7 +24,7 @@ export interface McpLaunchEntry {
   source: McpLaunchEntrySource;
 }
 
-export type ResolvedMcpSourceScope = "account" | "session" | "system";
+export type ResolvedMcpSourceScope = "provider" | "account" | "session" | "system";
 
 export interface ResolvedMcpSourceInfo {
   scope: ResolvedMcpSourceScope;
@@ -203,6 +208,9 @@ function scopeMatches(
   provider: AgentProvider,
   accountKey: string | null,
 ): boolean {
+  if (scope.kind === "provider") {
+    return scope.provider === provider;
+  }
   return scope.provider === provider && scope.accountKey === accountKey;
 }
 
@@ -212,7 +220,7 @@ function sourceInfoFromEntry(entry: McpLaunchEntry): ResolvedMcpSourceInfo {
     source: entry.source,
     entryId: entry.id,
     provider: entry.scope.provider,
-    accountKey: entry.scope.accountKey,
+    ...(entry.scope.kind === "account" ? { accountKey: entry.scope.accountKey } : {}),
   };
 }
 
