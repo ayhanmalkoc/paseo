@@ -165,6 +165,12 @@ const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
 
+function getWorkspaceScripts(
+  workspaceDescriptor: WorkspaceDescriptor | null | undefined,
+): WorkspaceDescriptor["scripts"] {
+  return workspaceDescriptor?.scripts ?? EMPTY_WORKSPACE_SCRIPTS;
+}
+
 const ThemedActivityIndicator = withUnistyles(ActivityIndicator);
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedEllipsisVertical = withUnistyles(EllipsisVertical);
@@ -928,6 +934,8 @@ interface WorkspaceHeaderTitleBarProps {
   isGitCheckout: boolean;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  workspaceScripts: WorkspaceDescriptor["scripts"];
+  liveTerminalIds: string[];
   showWorkspaceSetup: boolean;
   showCreateBrowserTab: boolean;
   isMobile: boolean;
@@ -946,6 +954,9 @@ interface WorkspaceHeaderTitleBarProps {
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
+  onScriptTerminalStarted: (terminalId: string) => void;
+  onViewScriptTerminal: (terminalId: string) => void;
+  onOpenUrlInBrowserTab: (url: string) => void;
 }
 
 function WorkspaceHeaderTitleBar({
@@ -957,6 +968,8 @@ function WorkspaceHeaderTitleBar({
   isGitCheckout,
   normalizedServerId,
   normalizedWorkspaceId,
+  workspaceScripts,
+  liveTerminalIds,
   showWorkspaceSetup,
   showCreateBrowserTab,
   isMobile,
@@ -975,6 +988,9 @@ function WorkspaceHeaderTitleBar({
   onCopyWorkspacePath,
   onCopyBranchName,
   onOpenSetupTab,
+  onScriptTerminalStarted,
+  onViewScriptTerminal,
+  onOpenUrlInBrowserTab,
 }: WorkspaceHeaderTitleBarProps) {
   return (
     <View style={styles.headerTitleContainer}>
@@ -1024,6 +1040,18 @@ function WorkspaceHeaderTitleBar({
         onCopyBranchName={onCopyBranchName}
         onOpenSetupTab={onOpenSetupTab}
       />
+      {isMobile && workspaceScripts.length > 0 ? (
+        <WorkspaceScriptsButton
+          serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
+          scripts={workspaceScripts}
+          liveTerminalIds={liveTerminalIds}
+          onScriptTerminalStarted={onScriptTerminalStarted}
+          onViewTerminal={onViewScriptTerminal}
+          onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
+          hideLabels
+        />
+      ) : null}
     </View>
   );
 }
@@ -1450,6 +1478,7 @@ function WorkspaceScreenContent({
     [workspaceId],
   );
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
+  const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
     useWorkspaceRouteActions(normalizedServerId);
 
@@ -1543,7 +1572,7 @@ function WorkspaceScreenContent({
     normalizedServerId,
     normalizedWorkspaceId,
     workspaceDirectory,
-    workspaceScripts: workspaceDescriptor?.scripts ?? EMPTY_WORKSPACE_SCRIPTS,
+    workspaceScripts,
     hasHydratedWorkspaces,
     isMissingWorkspaceExecutionAuthority,
     onTerminalCreated: handleTerminalCreated,
@@ -3136,6 +3165,8 @@ function WorkspaceScreenContent({
                         isGitCheckout={isGitCheckout}
                         normalizedServerId={normalizedServerId}
                         normalizedWorkspaceId={normalizedWorkspaceId}
+                        workspaceScripts={workspaceScripts}
+                        liveTerminalIds={liveTerminalIds}
                         showWorkspaceSetup={showWorkspaceSetup}
                         showCreateBrowserTab={showCreateBrowserTab}
                         isMobile={isMobile}
@@ -3154,6 +3185,9 @@ function WorkspaceScreenContent({
                         onCopyWorkspacePath={handleCopyWorkspacePath}
                         onCopyBranchName={handleCopyBranchName}
                         onOpenSetupTab={handleOpenSetupTab}
+                        onScriptTerminalStarted={handleScriptTerminalStarted}
+                        onViewScriptTerminal={handleViewScriptTerminal}
+                        onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
                       />
                     </>
                   }
