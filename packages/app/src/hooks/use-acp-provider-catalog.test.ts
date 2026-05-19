@@ -51,6 +51,7 @@ describe("ACP provider catalog", () => {
           description: "ACP wrapper for Amp - the frontier coding agent",
           command: ["amp-acp"],
           env: {},
+          enabled: true,
         },
       },
     });
