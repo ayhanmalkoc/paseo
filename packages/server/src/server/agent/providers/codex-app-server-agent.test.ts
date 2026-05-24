@@ -111,6 +111,7 @@ type CapturedFakeCodexRecord = Record<string, unknown>;
 async function runCustomCodexProviderTurn(
   providerId: string,
   baseUrl: string,
+  configOverrides: Partial<AgentSessionConfig> = {},
 ): Promise<CapturedFakeCodexRecord[]> {
   const tempDir = await mkdtemp(path.join(tmpdir(), "codex-custom-provider-"));
   const fakeAppServerPath = path.join(tempDir, "fake-codex-app-server.cjs");
@@ -127,6 +128,7 @@ fs.appendFileSync(capturePath, JSON.stringify({
   kind: "env",
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  PASEO_MODEL_GATEWAY_API_KEY: process.env.PASEO_MODEL_GATEWAY_API_KEY,
 }) + "\\n");
 
 function record(method, params) {
@@ -180,6 +182,7 @@ process.stdin.on("data", (chunk) => {
     cwd: "/workspace/project",
     modeId: "auto",
     model: "custom-model",
+    ...configOverrides,
   });
 
   try {
@@ -517,6 +520,7 @@ describe("Codex app-server provider", () => {
       kind: "env",
       OPENAI_API_KEY: "sk-custom",
       OPENAI_BASE_URL: "https://custom-relay.example.com",
+      PASEO_MODEL_GATEWAY_API_KEY: undefined,
     });
     expect(capturedThreadStartConfig(capturedRequests)).toEqual({
       model_provider: "codex-iisb",
@@ -544,6 +548,39 @@ describe("Codex app-server provider", () => {
         "codex-custom": expect.objectContaining({
           base_url: "https://custom-relay.example.com/v1",
         }),
+      },
+    });
+  });
+
+  test("configures Codex app-server to use an OpenAI-compatible model gateway", async () => {
+    const capturedRequests = await runCustomCodexProviderTurn(
+      "codex-gateway-test",
+      "https://custom-relay.example.com",
+      {
+        model: "premium-coding",
+        modelGateway: {
+          type: "openai-compatible",
+          label: "9Router local",
+          baseUrl: "http://localhost:20128",
+          apiKey: "sk-router",
+        },
+      },
+    );
+
+    expect(capturedRequests[0]).toMatchObject({
+      kind: "env",
+      PASEO_MODEL_GATEWAY_API_KEY: "sk-router",
+    });
+    expect(capturedThreadStartConfig(capturedRequests)).toEqual({
+      model_provider: "paseo_model_gateway",
+      model_providers: {
+        paseo_model_gateway: {
+          name: "9Router local",
+          base_url: "http://localhost:20128/v1",
+          env_key: "PASEO_MODEL_GATEWAY_API_KEY",
+          requires_openai_auth: false,
+          wire_api: "responses",
+        },
       },
     });
   });

@@ -1083,6 +1083,8 @@ export class VoiceAssistantWebSocketServer {
         daemonStatusRpc: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": true,
+        // COMPAT(modelGateways): added in v0.1.82, remove gate after 2026-11-24.
+        modelGateways: true,
       },
     };
   }
