@@ -23,6 +23,7 @@ import {
   Brain,
   ChevronDown,
   ListTodo,
+  Route,
   Settings2,
   ShieldAlert,
   ShieldCheck,
@@ -77,7 +78,7 @@ interface StatusOption {
   label: string;
 }
 
-type StatusSelector = "provider" | "mode" | "model" | "thinking" | `feature-${string}`;
+type StatusSelector = "provider" | "gateway" | "mode" | "model" | "thinking" | `feature-${string}`;
 
 interface ControlledAgentStatusBarProps {
   provider: string;
@@ -91,6 +92,9 @@ interface ControlledAgentStatusBarProps {
   selectedModelId?: string;
   onSelectModel?: (modelId: string) => void;
   onSelectProviderAndModel?: (provider: string, modelId: string) => void;
+  modelGatewayOptions?: StatusOption[];
+  selectedModelGatewayId?: string;
+  onSelectModelGateway?: (gatewayId: string) => void;
   thinkingOptions?: StatusOption[];
   selectedThinkingOptionId?: string;
   onSelectThinkingOption?: (thinkingOptionId: string) => void;
@@ -120,6 +124,9 @@ export interface DraftAgentStatusBarProps {
   modelSelectorProviders: ProviderSelectorProvider[];
   isAllModelsLoading: boolean;
   onSelectProviderAndModel: (provider: AgentProvider, modelId: string) => void;
+  modelGatewayOptions?: StatusOption[];
+  selectedModelGatewayId?: string;
+  onSelectModelGateway?: (gatewayId: string) => void;
   thinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
   selectedThinkingOptionId: string;
   onSelectThinkingOption: (thinkingOptionId: string) => void;
@@ -206,17 +213,19 @@ function shortModelLabel(label: string): string {
   return i === -1 ? label : label.slice(i + 1);
 }
 
-type ActiveSheet = "thinking" | "mode" | "features" | null;
+type ActiveSheet = "gateway" | "thinking" | "mode" | "features" | null;
 
 function resolveHasAnyControl({
   providerOptions,
   modeOptions,
+  modelGatewayOptions,
   canSelectModel,
   thinkingOptions,
   features,
 }: {
   providerOptions: StatusOption[] | undefined;
   modeOptions: StatusOption[] | undefined;
+  modelGatewayOptions: StatusOption[] | undefined;
   canSelectModel: boolean;
   thinkingOptions: StatusOption[] | undefined;
   features: AgentFeature[] | undefined;
@@ -224,6 +233,7 @@ function resolveHasAnyControl({
   return (
     Boolean(providerOptions?.length) ||
     Boolean(modeOptions?.length) ||
+    Boolean(modelGatewayOptions?.length) ||
     canSelectModel ||
     Boolean(thinkingOptions?.length) ||
     Boolean(features?.length)
@@ -458,6 +468,9 @@ function ControlledStatusBar({
   selectedModelId,
   onSelectModel,
   onSelectProviderAndModel,
+  modelGatewayOptions,
+  selectedModelGatewayId,
+  onSelectModelGateway,
   thinkingOptions,
   selectedThinkingOptionId,
   onSelectThinkingOption,
@@ -480,6 +493,7 @@ function ControlledStatusBar({
   const providerAnchorRef = useRef<View>(null);
   const modeAnchorRef = useRef<View>(null);
   const _modelAnchorRef = useRef<View>(null);
+  const gatewayAnchorRef = useRef<View>(null);
   const thinkingAnchorRef = useRef<View>(null);
 
   const canSelectProvider = Boolean(
@@ -487,12 +501,20 @@ function ControlledStatusBar({
   );
   const canSelectMode = Boolean(onSelectMode && modeOptions && modeOptions.length > 0);
   const canSelectModel = Boolean(onSelectModel);
+  const canSelectModelGateway = Boolean(
+    onSelectModelGateway && modelGatewayOptions && modelGatewayOptions.length > 0,
+  );
   const canSelectThinking = Boolean(
     onSelectThinkingOption && thinkingOptions && thinkingOptions.length > 0,
   );
 
   const displayProvider = findOptionLabel(providerOptions, selectedProviderId, "Provider");
   const displayModel = resolveDisplayModel(isModelLoading, modelOptions, selectedModelId);
+  const displayModelGateway = findOptionLabel(
+    modelGatewayOptions,
+    selectedModelGatewayId,
+    "Native",
+  );
   const displayThinking = findOptionLabel(
     thinkingOptions,
     selectedThinkingOptionId,
@@ -510,6 +532,7 @@ function ControlledStatusBar({
   const hasAnyControl = resolveHasAnyControl({
     providerOptions,
     modeOptions,
+    modelGatewayOptions,
     canSelectModel,
     thinkingOptions,
     features,
@@ -533,6 +556,10 @@ function ControlledStatusBar({
   const comboboxThinkingOptions = useMemo<ComboboxOption[]>(
     () => toComboboxOptions(thinkingOptions),
     [thinkingOptions],
+  );
+  const comboboxModelGatewayOptions = useMemo<ComboboxOption[]>(
+    () => toComboboxOptions(modelGatewayOptions),
+    [modelGatewayOptions],
   );
 
   const renderModeOption = useCallback(
@@ -576,11 +603,16 @@ function ControlledStatusBar({
     handleOpenChange("thinking")(openSelector !== "thinking");
   }, [handleOpenChange, openSelector]);
 
+  const handleGatewayPress = useCallback(() => {
+    handleOpenChange("gateway")(openSelector !== "gateway");
+  }, [handleOpenChange, openSelector]);
+
   const handleModePress = useCallback(() => {
     handleOpenChange("mode")(openSelector !== "mode");
   }, [handleOpenChange, openSelector]);
 
   const handleProviderOpenChange = useMemo(() => handleOpenChange("provider"), [handleOpenChange]);
+  const handleGatewayOpenChange = useMemo(() => handleOpenChange("gateway"), [handleOpenChange]);
   const handleThinkingOpenChange = useMemo(() => handleOpenChange("thinking"), [handleOpenChange]);
   const handleModeOpenChange = useMemo(() => handleOpenChange("mode"), [handleOpenChange]);
 
@@ -591,6 +623,10 @@ function ControlledStatusBar({
   const handleThinkingSelect = useCallback(
     (id: string) => onSelectThinkingOption?.(id),
     [onSelectThinkingOption],
+  );
+  const handleGatewaySelect = useCallback(
+    (id: string) => onSelectModelGateway?.(id),
+    [onSelectModelGateway],
   );
   const handleModeSelect = useCallback((id: string) => onSelectMode?.(id), [onSelectMode]);
 
@@ -623,6 +659,17 @@ function ControlledStatusBar({
     [canSelectThinking, disabled, openSelector],
   );
 
+  const gatewayPressableStyle = useMemo(
+    () =>
+      makeBadgePressableStyle(
+        styles.modeBadge,
+        styles.disabledBadge,
+        disabled || !canSelectModelGateway,
+        openSelector === "gateway",
+      ),
+    [canSelectModelGateway, disabled, openSelector],
+  );
+
   const modePressableStyle = useMemo(
     () =>
       makeBadgePressableStyle(
@@ -649,6 +696,14 @@ function ControlledStatusBar({
       setActiveSheet(null);
     },
     [onSelectThinkingOption],
+  );
+
+  const handleSelectGatewayAndClose = useCallback(
+    (gatewayId: string) => {
+      onSelectModelGateway?.(gatewayId);
+      setActiveSheet(null);
+    },
+    [onSelectModelGateway],
   );
 
   const handleSelectModeAndClose = useCallback(
@@ -688,6 +743,8 @@ function ControlledStatusBar({
           selectedModeId={selectedModeId}
           modelOptions={modelOptions}
           selectedModelId={selectedModelId}
+          modelGatewayOptions={modelGatewayOptions}
+          selectedModelGatewayId={selectedModelGatewayId}
           thinkingOptions={thinkingOptions}
           selectedThinkingOptionId={selectedThinkingOptionId}
           features={features}
@@ -702,32 +759,40 @@ function ControlledStatusBar({
           canSelectProvider={canSelectProvider}
           canSelectMode={canSelectMode}
           canSelectModel={canSelectModel}
+          canSelectModelGateway={canSelectModelGateway}
           canSelectThinking={canSelectThinking}
           modelSelectorProviders={effectiveModelSelectorProviders}
           modelDisabled={modelDisabled}
           comboboxProviderOptions={comboboxProviderOptions}
           comboboxModeOptions={comboboxModeOptions}
+          comboboxModelGatewayOptions={comboboxModelGatewayOptions}
           comboboxThinkingOptions={comboboxThinkingOptions}
           displayProvider={displayProvider}
           displayModel={displayModel}
+          displayModelGateway={displayModelGateway}
           displayThinking={displayThinking}
           ModeIconComponent={ModeIconComponent}
           modeIconColor={modeIconColor}
           openSelector={openSelector}
           providerAnchorRef={providerAnchorRef}
+          gatewayAnchorRef={gatewayAnchorRef}
           thinkingAnchorRef={thinkingAnchorRef}
           modeAnchorRef={modeAnchorRef}
           providerPressableStyle={providerPressableStyle}
+          gatewayPressableStyle={gatewayPressableStyle}
           thinkingPressableStyle={thinkingPressableStyle}
           modePressableStyle={modePressableStyle}
           handleProviderPress={handleProviderPress}
+          handleGatewayPress={handleGatewayPress}
           handleThinkingPress={handleThinkingPress}
           handleModePress={handleModePress}
           handleProviderSelect={handleProviderSelect}
+          handleGatewaySelect={handleGatewaySelect}
           handleThinkingSelect={handleThinkingSelect}
           handleModeSelect={handleModeSelect}
           handleDesktopModelSelect={handleDesktopModelSelect}
           handleProviderOpenChange={handleProviderOpenChange}
+          handleGatewayOpenChange={handleGatewayOpenChange}
           handleThinkingOpenChange={handleThinkingOpenChange}
           handleModeOpenChange={handleModeOpenChange}
           handleOpenChange={handleOpenChange}
@@ -739,6 +804,8 @@ function ControlledStatusBar({
           provider={provider}
           selectedModeId={selectedModeId}
           selectedModelId={selectedModelId}
+          modelGatewayOptions={modelGatewayOptions}
+          selectedModelGatewayId={selectedModelGatewayId}
           selectedThinkingOptionId={selectedThinkingOptionId}
           features={features}
           onSetFeature={onSetFeature}
@@ -750,10 +817,12 @@ function ControlledStatusBar({
           isModelLoading={isModelLoading}
           canSelectMode={canSelectMode}
           canSelectModel={canSelectModel}
+          canSelectModelGateway={canSelectModelGateway}
           canSelectThinking={canSelectThinking}
           modelSelectorProviders={effectiveModelSelectorProviders}
           modelDisabled={modelDisabled}
           comboboxModeOptions={comboboxModeOptions}
+          comboboxModelGatewayOptions={comboboxModelGatewayOptions}
           comboboxThinkingOptions={comboboxThinkingOptions}
           ModeIconComponent={ModeIconComponent}
           modeIconColor={modeIconColor}
@@ -763,6 +832,7 @@ function ControlledStatusBar({
           handleOpenSheet={handleOpenSheet}
           handleCloseSheet={handleCloseSheet}
           handleSheetModelSelect={handleSheetModelSelect}
+          handleSelectGatewayAndClose={handleSelectGatewayAndClose}
           handleSelectThinkingAndClose={handleSelectThinkingAndClose}
           handleSelectModeAndClose={handleSelectModeAndClose}
           handleOpenChange={handleOpenChange}
@@ -782,6 +852,8 @@ interface DesktopStatusBarContentProps {
   selectedModeId?: string;
   modelOptions?: StatusOption[];
   selectedModelId?: string;
+  modelGatewayOptions?: StatusOption[];
+  selectedModelGatewayId?: string;
   thinkingOptions?: StatusOption[];
   selectedThinkingOptionId?: string;
   features?: AgentFeature[];
@@ -796,32 +868,40 @@ interface DesktopStatusBarContentProps {
   canSelectProvider: boolean;
   canSelectMode: boolean;
   canSelectModel: boolean;
+  canSelectModelGateway: boolean;
   canSelectThinking: boolean;
   modelSelectorProviders: ProviderSelectorProvider[];
   modelDisabled: boolean;
   comboboxProviderOptions: ComboboxOption[];
   comboboxModeOptions: ComboboxOption[];
+  comboboxModelGatewayOptions: ComboboxOption[];
   comboboxThinkingOptions: ComboboxOption[];
   displayProvider: string;
   displayModel: string;
+  displayModelGateway: string;
   displayThinking: string;
   ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
   modeIconColor: string;
   openSelector: StatusSelector | null;
   providerAnchorRef: RefObject<View | null>;
+  gatewayAnchorRef: RefObject<View | null>;
   thinkingAnchorRef: RefObject<View | null>;
   modeAnchorRef: RefObject<View | null>;
   providerPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  gatewayPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   thinkingPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   modePressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
   handleProviderPress: () => void;
+  handleGatewayPress: () => void;
   handleThinkingPress: () => void;
   handleModePress: () => void;
   handleProviderSelect: (id: string) => void;
+  handleGatewaySelect: (id: string) => void;
   handleThinkingSelect: (id: string) => void;
   handleModeSelect: (id: string) => void;
   handleDesktopModelSelect: (providerId: string, modelId: string) => void;
   handleProviderOpenChange: (open: boolean) => void;
+  handleGatewayOpenChange: (open: boolean) => void;
   handleThinkingOpenChange: (open: boolean) => void;
   handleModeOpenChange: (open: boolean) => void;
   handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
@@ -850,6 +930,8 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     modeOptions,
     selectedModeId,
     selectedModelId,
+    modelGatewayOptions,
+    selectedModelGatewayId,
     thinkingOptions,
     selectedThinkingOptionId,
     features,
@@ -863,32 +945,40 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
     canSelectProvider,
     canSelectMode,
     canSelectModel,
+    canSelectModelGateway,
     canSelectThinking,
     modelSelectorProviders,
     modelDisabled,
     comboboxProviderOptions,
     comboboxModeOptions,
+    comboboxModelGatewayOptions,
     comboboxThinkingOptions,
     displayProvider,
     displayModel,
+    displayModelGateway,
     displayThinking,
     ModeIconComponent,
     modeIconColor,
     openSelector,
     providerAnchorRef,
+    gatewayAnchorRef,
     thinkingAnchorRef,
     modeAnchorRef,
     providerPressableStyle,
+    gatewayPressableStyle,
     thinkingPressableStyle,
     modePressableStyle,
     handleProviderPress,
+    handleGatewayPress,
     handleThinkingPress,
     handleModePress,
     handleProviderSelect,
+    handleGatewaySelect,
     handleThinkingSelect,
     handleModeSelect,
     handleDesktopModelSelect,
     handleProviderOpenChange,
+    handleGatewayOpenChange,
     handleThinkingOpenChange,
     handleModeOpenChange,
     handleOpenChange,
@@ -954,6 +1044,21 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
           </TooltipContent>
         </Tooltip>
       ) : null}
+
+      <DesktopModelGatewaySelector
+        modelGatewayOptions={modelGatewayOptions}
+        selectedModelGatewayId={selectedModelGatewayId}
+        canSelectModelGateway={canSelectModelGateway}
+        disabled={disabled}
+        displayModelGateway={displayModelGateway}
+        comboboxModelGatewayOptions={comboboxModelGatewayOptions}
+        openSelector={openSelector}
+        gatewayAnchorRef={gatewayAnchorRef}
+        gatewayPressableStyle={gatewayPressableStyle}
+        handleGatewayPress={handleGatewayPress}
+        handleGatewaySelect={handleGatewaySelect}
+        handleGatewayOpenChange={handleGatewayOpenChange}
+      />
 
       {thinkingOptions && thinkingOptions.length > 0 ? (
         <>
@@ -1045,10 +1150,80 @@ function DesktopStatusBarContent(props: DesktopStatusBarContentProps) {
   );
 }
 
+function DesktopModelGatewaySelector({
+  modelGatewayOptions,
+  selectedModelGatewayId,
+  canSelectModelGateway,
+  disabled,
+  displayModelGateway,
+  comboboxModelGatewayOptions,
+  openSelector,
+  gatewayAnchorRef,
+  gatewayPressableStyle,
+  handleGatewayPress,
+  handleGatewaySelect,
+  handleGatewayOpenChange,
+}: {
+  modelGatewayOptions?: StatusOption[];
+  selectedModelGatewayId?: string;
+  canSelectModelGateway: boolean;
+  disabled: boolean;
+  displayModelGateway: string;
+  comboboxModelGatewayOptions: ComboboxOption[];
+  openSelector: StatusSelector | null;
+  gatewayAnchorRef: RefObject<View | null>;
+  gatewayPressableStyle: (state: PressableStateCallbackType) => StyleProp<ViewStyle>;
+  handleGatewayPress: () => void;
+  handleGatewaySelect: (id: string) => void;
+  handleGatewayOpenChange: (open: boolean) => void;
+}) {
+  const { theme } = useUnistyles();
+  if (!modelGatewayOptions?.length) {
+    return null;
+  }
+  return (
+    <>
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild triggerRefProp="ref">
+          <Pressable
+            ref={gatewayAnchorRef}
+            collapsable={false}
+            disabled={disabled || !canSelectModelGateway}
+            onPress={handleGatewayPress}
+            style={gatewayPressableStyle}
+            accessibilityRole="button"
+            accessibilityLabel={`Select model gateway (${displayModelGateway})`}
+            testID="agent-model-gateway-selector"
+          >
+            <Route size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+            <Text style={styles.modeBadgeText}>{displayModelGateway}</Text>
+            <ChevronDown size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+          </Pressable>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="center" offset={8}>
+          <Text style={styles.tooltipText}>{getStatusSelectorHint("gateway")}</Text>
+        </TooltipContent>
+      </Tooltip>
+      <Combobox
+        options={comboboxModelGatewayOptions}
+        value={selectedModelGatewayId ?? ""}
+        onSelect={handleGatewaySelect}
+        searchable={comboboxModelGatewayOptions.length > DESKTOP_SEARCH_THRESHOLD}
+        open={openSelector === "gateway"}
+        onOpenChange={handleGatewayOpenChange}
+        anchorRef={gatewayAnchorRef}
+        desktopPlacement="top-start"
+      />
+    </>
+  );
+}
+
 interface SheetStatusBarContentProps {
   provider: string;
   selectedModeId?: string;
   selectedModelId?: string;
+  modelGatewayOptions?: StatusOption[];
+  selectedModelGatewayId?: string;
   selectedThinkingOptionId?: string;
   features?: AgentFeature[];
   onSetFeature?: (featureId: string, value: unknown) => void;
@@ -1060,10 +1235,12 @@ interface SheetStatusBarContentProps {
   isModelLoading: boolean;
   canSelectMode: boolean;
   canSelectModel: boolean;
+  canSelectModelGateway: boolean;
   canSelectThinking: boolean;
   modelSelectorProviders: ProviderSelectorProvider[];
   modelDisabled: boolean;
   comboboxModeOptions: ComboboxOption[];
+  comboboxModelGatewayOptions: ComboboxOption[];
   comboboxThinkingOptions: ComboboxOption[];
   ModeIconComponent: (typeof MODE_ICONS)[keyof typeof MODE_ICONS] | null;
   modeIconColor: string;
@@ -1073,6 +1250,7 @@ interface SheetStatusBarContentProps {
   handleOpenSheet: (sheet: Exclude<ActiveSheet, null>) => void;
   handleCloseSheet: () => void;
   handleSheetModelSelect: (providerId: string, modelId: string) => void;
+  handleSelectGatewayAndClose: (gatewayId: string) => void;
   handleSelectThinkingAndClose: (thinkingOptionId: string) => void;
   handleSelectModeAndClose: (modeId: string) => void;
   handleOpenChange: (selector: StatusSelector) => (nextOpen: boolean) => void;
@@ -1096,6 +1274,8 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     provider,
     selectedModeId,
     selectedModelId,
+    modelGatewayOptions,
+    selectedModelGatewayId,
     selectedThinkingOptionId,
     features,
     onSetFeature,
@@ -1107,10 +1287,12 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     isModelLoading,
     canSelectMode,
     canSelectModel,
+    canSelectModelGateway,
     canSelectThinking,
     modelSelectorProviders,
     modelDisabled,
     comboboxModeOptions,
+    comboboxModelGatewayOptions,
     comboboxThinkingOptions,
     ModeIconComponent,
     modeIconColor,
@@ -1120,6 +1302,7 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
     handleOpenSheet,
     handleCloseSheet,
     handleSheetModelSelect,
+    handleSelectGatewayAndClose,
     handleSelectThinkingAndClose,
     handleSelectModeAndClose,
     handleOpenChange,
@@ -1216,6 +1399,18 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
         />
       ) : null}
 
+      <SheetModelGatewaySelector
+        modelGatewayOptions={modelGatewayOptions}
+        selectedModelGatewayId={selectedModelGatewayId}
+        canSelectModelGateway={canSelectModelGateway}
+        disabled={disabled}
+        activeSheet={activeSheet}
+        handleOpenSheet={handleOpenSheet}
+        handleCloseSheet={handleCloseSheet}
+        handleSelectGatewayAndClose={handleSelectGatewayAndClose}
+        comboboxModelGatewayOptions={comboboxModelGatewayOptions}
+      />
+
       {hasThinking ? (
         <Pressable
           ref={thinkingAnchorRef}
@@ -1306,6 +1501,81 @@ function SheetStatusBarContent(props: SheetStatusBarContentProps) {
           />
         ))}
       </AdaptiveModalSheet>
+    </>
+  );
+}
+
+function SheetModelGatewaySelector({
+  modelGatewayOptions,
+  selectedModelGatewayId,
+  canSelectModelGateway,
+  disabled,
+  activeSheet,
+  handleOpenSheet,
+  handleCloseSheet,
+  handleSelectGatewayAndClose,
+  comboboxModelGatewayOptions,
+}: {
+  modelGatewayOptions?: StatusOption[];
+  selectedModelGatewayId?: string;
+  canSelectModelGateway: boolean;
+  disabled: boolean;
+  activeSheet: ActiveSheet;
+  handleOpenSheet: (sheet: Exclude<ActiveSheet, null>) => void;
+  handleCloseSheet: () => void;
+  handleSelectGatewayAndClose: (gatewayId: string) => void;
+  comboboxModelGatewayOptions: ComboboxOption[];
+}) {
+  const { theme } = useUnistyles();
+  const gatewayAnchorRef = useRef<View | null>(null);
+  const hasGateway = Boolean(
+    canSelectModelGateway && modelGatewayOptions && modelGatewayOptions.length > 0,
+  );
+  const handleOpenGateway = useCallback(() => handleOpenSheet("gateway"), [handleOpenSheet]);
+  const handleGatewaySheetOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (nextOpen) {
+        handleOpenSheet("gateway");
+      } else {
+        handleCloseSheet();
+      }
+    },
+    [handleCloseSheet, handleOpenSheet],
+  );
+  const gatewayButtonStyle = makeBadgePressableStyle(
+    styles.modeIconBadge,
+    styles.disabledBadge,
+    disabled || !canSelectModelGateway,
+    activeSheet === "gateway",
+  );
+
+  if (!hasGateway) {
+    return null;
+  }
+
+  return (
+    <>
+      <Pressable
+        ref={gatewayAnchorRef}
+        onPress={handleOpenGateway}
+        disabled={disabled || !canSelectModelGateway}
+        style={gatewayButtonStyle}
+        accessibilityRole="button"
+        accessibilityLabel="Select model gateway"
+        testID="agent-status-bar-gateway"
+      >
+        <Route size={theme.iconSize.md} color={theme.colors.foregroundMuted} />
+      </Pressable>
+      <Combobox
+        options={comboboxModelGatewayOptions}
+        value={selectedModelGatewayId ?? ""}
+        onSelect={handleSelectGatewayAndClose}
+        searchable={false}
+        title="Model Gateway"
+        open={activeSheet === "gateway"}
+        onOpenChange={handleGatewaySheetOpenChange}
+        anchorRef={gatewayAnchorRef}
+      />
     </>
   );
 }
@@ -1869,6 +2139,9 @@ export function DraftAgentStatusBar({
   modelSelectorProviders,
   isAllModelsLoading,
   onSelectProviderAndModel,
+  modelGatewayOptions,
+  selectedModelGatewayId,
+  onSelectModelGateway,
   thinkingOptions,
   selectedThinkingOptionId,
   onSelectThinkingOption,
@@ -1949,6 +2222,9 @@ export function DraftAgentStatusBar({
             modeOptions={mappedModeOptions}
             selectedModeId={effectiveSelectedMode}
             onSelectMode={onSelectMode}
+            modelGatewayOptions={modelGatewayOptions}
+            selectedModelGatewayId={selectedModelGatewayId}
+            onSelectModelGateway={onSelectModelGateway}
             thinkingOptions={mappedThinkingOptions.length > 0 ? mappedThinkingOptions : undefined}
             selectedThinkingOptionId={effectiveSelectedThinkingOption}
             onSelectThinkingOption={onSelectThinkingOption}
@@ -1974,6 +2250,9 @@ export function DraftAgentStatusBar({
       selectedModelId={selectedModel}
       onSelectModel={onSelectModel}
       onSelectProviderAndModel={onSelectProviderAndModel}
+      modelGatewayOptions={modelGatewayOptions}
+      selectedModelGatewayId={selectedModelGatewayId}
+      onSelectModelGateway={onSelectModelGateway}
       isModelLoading={isAllModelsLoading}
       favoriteKeys={favoriteKeys}
       onToggleFavoriteModel={handleToggleFavorite}

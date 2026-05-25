@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard, ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,6 +9,7 @@ import { FileDropZone } from "@/components/file-drop-zone";
 import { AgentStreamView } from "@/components/agent-stream-view";
 import { composerWorkspaceAttachment } from "@/attachments/composer-workspace-attachments";
 import type { ImageAttachment } from "@/components/message-input";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useAgentInputDraft } from "@/hooks/use-agent-input-draft";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
 import { useDraftAgentCreateFlow } from "@/hooks/use-draft-agent-create-flow";
@@ -23,7 +24,10 @@ import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import { validateDraftSubmission } from "@/screens/workspace/workspace-draft-agent-tab-core";
-import type { AgentCapabilityFlags } from "@server/server/agent/agent-sdk-types";
+import type {
+  AgentCapabilityFlags,
+  AgentSessionConfig,
+} from "@server/server/agent/agent-sdk-types";
 import type { AgentSnapshotPayload } from "@server/shared/messages";
 import type { DaemonClient } from "@server/client/daemon-client";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
@@ -38,6 +42,8 @@ import type { WorkspaceDraftTabSetup } from "@/stores/workspace-tabs-store";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];
+const EMPTY_MODEL_GATEWAYS: Record<string, NonNullable<AgentSessionConfig["modelGateway"]>> = {};
+const NATIVE_MODEL_GATEWAY_ID = "native";
 const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: false,
@@ -120,6 +126,7 @@ async function submitDraftCreateRequest(input: {
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
     featureValues: Record<string, unknown> | undefined;
+    modelGateway?: AgentSessionConfig["modelGateway"];
   };
 }): Promise<{ agentId: string | null; result: AgentSnapshotPayload }> {
   const {
@@ -157,6 +164,7 @@ async function submitDraftCreateRequest(input: {
     thinkingOptionId:
       autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
     featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
+    modelGateway: composerState.modelGateway,
   });
 
   const imagesData = await encodeImages(images);
@@ -267,6 +275,45 @@ function resolveOnlineServerIds(input: { isConnected: boolean; serverId: string 
   return [input.serverId];
 }
 
+function useDraftModelGatewaySelection(serverId: string): {
+  modelGateway: AgentSessionConfig["modelGateway"] | undefined;
+  statusOptions: { id: string; label: string }[] | undefined;
+  selectedId: string;
+  setSelectedId: (id: string) => void;
+} {
+  const { config: daemonConfig } = useDaemonConfig(serverId);
+  const modelGateways = daemonConfig?.modelGateways ?? EMPTY_MODEL_GATEWAYS;
+  const entries = useMemo(
+    () => Object.entries(modelGateways).sort(([left], [right]) => left.localeCompare(right)),
+    [modelGateways],
+  );
+  const [selectedId, setSelectedId] = useState<string>(NATIVE_MODEL_GATEWAY_ID);
+
+  useEffect(() => {
+    if (selectedId !== NATIVE_MODEL_GATEWAY_ID && !modelGateways[selectedId]) {
+      setSelectedId(NATIVE_MODEL_GATEWAY_ID);
+    }
+  }, [modelGateways, selectedId]);
+
+  const options = useMemo(
+    () => [
+      { id: NATIVE_MODEL_GATEWAY_ID, label: "Native" },
+      ...entries.map(([id, gateway]) => ({
+        id,
+        label: gateway.label?.trim() || id,
+      })),
+    ],
+    [entries],
+  );
+
+  return {
+    modelGateway: selectedId === NATIVE_MODEL_GATEWAY_ID ? undefined : modelGateways[selectedId],
+    statusOptions: entries.length > 0 ? options : undefined,
+    selectedId,
+    setSelectedId,
+  };
+}
+
 interface WorkspaceDraftAgentTabProps {
   serverId: string;
   workspaceId: string;
@@ -341,6 +388,12 @@ export function WorkspaceDraftAgentTab({
   if (!composerState) {
     throw new Error("Workspace draft composer state is required");
   }
+  const {
+    modelGateway: selectedModelGateway,
+    statusOptions: modelGatewayStatusOptions,
+    selectedId: selectedModelGatewayId,
+    setSelectedId: setSelectedModelGatewayId,
+  } = useDraftModelGatewaySelection(serverId);
   const clearDraftInput = draftInput.clear;
   const setDraftText = draftInput.setText;
   const setDraftAttachments = draftInput.setAttachments;
@@ -429,7 +482,10 @@ export function WorkspaceDraftAgentTab({
         workspaceDirectory: draftWorkingDirectory,
         workspaceExecutionAuthority,
         autoSubmitConfig,
-        composerState,
+        composerState: {
+          ...composerState,
+          modelGateway: selectedModelGateway,
+        },
       }),
     onCreateSuccess: ({ result }) => {
       clearDraftInput("sent");
@@ -538,6 +594,14 @@ export function WorkspaceDraftAgentTab({
     [composerState],
   );
 
+  const handleModelGatewaySelectWithFocus = useCallback(
+    (gatewayId: string) => {
+      setSelectedModelGatewayId(gatewayId);
+      focusInputRef.current?.();
+    },
+    [setSelectedModelGatewayId],
+  );
+
   const handleSetFeatureWithFocus = useCallback(
     (featureId: string, value: unknown) => {
       composerState.statusControls.onSetFeature?.(featureId, value);
@@ -562,6 +626,9 @@ export function WorkspaceDraftAgentTab({
       onSelectMode: handleModeSelectWithFocus,
       onSelectModel: handleModelSelectWithFocus,
       onSelectProviderAndModel: handleProviderAndModelSelectWithFocus,
+      modelGatewayOptions: modelGatewayStatusOptions,
+      selectedModelGatewayId,
+      onSelectModelGateway: handleModelGatewaySelectWithFocus,
       onSelectThinkingOption: handleThinkingOptionSelectWithFocus,
       onSetFeature: handleSetFeatureWithFocus,
       onDropdownClose: handleDropdownCloseFocus,
@@ -573,6 +640,9 @@ export function WorkspaceDraftAgentTab({
       handleModeSelectWithFocus,
       handleModelSelectWithFocus,
       handleProviderAndModelSelectWithFocus,
+      modelGatewayStatusOptions,
+      selectedModelGatewayId,
+      handleModelGatewaySelectWithFocus,
       handleThinkingOptionSelectWithFocus,
       handleSetFeatureWithFocus,
       handleDropdownCloseFocus,
