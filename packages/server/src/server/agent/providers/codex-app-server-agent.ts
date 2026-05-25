@@ -2798,6 +2798,7 @@ function buildCodexModelGatewayConfig(
     },
     agents: {
       subagent: {
+        description: "Subagent routed through the selected model gateway.",
         model: gatewayModel ?? "",
       },
     },
@@ -2948,6 +2949,19 @@ function quoteTomlString(value: string): string {
   return JSON.stringify(value);
 }
 
+function remapCodexGatewayHookStateToml(
+  baseToml: string,
+  sourceHome: string,
+  gatewayHome: string,
+): string {
+  const sourceHooksPath = quoteTomlString(path.join(sourceHome, "hooks.json")).slice(1, -1);
+  const gatewayHooksPath = quoteTomlString(path.join(gatewayHome, "hooks.json")).slice(1, -1);
+  return baseToml.replaceAll(
+    `[hooks.state."${sourceHooksPath}:`,
+    `[hooks.state."${gatewayHooksPath}:`,
+  );
+}
+
 function removeTopLevelTomlKeys(source: string, keys: string[]): string {
   const lines = source.split(/\r?\n/);
   let inTopLevel = true;
@@ -3012,6 +3026,7 @@ function patchCodexGatewayConfigToml(
     "requires_openai_auth = false",
     "",
     "[agents.subagent]",
+    'description = "Subagent routed through the selected model gateway."',
     `model = ${quoteTomlString(gatewayModel)}`,
   ].join("\n");
   return `${rootToml}${nextToml ? `\n\n${nextToml}` : ""}\n${gatewayToml}\n`;
@@ -3049,9 +3064,10 @@ async function prepareCodexModelGatewayLaunchEnv(
   const gatewayHome = path.join(gatewayRoot, "home");
   await syncCodexGatewayHomeSource(sourceHome, baseHome, gatewayHome);
   const baseConfigToml = await readTextFileIfExists(path.join(baseHome, "config.toml"));
+  const gatewayConfigToml = remapCodexGatewayHookStateToml(baseConfigToml, sourceHome, gatewayHome);
   await fs.writeFile(
     path.join(gatewayHome, "config.toml"),
-    patchCodexGatewayConfigToml(baseConfigToml, modelGateway),
+    patchCodexGatewayConfigToml(gatewayConfigToml, modelGateway),
     "utf8",
   );
   await writeCodexGatewayAuthJson(gatewayHome, modelGateway);
