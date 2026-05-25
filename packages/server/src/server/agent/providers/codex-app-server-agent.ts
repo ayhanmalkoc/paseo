@@ -3815,6 +3815,12 @@ class CodexAppServerAgentSession implements AgentSession {
 
   async setModel(modelId: string | null): Promise<void> {
     this.config.model = modelId ?? undefined;
+    if (this.config.modelGateway?.type === "openai-compatible") {
+      this.config.modelGateway = {
+        ...this.config.modelGateway,
+        model: modelId ?? undefined,
+      };
+    }
     if (!codexModelSupportsFastMode(this.config.model)) {
       this.serviceTier = null;
     }
