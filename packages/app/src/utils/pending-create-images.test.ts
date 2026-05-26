@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
-import { mergePendingCreateImages } from "./pending-create-images";
+import {
+  findPendingCreateUserMessageIndex,
+  mergePendingCreateImages,
+} from "./pending-create-images";
 import type { AgentAttachment } from "@server/shared/messages";
 
 function userMessage(params: {
@@ -106,6 +109,25 @@ describe("mergePendingCreateImages", () => {
     expect(result).toBe(streamItems);
   });
 
+  it("merges into the first authoritative create message when the provider replaces its id", () => {
+    const streamItems = [userMessage({ id: "provider-id", text: "same text" })];
+    const images = buildImage("image-provider-id");
+    const result = mergePendingCreateImages({
+      streamItems,
+      clientMessageId: "client-id",
+      text: "same text",
+      images,
+    });
+
+    expect(result).not.toBe(streamItems);
+    const updated = result[0];
+    expect(updated?.kind).toBe("user_message");
+    if (updated?.kind !== "user_message") {
+      throw new Error("Expected user_message item");
+    }
+    expect(updated.images).toEqual(images);
+  });
+
   it("does not overwrite existing user message images", () => {
     const existingImages = buildImage("existing");
     const streamItems = [userMessage({ id: "msg-1", text: "hello", images: existingImages })];
@@ -150,5 +172,34 @@ describe("mergePendingCreateImages", () => {
       throw new Error("Expected user_message item");
     }
     expect(unchanged.attachments).toEqual(existingAttachments);
+  });
+});
+
+describe("findPendingCreateUserMessageIndex", () => {
+  it("recognizes the provider-authored first message by pending create text", () => {
+    const streamItems = [userMessage({ id: "provider-id", text: "hello" })];
+
+    expect(
+      findPendingCreateUserMessageIndex({
+        streamItems,
+        clientMessageId: "client-id",
+        text: "hello",
+      }),
+    ).toBe(0);
+  });
+
+  it("does not reconcile a repeated later message by text", () => {
+    const streamItems = [
+      userMessage({ id: "provider-first", text: "different" }),
+      userMessage({ id: "provider-second", text: "hello" }),
+    ];
+
+    expect(
+      findPendingCreateUserMessageIndex({
+        streamItems,
+        clientMessageId: "client-id",
+        text: "hello",
+      }),
+    ).toBe(-1);
   });
 });

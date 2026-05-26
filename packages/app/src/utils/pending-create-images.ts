@@ -4,13 +4,38 @@ import type { AgentAttachment } from "@server/shared/messages";
 interface MergePendingCreateImagesParams {
   streamItems: StreamItem[];
   clientMessageId: string;
+  text?: string;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
+}
+
+export function findPendingCreateUserMessageIndex({
+  streamItems,
+  clientMessageId,
+  text,
+}: Pick<MergePendingCreateImagesParams, "streamItems" | "clientMessageId" | "text">): number {
+  const clientMessageIndex = streamItems.findIndex(
+    (item) => item.kind === "user_message" && item.id === clientMessageId,
+  );
+  if (clientMessageIndex >= 0 || text === undefined) {
+    return clientMessageIndex;
+  }
+
+  const firstUserMessageIndex = streamItems.findIndex((item) => item.kind === "user_message");
+  if (firstUserMessageIndex < 0) {
+    return -1;
+  }
+
+  const firstUserMessage = streamItems[firstUserMessageIndex];
+  return firstUserMessage.kind === "user_message" && firstUserMessage.text === text
+    ? firstUserMessageIndex
+    : -1;
 }
 
 export function mergePendingCreateImages({
   streamItems,
   clientMessageId,
+  text,
   images,
   attachments,
 }: MergePendingCreateImagesParams): StreamItem[] {
@@ -20,9 +45,7 @@ export function mergePendingCreateImages({
     return streamItems;
   }
 
-  const targetIndex = streamItems.findIndex(
-    (item) => item.kind === "user_message" && item.id === clientMessageId,
-  );
+  const targetIndex = findPendingCreateUserMessageIndex({ streamItems, clientMessageId, text });
   if (targetIndex < 0) {
     return streamItems;
   }

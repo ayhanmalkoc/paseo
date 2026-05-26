@@ -60,7 +60,10 @@ import type { StreamItem } from "@/types/stream";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
-import { mergePendingCreateImages } from "@/utils/pending-create-images";
+import {
+  findPendingCreateUserMessageIndex,
+  mergePendingCreateImages,
+} from "@/utils/pending-create-images";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
@@ -1188,6 +1191,17 @@ function AgentStreamSection({
     ];
   }, [pendingCreate, shouldUseOptimisticStream]);
 
+  const pendingCreateUserMessageIndex = useMemo(() => {
+    if (!pendingCreate) {
+      return -1;
+    }
+    return findPendingCreateUserMessageIndex({
+      streamItems,
+      clientMessageId: pendingCreate.clientMessageId,
+      text: pendingCreate.text,
+    });
+  }, [pendingCreate, streamItems]);
+
   const mergedStreamItems = useMemo<StreamItem[]>(() => {
     if (optimisticStreamItems.length === 0) {
       return streamItems;
@@ -1196,20 +1210,16 @@ function AgentStreamSection({
     if (!optimistic) {
       return streamItems;
     }
-    const alreadyHasOptimistic = streamItems.some(
-      (item) => item.kind === "user_message" && item.id === optimistic.id,
-    );
-    return alreadyHasOptimistic ? streamItems : [...optimisticStreamItems, ...streamItems];
-  }, [optimisticStreamItems, streamItems]);
+    return pendingCreateUserMessageIndex >= 0
+      ? streamItems
+      : [...optimisticStreamItems, ...streamItems];
+  }, [optimisticStreamItems, pendingCreateUserMessageIndex, streamItems]);
 
   useEffect(() => {
     if (!shouldUseOptimisticStream || !pendingCreate) {
       return;
     }
-    const hasUserMessage = streamItems.some(
-      (item) => item.kind === "user_message" && item.id === pendingCreate.clientMessageId,
-    );
-    if (!hasUserMessage || !canFinalizePendingCreate) {
+    if (pendingCreateUserMessageIndex < 0 || !canFinalizePendingCreate) {
       return;
     }
 
@@ -1227,6 +1237,7 @@ function AgentStreamSection({
         const merged = mergePendingCreateImages({
           streamItems: current,
           clientMessageId: pendingCreate.clientMessageId,
+          text: pendingCreate.text,
           images: pendingImages,
           attachments: pendingAttachments,
         });
@@ -1250,6 +1261,7 @@ function AgentStreamSection({
     clearPendingCreate,
     markPendingCreateLifecycle,
     pendingCreate,
+    pendingCreateUserMessageIndex,
     serverId,
     setAgentStreamTail,
     shouldUseOptimisticStream,
