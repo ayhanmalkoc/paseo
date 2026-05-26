@@ -1,10 +1,12 @@
 import type { AgentFeature, AgentModelDefinition } from "@server/server/agent/agent-sdk-types";
 
-export type ExplainedStatusSelector = "mode" | "model" | "thinking";
+export type ExplainedStatusSelector = "gateway" | "mode" | "model" | "thinking";
 export type FeatureHighlightColor = "blue" | "default" | "yellow";
 
 export function getStatusSelectorHint(selector: ExplainedStatusSelector): string {
   switch (selector) {
+    case "gateway":
+      return "Model gateway";
     case "thinking":
       return "Thinking mode";
     case "model":

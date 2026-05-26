@@ -105,6 +105,28 @@ const MutableDaemonProviderConfigSchema = z
   })
   .passthrough();
 
+export const ModelGatewayConfigSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("native"),
+      id: z.string().optional(),
+      label: z.string().optional(),
+      provider: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      type: z.literal("openai-compatible"),
+      id: z.string().optional(),
+      label: z.string().optional(),
+      provider: z.string().optional(),
+      baseUrl: z.string().trim().min(1),
+      model: z.string().trim().min(1).optional(),
+      apiKey: z.string().optional(),
+    })
+    .passthrough(),
+]);
+
 export const MutableDaemonConfigSchema = z
   .object({
     mcp: z
@@ -113,6 +135,7 @@ export const MutableDaemonConfigSchema = z
       })
       .passthrough(),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
+    modelGateways: z.record(z.string(), ModelGatewayConfigSchema).default({}),
     autoArchiveAfterMerge: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
   })
@@ -124,6 +147,7 @@ export const MutableDaemonConfigPatchSchema = z
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
+    modelGateways: z.record(z.string(), ModelGatewayConfigSchema).optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
   })
@@ -132,6 +156,7 @@ export const MutableDaemonConfigPatchSchema = z
 
 export type MutableDaemonConfig = z.infer<typeof MutableDaemonConfigSchema>;
 export type MutableDaemonConfigPatch = z.infer<typeof MutableDaemonConfigPatchSchema>;
+export type ModelGatewayConfig = z.infer<typeof ModelGatewayConfigSchema>;
 import type { LiteralUnion } from "./literal-union.js";
 import type {
   AgentCapabilityFlags,
@@ -286,6 +311,7 @@ const AgentSessionConfigSchema = z.object({
   sandboxMode: z.string().optional(),
   networkAccess: z.boolean().optional(),
   webSearch: z.boolean().optional(),
+  modelGateway: ModelGatewayConfigSchema.optional(),
   extra: z
     .object({
       codex: z.record(z.unknown()).optional(),
@@ -1006,6 +1032,12 @@ export const SetDaemonConfigRequestMessageSchema = z.object({
   type: z.literal("set_daemon_config_request"),
   requestId: z.string(),
   config: MutableDaemonConfigPatchSchema,
+});
+
+export const ListModelGatewayModelsRequestMessageSchema = z.object({
+  type: z.literal("model_gateway.models.list.request"),
+  requestId: z.string(),
+  gateway: ModelGatewayConfigSchema,
 });
 
 export const ReadProjectConfigRequestMessageSchema = z.object({
@@ -1855,6 +1887,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DaemonGetPairingOfferRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
+  ListModelGatewayModelsRequestMessageSchema,
   ReadProjectConfigRequestMessageSchema,
   WriteProjectConfigRequestMessageSchema,
   DictationStreamStartMessageSchema,
@@ -2124,6 +2157,8 @@ export const ServerInfoStatusPayloadSchema = z
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: z.boolean().optional(),
+        // COMPAT(modelGateways): added in v0.1.82, remove gate after 2026-11-24.
+        modelGateways: z.boolean().optional(),
       })
       .optional(),
   })
@@ -2736,6 +2771,16 @@ export const SetDaemonConfigResponseMessageSchema = z.object({
       config: MutableDaemonConfigSchema,
     })
     .passthrough(),
+});
+
+export const ListModelGatewayModelsResponseMessageSchema = z.object({
+  type: z.literal("model_gateway.models.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    models: z.array(z.string()),
+    error: z.string().nullable(),
+    fetchedAt: z.string(),
+  }),
 });
 
 export const ReadProjectConfigResponseMessageSchema = z.object({
@@ -3647,6 +3692,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   DaemonGetPairingOfferResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
+  ListModelGatewayModelsResponseMessageSchema,
   ReadProjectConfigResponseMessageSchema,
   WriteProjectConfigResponseMessageSchema,
   SetAgentModeResponseMessageSchema,
@@ -3732,6 +3778,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
+export type ListModelGatewayModelsResponseMessage = z.infer<
+  typeof ListModelGatewayModelsResponseMessageSchema
+>;
 
 // Type exports for individual message types
 export type ActivityLogMessage = z.infer<typeof ActivityLogMessageSchema>;
