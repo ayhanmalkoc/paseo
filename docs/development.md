@@ -11,6 +11,14 @@
 npm run dev
 ```
 
+For the fixed Tailnet dev setup from the main fork checkout, run:
+
+```bash
+npm run dev:tailnet
+```
+
+This starts the daemon on `127.0.0.1:7777`, Expo web on `127.0.0.1:8081`, and configures Tailscale Serve so `https://vmi3276356.tail0fe4ed.ts.net/` proxies to the web app while `https://vmi3276356.tail0fe4ed.ts.net:7777/` proxies to the daemon. The app connects with `EXPO_PUBLIC_LOCAL_DAEMON=vmi3276356.tail0fe4ed.ts.net:7777`. Override with `PASEO_TAILNET_HOST`, `PASEO_TAILNET_DAEMON_PORT`, or `PASEO_TAILNET_WEB_PORT` when needed.
+
 `scripts/dev.sh` runs the daemon and Expo together via `concurrently`, fronted by [`portless`](https://www.npmjs.com/package/portless) so each service is reachable at a stable name like `https://daemon.localhost` / `https://app.localhost` instead of a fixed port. The underlying TCP ports are ephemeral — never hardcode them. (Windows uses `scripts/dev.ps1`, which still binds the daemon to `localhost:6767` directly.)
 
 ### PASEO_HOME
