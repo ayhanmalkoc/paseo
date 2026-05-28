@@ -48,12 +48,14 @@ import {
   mapCodexToolCallFromThreadItem,
 } from "./codex/tool-call-mapper.js";
 import {
+  checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
-  resolveProviderCommandPrefix,
+  resolveProviderLaunch,
   type ProviderRuntimeSettings,
+  type ResolvedProviderLaunch,
 } from "../provider-launch-config.js";
-import { findExecutable, isCommandAvailable, probeExecutable } from "../../../utils/executable.js";
+import { findExecutable, probeExecutable } from "../../../utils/executable.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import { spawnProcess } from "../../../utils/spawn.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
@@ -78,6 +80,7 @@ import {
   formatDiagnosticStatus,
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
+  buildBinaryDiagnosticRows,
   resolveBinaryVersion,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
@@ -443,21 +446,41 @@ export async function findDefaultCodexBinary(): Promise<string | null> {
   return (await findExecutable("codex")) ?? (await findCodexMicrosoftStoreBinary());
 }
 
-async function resolveCodexBinary(): Promise<string> {
-  const found = await findDefaultCodexBinary();
-  if (found) {
-    return found;
-  }
-  throw new Error(
-    "Codex binary not found. Install the Codex CLI (https://github.com/openai/codex) and ensure it is available in your shell PATH.",
-  );
-}
-
 async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
   command: string;
   args: string[];
 }> {
-  return resolveProviderCommandPrefix(runtimeSettings?.command, resolveCodexBinary);
+  const launch = await resolveCodexLaunch(runtimeSettings);
+  const availability = await checkCodexLaunchAvailable(launch);
+  if (!availability.available) {
+    throw new Error(
+      "Codex binary not found. Install the Codex CLI (https://github.com/openai/codex) and ensure it is available in your shell PATH.",
+    );
+  }
+  return {
+    command:
+      launch.source === "override" ? launch.command : (availability.resolvedPath ?? launch.command),
+    args: launch.args,
+  };
+}
+
+async function resolveCodexLaunch(
+  runtimeSettings?: ProviderRuntimeSettings,
+): Promise<ResolvedProviderLaunch> {
+  return resolveProviderLaunch({
+    commandConfig: runtimeSettings?.command,
+    defaultBinary: {
+      command: "codex",
+      resolvePath: findDefaultCodexBinary,
+    },
+  });
+}
+
+async function checkCodexLaunchAvailable(launch: ResolvedProviderLaunch) {
+  return checkProviderLaunchAvailable(launch, {
+    command: "codex",
+    resolvePath: findDefaultCodexBinary,
+  });
 }
 
 function expandHomePath(input: string): string {
@@ -2815,12 +2838,23 @@ function buildCodexAppServerInitializeParams(): {
   };
 }
 
+const CODEX_MODEL_GATEWAY_PROTOCOL = "responses";
+
 function normalizeOpenAICompatibleBaseUrl(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) {
     return null;
   }
-  const withoutTrailingSlashes = trimmed.replace(/\/+$/u, "");
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return null;
+  }
+  const withoutTrailingSlashes = url.toString().replace(/\/+$/u, "");
   if (withoutTrailingSlashes.endsWith("/v1")) {
     return withoutTrailingSlashes;
   }
@@ -2845,7 +2879,7 @@ function buildCodexCustomProviderConfig(
   const providerConfig: Record<string, unknown> = {
     name: customProvider.label,
     base_url: normalizedBaseUrl,
-    wire_api: "responses",
+    wire_api: CODEX_MODEL_GATEWAY_PROTOCOL,
   };
   if (runtimeSettings?.env?.OPENAI_API_KEY?.trim()) {
     providerConfig.env_key = "OPENAI_API_KEY";
@@ -2869,10 +2903,11 @@ function buildCodexModelGatewayConfig(
   if (!normalizedBaseUrl) {
     throw new Error("Model gateway base URL must be an http(s) URL");
   }
+  const protocol = resolveCodexModelGatewayProtocol(modelGateway);
   const providerConfig: Record<string, unknown> = {
     name: modelGateway.label?.trim() || "Model Gateway",
     base_url: normalizedBaseUrl,
-    wire_api: "responses",
+    wire_api: protocol,
     requires_openai_auth: false,
   };
   const envKey = resolveModelGatewayApiKeyEnv(modelGateway);
@@ -2889,10 +2924,23 @@ function buildCodexModelGatewayConfig(
     agents: {
       subagent: {
         description: "Subagent routed through the selected model gateway.",
-        model: gatewayModel ?? "",
+        ...(gatewayModel ? { model: gatewayModel } : {}),
       },
     },
   };
+}
+
+function resolveCodexModelGatewayProtocol(
+  modelGateway: AgentSessionConfig["modelGateway"],
+): string {
+  if (modelGateway?.type !== "openai-compatible") {
+    return CODEX_MODEL_GATEWAY_PROTOCOL;
+  }
+  const protocol = modelGateway.protocol?.trim() || CODEX_MODEL_GATEWAY_PROTOCOL;
+  if (protocol !== CODEX_MODEL_GATEWAY_PROTOCOL) {
+    throw new Error("Codex model gateways only support the OpenAI Responses protocol.");
+  }
+  return protocol;
 }
 
 function resolveModelGatewayProviderId(
@@ -3044,12 +3092,13 @@ function remapCodexGatewayHookStateToml(
   sourceHome: string,
   gatewayHome: string,
 ): string {
-  const sourceHooksPath = quoteTomlString(path.join(sourceHome, "hooks.json")).slice(1, -1);
-  const gatewayHooksPath = quoteTomlString(path.join(gatewayHome, "hooks.json")).slice(1, -1);
-  return baseToml.replaceAll(
-    `[hooks.state."${sourceHooksPath}:`,
-    `[hooks.state."${gatewayHooksPath}:`,
-  );
+  const sourceHooksPath = path.join(sourceHome, "hooks.json");
+  const gatewayHooksPath = path.join(gatewayHome, "hooks.json");
+  const sourceHooksTomlPath = quoteTomlString(sourceHooksPath).slice(1, -1);
+  const gatewayHooksTomlPath = quoteTomlString(gatewayHooksPath).slice(1, -1);
+  return baseToml
+    .replaceAll(`[hooks.state."${sourceHooksPath}:`, `[hooks.state."${gatewayHooksPath}:`)
+    .replaceAll(`[hooks.state."${sourceHooksTomlPath}:`, `[hooks.state."${gatewayHooksTomlPath}:`);
 }
 
 function removeTopLevelTomlKeys(source: string, keys: string[]): string {
@@ -3098,26 +3147,31 @@ function patchCodexGatewayConfigToml(
     return baseToml;
   }
   const providerId = resolveModelGatewayProviderId(modelGateway);
-  const gatewayModel = resolveModelGatewayModel(modelGateway) ?? "";
+  const gatewayModel = resolveModelGatewayModel(modelGateway);
+  const normalizedBaseUrl = normalizeOpenAICompatibleBaseUrl(modelGateway.baseUrl);
+  if (!normalizedBaseUrl) {
+    throw new Error("Model gateway base URL must be an http(s) URL");
+  }
+  const protocol = resolveCodexModelGatewayProtocol(modelGateway);
   let nextToml = baseToml;
   nextToml = removeTopLevelTomlKeys(nextToml, ["model", "model_provider"]);
   nextToml = removeTomlSection(nextToml, `model_providers.${providerId}`);
   nextToml = removeTomlSection(nextToml, "agents.subagent").trimEnd();
   const rootToml = [
-    `model = ${quoteTomlString(gatewayModel)}`,
+    ...(gatewayModel ? [`model = ${quoteTomlString(gatewayModel)}`] : []),
     `model_provider = ${quoteTomlString(providerId)}`,
   ].join("\n");
   const gatewayToml = [
     "",
     `[model_providers.${providerId}]`,
     `name = ${quoteTomlString(modelGateway.label?.trim() || "Model Gateway")}`,
-    `base_url = ${quoteTomlString(normalizeOpenAICompatibleBaseUrl(modelGateway.baseUrl) ?? "")}`,
-    'wire_api = "responses"',
+    `base_url = ${quoteTomlString(normalizedBaseUrl)}`,
+    `wire_api = ${quoteTomlString(protocol)}`,
     "requires_openai_auth = false",
     "",
     "[agents.subagent]",
     'description = "Subagent routed through the selected model gateway."',
-    `model = ${quoteTomlString(gatewayModel)}`,
+    ...(gatewayModel ? [`model = ${quoteTomlString(gatewayModel)}`] : []),
   ].join("\n");
   return `${rootToml}${nextToml ? `\n\n${nextToml}` : ""}\n${gatewayToml}\n`;
 }
@@ -5933,26 +5987,18 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    const command = this.runtimeSettings?.command;
-    if (command?.mode === "replace") {
-      return await isCommandAvailable(command.argv[0]);
-    }
-    return (await findDefaultCodexBinary()) !== null;
+    const launch = await resolveCodexLaunch(this.runtimeSettings);
+    const availability = await checkCodexLaunchAvailable(launch);
+    return availability.available;
   }
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
-      const available = await this.isAvailable();
-      const resolvedBinary = await findDefaultCodexBinary();
+      const launch = await resolveCodexLaunch(this.runtimeSettings);
+      const availability = await checkCodexLaunchAvailable(launch);
+      const available = availability.available;
       const entries: Array<{ label: string; value: string }> = [
-        {
-          label: "Binary",
-          value: resolvedBinary ?? "not found",
-        },
-        {
-          label: "Version",
-          value: resolvedBinary ? await resolveBinaryVersion(resolvedBinary) : "unknown",
-        },
+        ...(await buildBinaryDiagnosticRows(launch, availability)),
       ];
       let status = formatDiagnosticStatus(available);
 

@@ -7,7 +7,7 @@ import type { AgentSessionConfig } from "../agent/agent-sdk-types.js";
 import { curateAgentActivity } from "../agent/activity-curator.js";
 import { ensureAgentLoaded } from "../agent/agent-loading.js";
 import { formatSystemNotificationPrompt } from "../agent/agent-prompt.js";
-import { getUnattendedModeId } from "../agent/provider-manifest.js";
+import { getUnattendedModeId } from "@getpaseo/protocol/provider-manifest";
 import { ScheduleStore } from "./store.js";
 import { computeNextRunAt, validateScheduleCadence } from "./cron.js";
 import type {
@@ -18,7 +18,7 @@ import type {
   StoredSchedule,
   UpdateScheduleInput,
   UpdateScheduleNewAgentConfig,
-} from "./types.js";
+} from "@getpaseo/protocol/schedule/types";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
 
@@ -536,6 +536,7 @@ export class ScheduleService {
       sandboxMode: schedule.target.config.sandboxMode,
       networkAccess: schedule.target.config.networkAccess,
       webSearch: schedule.target.config.webSearch,
+      featureValues: schedule.target.config.featureValues,
       extra: schedule.target.config.extra,
       systemPrompt: schedule.target.config.systemPrompt,
       mcpServers: schedule.target.config.mcpServers as AgentSessionConfig["mcpServers"],
