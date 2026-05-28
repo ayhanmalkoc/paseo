@@ -68,9 +68,20 @@ All paths are under `packages/server/src/`.
 | `server/schedule/`              | Cron-based scheduled agents                                                  |
 | `server/loop-service.ts`        | Looping agent runs that retry until an exit condition                        |
 | `server/chat/`                  | Chat rooms for agent-to-agent and human-to-agent messaging                   |
-| `client/daemon-client.ts`       | Client library for connecting to the daemon (used by CLI and app)            |
-| `shared/messages.ts`            | Zod schemas for the entire wire protocol                                     |
-| `shared/binary-frames/`         | Terminal stream and file transfer binary frame codecs                        |
+
+### `packages/protocol` — Wire schemas and shared protocol types
+
+The source of truth for WebSocket messages, binary frame codecs, endpoint parsing,
+agent timeline types, provider config schemas, and other values shared by daemon
+and clients. Server, app, CLI, and `@getpaseo/client` all depend on this package;
+it does not depend on the server.
+
+### `packages/client` — Daemon client library and SDK facade
+
+Owns the low-level daemon WebSocket driver plus the higher-level `PaseoClient`
+facade. App and CLI may import the low-level driver from
+`@getpaseo/client/internal/daemon-client` during migration, while new SDK-shaped
+code imports from `@getpaseo/client`.
 
 ### `packages/app` — Mobile + web client (Expo)
 
@@ -79,6 +90,7 @@ Cross-platform React Native app that connects to one or more daemons.
 - Expo Router navigation (`/h/[serverId]/workspace/[workspaceId]`, `/h/[serverId]/agent/[agentId]`, etc.)
 - `HostRuntimeController` manages saved host connections, reconnection, and per-host runtime state
 - `SessionContext` wraps the daemon client for the active session
+- Composer UI and submit/draft behavior live in `packages/app/src/composer/`; screens and panels should integrate it from there instead of dropping composer internals into `components/`, `hooks/`, or `screens/workspace/`
 - Timeline reducers in `timeline/session-stream-reducers.ts` handle compaction, gap detection, sequence-based deduplication
 - Voice features: dictation (STT) and voice agent (realtime)
 
@@ -125,7 +137,7 @@ TanStack Router + Cloudflare Workers. Serves paseo.sh.
 
 ## WebSocket protocol
 
-All clients speak the same WebSocket protocol over a single connection that mixes JSON text frames and a small binary framing for terminal streams. Schemas live in `packages/server/src/shared/messages.ts`.
+All clients speak the same WebSocket protocol over a single connection that mixes JSON text frames and a small binary framing for terminal streams. Schemas live in `packages/protocol/src/messages.ts`.
 
 **Handshake:**
 

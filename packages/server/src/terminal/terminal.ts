@@ -8,8 +8,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { writePrivateFileAtomicSync } from "../server/private-files.js";
-import type { TerminalCell, TerminalState } from "../shared/messages.js";
-import { TerminalInputModeTracker } from "../shared/terminal-input-mode.js";
+import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
+import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 
 const { Terminal } = xterm;
 const require = createRequire(import.meta.url);
@@ -17,6 +17,11 @@ let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
 const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
 const TERMINAL_EXIT_OUTPUT_CHAR_LIMIT = 16000;
+const TERMINAL_OSC_COLOR_QUERY_RESPONSES = new Map<number, string>([
+  [10, "rgb:e6e6/e6e6/e6e6"],
+  [11, "rgb:0b0b/0b0b/0b0b"],
+  [12, "rgb:e6e6/e6e6/e6e6"],
+]);
 
 export interface TerminalExitInfo {
   exitCode: number | null;
@@ -681,6 +686,15 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     ptyProcess.write(`\x1b[?${buffer.cursorY + 1};${buffer.cursorX + 1}R`);
     return true;
   });
+  for (const [code, response] of TERMINAL_OSC_COLOR_QUERY_RESPONSES) {
+    terminal.parser.registerOscHandler(code, (data) => {
+      if (data.trim() !== "?") {
+        return false;
+      }
+      ptyProcess.write(`\x1b]${code};${response}\x1b\\`);
+      return true;
+    });
+  }
 
   if (titleMode === "auto") {
     titleChangeSubscription = terminal.onTitleChange((nextTitle) => {

@@ -7,12 +7,12 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { LigaturesAddon } from "@xterm/addon-ligatures/lib/addon-ligatures.mjs";
 import { Terminal, type ITheme } from "@xterm/xterm";
-import type { TerminalState } from "@server/shared/messages";
+import type { TerminalState } from "@getpaseo/protocol/messages";
 import {
   type TerminalInputModeState,
   TerminalInputModeTracker,
   terminalInputModeStatesEqual,
-} from "@server/shared/terminal-input-mode";
+} from "@getpaseo/protocol/terminal-input-mode";
 import {
   type PendingTerminalModifiers,
   isAppleHandheldPlatform,
@@ -301,6 +301,9 @@ export class TerminalEmulatorRuntime {
         { prefix: "?", intermediates: "$", final: "p" },
         () => true,
       );
+      for (const code of [10, 11, 12]) {
+        terminal.parser.registerOscHandler(code, (data) => data.trim() === "?");
+      }
     };
     registerProtocolQuerySuppression();
 

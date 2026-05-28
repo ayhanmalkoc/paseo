@@ -1,23 +1,30 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import { realpathSync } from "node:fs";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
+import Ajv from "ajv";
 import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { createAgentMcpServer } from "./mcp-server.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
-import type { ProviderDefinition } from "./provider-registry.js";
-import { AgentListItemPayloadSchema, AgentSnapshotPayloadSchema } from "../../shared/messages.js";
+import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
+import { resolveDefaultAgentCreateConfig } from "./create-agent-mode.js";
+import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
+import {
+  AgentListItemPayloadSchema,
+  AgentSnapshotPayloadSchema,
+} from "@getpaseo/protocol/messages";
 import type { PersistedProjectRecord, PersistedWorkspaceRecord } from "../workspace-registry.js";
 import type {
   CreateScheduleInput,
   StoredSchedule,
   UpdateScheduleInput,
-} from "../schedule/types.js";
+} from "@getpaseo/protocol/schedule/types";
 import type { ScheduleService } from "../schedule/service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import {
@@ -28,7 +35,7 @@ import type { CreatePaseoWorktreeWorkflowFn } from "../worktree-session.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
-import { PARENT_AGENT_ID_LABEL } from "../../shared/agent-labels.js";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
@@ -51,6 +58,7 @@ interface LooseStructuredContent {
 
 interface RegisteredMcpTool {
   inputSchema: LooseInputSchema;
+  outputSchema?: unknown;
   callback?: (
     input: unknown,
     extra?: unknown,
@@ -94,6 +102,23 @@ function registeredTool(
   return { ...tool, handler };
 }
 
+async function invokeToolWithParsedInput(
+  tool: RegisteredMcpToolWithHandler,
+  input: Record<string, unknown>,
+) {
+  const parsed = await tool.inputSchema.safeParseAsync(input);
+  expect(parsed.success).toBe(true);
+  return tool.handler(parsed.data);
+}
+
+function expectOutputSchemaAccepts(tool: RegisteredMcpTool, data: unknown): void {
+  expect(tool.outputSchema).toBeDefined();
+  const jsonSchema = zodToJsonSchema(tool.outputSchema as z.ZodTypeAny);
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  const validate = ajv.compile(jsonSchema);
+  expect(validate(data), JSON.stringify(validate.errors, null, 2)).toBe(true);
+}
+
 function agentsOf(response: {
   structuredContent: LooseStructuredContent;
 }): Array<Record<string, unknown>> {
@@ -115,13 +140,18 @@ interface TestDeps {
 function buildAgentManagerSpies() {
   return {
     createAgent: vi.fn(),
-    waitForAgentEvent: vi.fn(),
+    waitForAgentEvent: vi.fn().mockResolvedValue({
+      status: "idle",
+      permission: null,
+      lastMessage: null,
+    }),
     setAgentMode: vi.fn().mockResolvedValue(undefined),
     setAgentModel: vi.fn().mockResolvedValue(undefined),
     setAgentThinkingOption: vi.fn().mockResolvedValue(undefined),
     setAgentFeature: vi.fn().mockResolvedValue(undefined),
     setLabels: vi.fn().mockResolvedValue(undefined),
     setTitle: vi.fn().mockResolvedValue(undefined),
+    updateAgentMetadata: vi.fn().mockResolvedValue(undefined),
     archiveAgent: vi.fn().mockResolvedValue({ archivedAt: new Date().toISOString() }),
     notifyAgentState: vi.fn(),
     getAgent: vi.fn(),
@@ -132,8 +162,10 @@ function buildAgentManagerSpies() {
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     hasInFlightRun: vi.fn().mockReturnValue(false),
+    tryRunOutOfBand: vi.fn().mockReturnValue(false),
     subscribe: vi.fn().mockReturnValue(() => {}),
     streamAgent: vi.fn(() => (async function* noop() {})()),
+    waitForAgentRunStart: vi.fn().mockResolvedValue(undefined),
     respondToPermission: vi.fn(),
     cancelAgentRun: vi.fn(),
     getPendingPermissions: vi.fn(),
@@ -184,38 +216,186 @@ function createTerminalManagerStub(overrides: Partial<TerminalManager> = {}): Te
   } as unknown as TerminalManager;
 }
 
-function createProviderDefinition(overrides: Partial<ProviderDefinition>): ProviderDefinition {
-  const provider = overrides.id ?? "claude";
+type ProviderSnapshotManagerStub = ReturnType<typeof createProviderSnapshotManagerStub>;
+
+interface ConfigureProviderEntry {
+  provider: AgentProvider;
+  label?: string;
+  description?: string;
+  enabled?: boolean;
+  defaultModeId?: string;
+  modes?: AgentMode[];
+}
+
+// Builds a ProviderSnapshotEntry for tests that need to configure listProviders /
+// getProvider directly. Mirrors the shape MCP server reads from the manager:
+// status: "ready" for enabled+available, "unavailable" for disabled.
+function buildSnapshotEntry(entry: ConfigureProviderEntry): ProviderSnapshotEntry {
+  const enabled = entry.enabled ?? true;
+  if (!enabled) {
+    return {
+      provider: entry.provider,
+      status: "unavailable",
+      enabled: false,
+      ...(entry.label !== undefined ? { label: entry.label } : {}),
+      ...(entry.description !== undefined ? { description: entry.description } : {}),
+      ...(entry.defaultModeId !== undefined ? { defaultModeId: entry.defaultModeId } : {}),
+      modes: [],
+    };
+  }
   return {
-    id: provider,
-    label: "Claude",
-    description: "Test provider",
+    provider: entry.provider,
+    status: "ready",
     enabled: true,
-    defaultModeId: "default",
-    modes: [],
-    createClient: vi.fn(() => ({
-      provider,
-      capabilities: {
-        supportsStreaming: false,
-        supportsSessionPersistence: false,
-        supportsDynamicModes: false,
-        supportsMcpServers: false,
-        supportsReasoningStream: false,
-        supportsToolInvocations: false,
-      },
-      createSession: async () => {
-        throw new Error("createSession is not used by this MCP provider test");
-      },
-      resumeSession: async () => {
-        throw new Error("resumeSession is not used by this MCP provider test");
-      },
-      listModels: vi.fn().mockResolvedValue([]),
-      isAvailable: vi.fn().mockResolvedValue(true),
-    })),
-    fetchModels: vi.fn().mockResolvedValue([]),
-    fetchModes: vi.fn().mockResolvedValue([]),
-    ...overrides,
+    ...(entry.label !== undefined ? { label: entry.label } : {}),
+    ...(entry.description !== undefined ? { description: entry.description } : {}),
+    ...(entry.defaultModeId !== undefined ? { defaultModeId: entry.defaultModeId } : {}),
+    modes: entry.modes ?? [],
   };
+}
+
+// Shared helper used by ~60 create_agent / update_agent / list_agents tests that
+// only need a "normal" provider catalog (claude, codex, opencode) and the
+// OpenCode resolveCreateConfig quirk: requestedMode="full-access" or an
+// unattended parent maps to build mode + auto_accept feature.
+//
+// NOTE: This is NOT a registry. It directly configures the public stub surface.
+// Per-test customization is done by overriding individual stub methods after
+// calling this helper.
+function configureOpenCodeProviderStub(stub: ProviderSnapshotManagerStub): void {
+  const claudeModes: AgentMode[] = [
+    { id: "default", label: "Default", description: "Ask first" },
+    { id: "bypassPermissions", label: "Bypass", description: "No prompts", isUnattended: true },
+  ];
+  const codexModes: AgentMode[] = [
+    { id: "default", label: "Default", description: "Default" },
+    { id: "auto", label: "Auto", description: "Auto", isUnattended: true },
+  ];
+  const opencodeModes: AgentMode[] = [
+    { id: "build", label: "Build", description: "Can edit" },
+    { id: "plan", label: "Plan", description: "Read-only" },
+  ];
+  const entries: ProviderSnapshotEntry[] = [
+    buildSnapshotEntry({
+      provider: "claude",
+      label: "Claude",
+      description: "Anthropic Claude",
+      defaultModeId: "default",
+      modes: claudeModes,
+    }),
+    buildSnapshotEntry({
+      provider: "codex",
+      label: "Codex",
+      description: "OpenAI Codex",
+      defaultModeId: "default",
+      modes: codexModes,
+    }),
+    buildSnapshotEntry({
+      provider: "opencode",
+      label: "OpenCode",
+      description: "OpenCode agent",
+      defaultModeId: "build",
+      modes: opencodeModes,
+    }),
+  ];
+  const modesByProvider: Record<string, AgentMode[]> = {
+    claude: claudeModes,
+    codex: codexModes,
+    opencode: opencodeModes,
+  };
+
+  stub.listRegisteredProviderIds.mockReturnValue(["claude", "codex", "opencode"]);
+  stub.hasProvider.mockImplementation((provider) =>
+    Object.prototype.hasOwnProperty.call(modesByProvider, provider),
+  );
+  stub.getProviderLabel.mockImplementation((provider) => {
+    const entry = entries.find((e) => e.provider === provider);
+    return entry?.label ?? provider;
+  });
+  stub.listProviders.mockImplementation(async (input) => {
+    const opts = (input ?? {}) as { providers?: AgentProvider[] };
+    if (!opts.providers) return entries;
+    const filter = new Set(opts.providers);
+    return entries.filter((e) => filter.has(e.provider));
+  });
+  stub.getProvider.mockImplementation(async (input) => {
+    const opts = input as { provider: AgentProvider };
+    const entry = entries.find((e) => e.provider === opts.provider);
+    if (!entry) throw new Error(`Provider ${opts.provider} is not configured`);
+    return entry;
+  });
+  stub.listModels.mockResolvedValue([]);
+  stub.listModes.mockImplementation(async (input) => {
+    const opts = input as { provider: AgentProvider };
+    return modesByProvider[opts.provider] ?? [];
+  });
+  stub.resolveCreateConfig.mockImplementation(async (input) => {
+    const opts = input as {
+      provider: AgentProvider;
+      requestedMode: string | undefined;
+      featureValues: Record<string, unknown> | undefined;
+      parent: ManagedAgent | null;
+    };
+    if (opts.provider === "opencode") {
+      if (opts.requestedMode === "full-access") {
+        return {
+          modeId: "build",
+          featureValues: { ...opts.featureValues, auto_accept: true },
+        };
+      }
+      // Cross-provider unattended inheritance: caller is in unattended mode and
+      // requested no explicit mode — map to build + auto_accept.
+      if (opts.requestedMode === undefined && opts.parent) {
+        const parentModes = modesByProvider[opts.parent.provider] ?? [];
+        const parentMode = parentModes.find((m) => m.id === opts.parent?.currentModeId);
+        if (parentMode?.isUnattended === true) {
+          return {
+            modeId: "build",
+            featureValues: { ...opts.featureValues, auto_accept: true },
+          };
+        }
+      }
+    }
+    const availableModes = modesByProvider[opts.provider] ?? [];
+    const parentModes = opts.parent ? (modesByProvider[opts.parent.provider] ?? []) : [];
+    const parentMode = opts.parent
+      ? parentModes.find((m) => m.id === opts.parent?.currentModeId)
+      : null;
+    return resolveDefaultAgentCreateConfig({
+      provider: opts.provider,
+      requestedMode: opts.requestedMode,
+      featureValues: opts.featureValues,
+      parent: opts.parent
+        ? {
+            provider: opts.parent.provider,
+            modeId: opts.parent.currentModeId,
+            isUnattended: parentMode?.isUnattended === true,
+          }
+        : null,
+      availableModes,
+    });
+  });
+}
+
+// Quick helper: returns a manager configured with the standard OpenCode catalog.
+function createOpenCodeManager(): {
+  manager: ProviderSnapshotManagerStub["manager"];
+  stub: ProviderSnapshotManagerStub;
+} {
+  const stub = createProviderSnapshotManagerStub();
+  configureOpenCodeProviderStub(stub);
+  return { manager: stub.manager, stub };
+}
+
+// Quick helper: returns a bare stub manager seam. Use when the test does not
+// care about provider behavior at all (terminal tests, schema-only tests,
+// stored-agent listing tests where the stored agent's provider just needs to
+// be in listRegisteredProviderIds).
+function createClaudeOnlyManager(): ProviderSnapshotManagerStub["manager"] {
+  const stub = createProviderSnapshotManagerStub();
+  stub.listRegisteredProviderIds.mockReturnValue(["claude"]);
+  stub.hasProvider.mockImplementation((provider) => provider === "claude");
+  return stub.manager;
 }
 
 function createStoredRecord(overrides: Partial<StoredAgentRecord> = {}): StoredAgentRecord {
@@ -409,6 +589,7 @@ describe("terminal MCP tools", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       terminalManager,
       logger,
     });
@@ -441,7 +622,12 @@ describe("create_agent MCP tool", () => {
 
   it("requires a concise title no longer than 60 characters", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
     expect(tool).toBeDefined();
 
@@ -476,7 +662,12 @@ describe("create_agent MCP tool", () => {
 
   it("requires initialPrompt", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
     const parsed = await tool.inputSchema.safeParseAsync({
       cwd: existingCwd,
@@ -503,7 +694,12 @@ describe("create_agent MCP tool", () => {
       config: { title: "Feature test", featureValues: { fast_mode: true } },
     } as ManagedAgent);
 
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
     const input = {
       cwd: existingCwd,
@@ -530,9 +726,52 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("advertises create_agent output schema that accepts full provider modes", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "mode-agent",
+      provider: "codex",
+      cwd: REPO_CWD,
+      lifecycle: "idle",
+      currentModeId: "build",
+      availableModes: [
+        {
+          id: "build",
+          label: "Build",
+          description: null,
+          icon: "hammer",
+          colorTier: "dangerous",
+        },
+      ],
+      config: { title: "Mode test" },
+    } as ManagedAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+    const response = await tool.handler({
+      cwd: existingCwd,
+      title: "Mode test",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+      background: true,
+    });
+
+    expectOutputSchemaAccepts(tool, response.structuredContent);
+  });
+
   it("requires provider as provider/model and rejects the old model field", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
 
     const missingProvider = await tool.inputSchema.safeParseAsync({
@@ -589,7 +828,12 @@ describe("create_agent MCP tool", () => {
 
   it("accepts optional worktree intent fields in create_agent input validation", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
 
     const parsed = await tool.inputSchema.safeParseAsync({
@@ -608,7 +852,12 @@ describe("create_agent MCP tool", () => {
 
   it("accepts each create_worktree target mode", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_worktree");
 
     for (const target of [
@@ -623,7 +872,12 @@ describe("create_agent MCP tool", () => {
 
   it("rejects create_worktree without a target", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_worktree");
 
     const parsed = await tool.inputSchema.safeParseAsync({});
@@ -635,7 +889,12 @@ describe("create_agent MCP tool", () => {
     spies.agentManager.createAgent.mockRejectedValue(
       new Error("Working directory does not exist: /path/that/does/not/exist"),
     );
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
 
     await expect(
@@ -659,7 +918,12 @@ describe("create_agent MCP tool", () => {
       config: { title: "Fix auth bug" },
     } as ManagedAgent);
 
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
     await tool.handler({
       cwd: existingCwd,
@@ -689,7 +953,12 @@ describe("create_agent MCP tool", () => {
       config: { title: "Fix auth" },
     } as ManagedAgent);
 
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
     await tool.handler({
       cwd: existingCwd,
@@ -718,7 +987,12 @@ describe("create_agent MCP tool", () => {
       config: { title: "Config test", model: "claude-sonnet-4-20250514" },
     } as ManagedAgent);
 
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
     await tool.handler({
       cwd: existingCwd,
@@ -780,6 +1054,7 @@ describe("create_agent MCP tool", () => {
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
         paseoHome,
         createPaseoWorktree: createPaseoWorktreeForMcpTest({
           paseoHome,
@@ -858,6 +1133,7 @@ describe("create_agent MCP tool", () => {
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
         paseoHome,
         createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts }),
         workspaceGitService: workspaceGitService as unknown as Pick<
@@ -942,6 +1218,7 @@ describe("create_agent MCP tool", () => {
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
         paseoHome,
         createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts }),
         workspaceGitService: workspaceGitService as unknown as Pick<
@@ -1034,6 +1311,7 @@ describe("create_agent MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       createPaseoWorktree,
       workspaceGitService: workspaceGitService as unknown as Pick<
         WorkspaceGitService,
@@ -1102,6 +1380,7 @@ describe("create_agent MCP tool", () => {
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
         paseoHome,
         createPaseoWorktree: createPaseoWorktreeForMcpTest({
           paseoHome,
@@ -1172,6 +1451,7 @@ describe("create_agent MCP tool", () => {
       const server = await createAgentMcpServer({
         agentManager,
         agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
         paseoHome,
         createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts: [] }),
         workspaceGitService: workspaceGitService as unknown as Pick<
@@ -1224,6 +1504,83 @@ describe("create_agent MCP tool", () => {
     }
   });
 
+  it("archives a worktree by slug", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const tempDir = realpathSync.native(
+      await mkdtemp(join(tmpdir(), "paseo-mcp-archive-worktree-slug-")),
+    );
+    const repoDir = join(tempDir, "repo");
+    const paseoHome = join(tempDir, ".paseo");
+
+    try {
+      execFileSync("git", ["init", repoDir], { stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["config", "commit.gpgsign", "false"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      await writeFile(join(repoDir, "README.md"), "hello\n");
+      execFileSync("git", ["add", "README.md"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["commit", "-m", "init"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["branch", "-M", "main"], { cwd: repoDir, stdio: "pipe" });
+
+      const workspaceGitService = {
+        getSnapshot: vi.fn(async () => null),
+        listWorktrees: vi.fn(async () => []),
+        resolveRepoRoot: vi.fn(async () => repoDir),
+      };
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        paseoHome,
+        createPaseoWorktree: createPaseoWorktreeForMcpTest({ paseoHome, broadcasts: [] }),
+        workspaceGitService: workspaceGitService as unknown as Pick<
+          WorkspaceGitService,
+          "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
+        >,
+        archiveWorkspaceRecord: vi.fn(async () => undefined),
+        emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => undefined),
+        markWorkspaceArchiving: vi.fn(),
+        clearWorkspaceArchiving: vi.fn(),
+        emitSessionMessage: vi.fn(),
+        github: createGitHubServiceStub(),
+        logger,
+      });
+      const createTool = registeredTool(server, "create_worktree");
+      const archiveTool = registeredTool(server, "archive_worktree");
+      const created = await createTool.handler({
+        cwd: repoDir,
+        target: { mode: "branch-off", newBranch: "archive-slug-worktree", base: "main" },
+      });
+
+      const response = await archiveTool.handler({
+        cwd: repoDir,
+        worktreeSlug: "archive-slug-worktree",
+      });
+
+      expect(response.structuredContent).toEqual({ success: true });
+      expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "archive-worktree",
+      });
+      expect(workspaceGitService.resolveRepoRoot).toHaveBeenCalledWith(repoDir);
+      expect(workspaceGitService.listWorktrees).toHaveBeenCalledWith(repoDir, {
+        force: true,
+        reason: "mcp:archive-worktree",
+      });
+      await expect(
+        access(z.string().parse(created.structuredContent.worktreePath)),
+      ).rejects.toThrow();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("routes list_worktrees through WorkspaceGitService", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const workspaceGitService = {
@@ -1239,6 +1596,7 @@ describe("create_agent MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       workspaceGitService: workspaceGitService as unknown as Pick<
         WorkspaceGitService,
         "getSnapshot" | "listWorktrees"
@@ -1263,7 +1621,12 @@ describe("create_agent MCP tool", () => {
 
   it("accepts custom provider IDs in create_agent input validation", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
 
     const parsed = await tool.inputSchema.safeParseAsync({
@@ -1300,6 +1663,7 @@ describe("create_agent MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       callerAgentId: "voice-agent",
       resolveCallerContext: () => ({
         childAgentDefaultLabels: { source: "voice" },
@@ -1352,6 +1716,7 @@ describe("create_agent MCP tool", () => {
       agentManager,
       agentStorage,
       callerAgentId: "parent-agent",
+      providerSnapshotManager: createOpenCodeManager().manager,
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1397,6 +1762,7 @@ describe("create_agent MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1420,7 +1786,12 @@ describe("create_agent MCP tool", () => {
 
   it("rejects an explicit mode that is not valid for the target provider", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "create_agent");
 
     await expect(
@@ -1432,9 +1803,97 @@ describe("create_agent MCP tool", () => {
         initialPrompt: "Do work",
       }),
     ).rejects.toThrow(
-      "Invalid mode 'bypassPermissions' for provider 'opencode'. Available modes: build, full-access, plan",
+      "Invalid mode 'bypassPermissions' for provider 'opencode'. Available modes: build, plan",
     );
     expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("validates create_agent modes against the shared provider snapshot", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: "dynamic",
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent);
+    const dynamicModes: AgentMode[] = [
+      { id: "dynamic", label: "Dynamic", description: "Runtime mode" },
+    ];
+    const provStub = createProviderSnapshotManagerStub();
+    provStub.listRegisteredProviderIds.mockReturnValue(["codex"]);
+    provStub.listProviders.mockResolvedValue([
+      buildSnapshotEntry({ provider: "codex", label: "Codex", modes: dynamicModes }),
+    ]);
+    provStub.getProvider.mockImplementation(async ({ provider }: { provider: AgentProvider }) =>
+      buildSnapshotEntry({ provider, label: "Codex", modes: dynamicModes }),
+    );
+    provStub.listModes.mockResolvedValue(dynamicModes);
+    provStub.resolveCreateConfig.mockImplementation(async (input) => {
+      const opts = input as { requestedMode: string | undefined };
+      return resolveDefaultAgentCreateConfig({
+        provider: "codex",
+        requestedMode: opts.requestedMode,
+        featureValues: undefined,
+        parent: null,
+        availableModes: dynamicModes,
+      });
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: provStub.manager,
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+
+    await tool.handler({
+      cwd: existingCwd,
+      title: "Dynamic mode",
+      provider: "codex/gpt-5.4",
+      settings: { modeId: "dynamic" },
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ modeId: "dynamic" }),
+      undefined,
+      undefined,
+    );
+  });
+
+  it("accepts legacy OpenCode full-access as build plus auto accept", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.createAgent.mockResolvedValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: "build",
+      availableModes: [],
+      config: { title: "Child", featureValues: { auto_accept: true } },
+    } as ManagedAgent);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "create_agent");
+
+    await tool.handler({
+      cwd: existingCwd,
+      title: "Legacy mode",
+      provider: "opencode/gpt-5.4",
+      settings: { modeId: "full-access" },
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ modeId: "build", featureValues: { auto_accept: true } }),
+      undefined,
+      undefined,
+    );
   });
 
   it("inherits the caller mode when the new agent uses the same provider", async () => {
@@ -1458,6 +1917,7 @@ describe("create_agent MCP tool", () => {
       agentManager,
       agentStorage,
       callerAgentId: "parent-agent",
+      providerSnapshotManager: createOpenCodeManager().manager,
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1487,6 +1947,7 @@ describe("create_agent MCP tool", () => {
       agentManager,
       agentStorage,
       callerAgentId: "parent-agent",
+      providerSnapshotManager: createOpenCodeManager().manager,
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1498,12 +1959,12 @@ describe("create_agent MCP tool", () => {
         initialPrompt: "Do work",
       }),
     ).rejects.toThrow(
-      "cannot inherit mode 'default' from caller (provider 'claude') for new agent (provider 'opencode'). Pass an explicit mode. Available modes for 'opencode': build, full-access, plan",
+      "cannot inherit mode 'default' from caller (provider 'claude') for new agent (provider 'opencode'). Pass an explicit mode. Available modes for 'opencode': build, plan",
     );
     expect(spies.agentManager.createAgent).not.toHaveBeenCalled();
   });
 
-  it("inherits the target provider's unattended mode when caller is unattended cross-provider", async () => {
+  it("maps unattended callers to OpenCode auto accept", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
@@ -1515,15 +1976,16 @@ describe("create_agent MCP tool", () => {
       id: "child-agent",
       cwd: existingCwd,
       lifecycle: "idle",
-      currentModeId: "full-access",
+      currentModeId: "build",
       availableModes: [],
-      config: { title: "Child" },
+      config: { title: "Child", featureValues: { auto_accept: true } },
     } as ManagedAgent);
 
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       callerAgentId: "parent-agent",
+      providerSnapshotManager: createOpenCodeManager().manager,
       logger,
     });
     const tool = registeredTool(server, "create_agent");
@@ -1534,7 +1996,7 @@ describe("create_agent MCP tool", () => {
     });
 
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ modeId: "full-access" }),
+      expect.objectContaining({ modeId: "build", featureValues: { auto_accept: true } }),
       undefined,
       expect.any(Object),
     );
@@ -1560,6 +2022,7 @@ describe("create_agent MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       callerAgentId: "parent-agent",
       logger,
     });
@@ -1584,15 +2047,24 @@ describe("update_agent MCP tool", () => {
 
   it("does not register the replaced feature-specific MCP tool", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
 
     expect(lookupTool(server, "set_agent_feature")).toBeUndefined();
   });
 
   it("updates runtime settings before metadata", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentStorage.get.mockResolvedValue(createStoredRecord({ id: "agent-1" }));
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "update_agent");
     const input = {
       agentId: "agent-1",
@@ -1615,20 +2087,42 @@ describe("update_agent MCP tool", () => {
     expect(spies.agentManager.setAgentModel).toHaveBeenCalledWith("agent-1", "gpt-5.4");
     expect(spies.agentManager.setAgentThinkingOption).toHaveBeenCalledWith("agent-1", "high");
     expect(spies.agentManager.setAgentFeature).toHaveBeenCalledWith("agent-1", "fast_mode", true);
-    expect(spies.agentStorage.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "agent-1",
-        title: "Updated agent",
-      }),
-    );
-    expect(spies.agentManager.setLabels).toHaveBeenCalledWith("agent-1", { role: "worker" });
+    expect(spies.agentManager.updateAgentMetadata).toHaveBeenCalledWith("agent-1", {
+      title: "Updated agent",
+      labels: { role: "worker" },
+    });
     expect(response.structuredContent).toEqual({ success: true });
+  });
+
+  it("reports success for a no-op update with neither metadata nor settings", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "update_agent");
+
+    const response = await tool.handler({ agentId: "agent-1" });
+
+    expect(response.structuredContent).toEqual({ success: true });
+    expect(spies.agentManager.updateAgentMetadata).not.toHaveBeenCalled();
+    expect(spies.agentManager.setAgentMode).not.toHaveBeenCalled();
+    expect(spies.agentManager.setAgentModel).not.toHaveBeenCalled();
+    expect(spies.agentManager.setAgentThinkingOption).not.toHaveBeenCalled();
+    expect(spies.agentManager.setAgentFeature).not.toHaveBeenCalled();
   });
 
   it("does not update metadata when runtime settings fail", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.setAgentFeature.mockRejectedValue(new Error("unsupported feature"));
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "update_agent");
 
     await expect(
@@ -1641,8 +2135,7 @@ describe("update_agent MCP tool", () => {
     ).rejects.toThrow("unsupported feature");
 
     expect(spies.agentStorage.get).not.toHaveBeenCalled();
-    expect(spies.agentStorage.upsert).not.toHaveBeenCalled();
-    expect(spies.agentManager.setLabels).not.toHaveBeenCalled();
+    expect(spies.agentManager.updateAgentMetadata).not.toHaveBeenCalled();
   });
 });
 
@@ -1655,6 +2148,7 @@ describe("create_schedule MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       scheduleService: { create } as unknown as ScheduleService,
       logger,
     });
@@ -1676,6 +2170,7 @@ describe("create_schedule MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       scheduleService: { create } as unknown as ScheduleService,
       logger,
     });
@@ -1718,6 +2213,175 @@ describe("create_schedule MCP tool", () => {
       }),
     );
   });
+
+  it("advertises create_schedule output schema that accepts inherited feature values", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      provider: "opencode",
+      cwd: REPO_CWD,
+      lifecycle: "idle",
+      currentModeId: "build",
+      availableModes: [],
+      config: {
+        title: "Parent agent",
+        model: "openai/gpt-5.5",
+        featureValues: { auto_accept: true },
+      },
+    } as ManagedAgent);
+    const create = vi.fn(async (input: CreateScheduleInput) => createStoredSchedule(input));
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { create } as unknown as ScheduleService,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    const response = await tool.handler({
+      prompt: "say hello",
+      every: "5m",
+      target: "new-agent",
+      provider: "opencode/openai/gpt-5.5",
+    });
+
+    expect(response.structuredContent.target).toMatchObject({
+      type: "new-agent",
+      config: { featureValues: { auto_accept: true } },
+    });
+    expectOutputSchemaAccepts(tool, response.structuredContent);
+  });
+
+  it("accepts a blank cron field when every is provided", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const create = vi.fn(async (scheduleInput: CreateScheduleInput) =>
+      createStoredSchedule(scheduleInput),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { create } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    await invokeToolWithParsedInput(tool, {
+      prompt: "say hello",
+      every: "10m",
+      cron: "",
+      provider: "codex",
+    });
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cadence: { type: "every", everyMs: 600000 },
+      }),
+    );
+  });
+
+  it.each([
+    {
+      label: "whitespace cron field",
+      input: { prompt: "say hello", every: "10m", cron: "   ", provider: "codex" },
+      cadence: { type: "every", everyMs: 600000 },
+    },
+    {
+      label: "blank every field for cron cadence",
+      input: {
+        prompt: "say hello",
+        every: "",
+        cron: "*/10 * * * *",
+        provider: "codex",
+      },
+      cadence: { type: "cron", expression: "*/10 * * * *" },
+    },
+    {
+      label: "whitespace every field for cron cadence",
+      input: {
+        prompt: "say hello",
+        every: "   ",
+        cron: "*/10 * * * *",
+        provider: "codex",
+      },
+      cadence: { type: "cron", expression: "*/10 * * * *" },
+    },
+  ])("normalizes create_schedule blank cadence input for $label", async ({ input, cadence }) => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const create = vi.fn(async (scheduleInput: CreateScheduleInput) =>
+      createStoredSchedule(scheduleInput),
+    );
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { create } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    await invokeToolWithParsedInput(tool, input);
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cadence,
+      }),
+    );
+  });
+
+  it("still rejects both real every and cron inputs", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const create = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { create } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    await expect(
+      invokeToolWithParsedInput(tool, {
+        prompt: "say hello",
+        every: "10m",
+        cron: "*/10 * * * *",
+        provider: "codex",
+      }),
+    ).rejects.toThrow("Specify exactly one of every or cron");
+
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "missing both cadence fields",
+      input: { prompt: "say hello", provider: "codex" },
+    },
+    {
+      label: "blank cadence fields",
+      input: { prompt: "say hello", every: "   ", cron: "", provider: "codex" },
+    },
+  ])("still rejects create_schedule when $label", async ({ input }) => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const create = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { create } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "create_schedule");
+
+    await expect(invokeToolWithParsedInput(tool, input)).rejects.toThrow(
+      "Specify exactly one of every or cron",
+    );
+
+    expect(create).not.toHaveBeenCalled();
+  });
 });
 
 describe("update_schedule MCP tool", () => {
@@ -1754,6 +2418,7 @@ describe("update_schedule MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       scheduleService: { update } as unknown as ScheduleService,
       logger,
     });
@@ -1779,6 +2444,7 @@ describe("update_schedule MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       scheduleService: { update } as unknown as ScheduleService,
       logger,
     });
@@ -1795,12 +2461,75 @@ describe("update_schedule MCP tool", () => {
     });
   });
 
+  it("accepts a blank cron field when updating every cadence", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const stored = makeStoredSchedule();
+    const update = vi.fn(async (_input: UpdateScheduleInput) => stored);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { update } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "update_schedule");
+
+    await invokeToolWithParsedInput(tool, {
+      id: "schedule-1",
+      every: "10m",
+      cron: "",
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      id: "schedule-1",
+      cadence: { type: "every", everyMs: 600000 },
+    });
+  });
+
+  it.each([
+    {
+      label: "whitespace cron field",
+      input: { id: "schedule-1", every: "10m", cron: "   " },
+      cadence: { type: "every", everyMs: 600000 },
+    },
+    {
+      label: "blank every field for cron cadence",
+      input: { id: "schedule-1", every: "", cron: "*/10 * * * *" },
+      cadence: { type: "cron", expression: "*/10 * * * *" },
+    },
+    {
+      label: "whitespace every field for cron cadence",
+      input: { id: "schedule-1", every: "   ", cron: "*/10 * * * *" },
+      cadence: { type: "cron", expression: "*/10 * * * *" },
+    },
+  ])("normalizes update_schedule blank cadence input for $label", async ({ input, cadence }) => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const stored = makeStoredSchedule();
+    const update = vi.fn(async (_input: UpdateScheduleInput) => stored);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      scheduleService: { update } as unknown as ScheduleService,
+      logger,
+    });
+    const tool = registeredTool(server, "update_schedule");
+
+    await invokeToolWithParsedInput(tool, input);
+
+    expect(update).toHaveBeenCalledWith({
+      id: "schedule-1",
+      cadence,
+    });
+  });
+
   it("rejects both every and cron", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const update = vi.fn();
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       scheduleService: { update } as unknown as ScheduleService,
       logger,
     });
@@ -1823,6 +2552,7 @@ describe("update_schedule MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       scheduleService: { update } as unknown as ScheduleService,
       logger,
     });
@@ -1856,6 +2586,7 @@ describe("update_schedule MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       scheduleService: { update } as unknown as ScheduleService,
       logger,
     });
@@ -1886,6 +2617,7 @@ describe("update_schedule MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       scheduleService: { update } as unknown as ScheduleService,
       logger,
     });
@@ -1932,6 +2664,7 @@ describe("schedule_logs MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       scheduleService: { logs } as unknown as ScheduleService,
       logger,
     });
@@ -1948,6 +2681,7 @@ describe("schedule_logs MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       logger,
     });
     const tool = registeredTool(server, "schedule_logs");
@@ -1963,25 +2697,28 @@ describe("provider listing MCP tool", () => {
 
   it("returns providers from the registry, including custom providers", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const providerRegistry = {
-      claude: createProviderDefinition({
-        id: "claude",
+    const provStub = createProviderSnapshotManagerStub();
+    provStub.listRegisteredProviderIds.mockReturnValue(["claude", "zai"]);
+    provStub.listProviders.mockResolvedValue([
+      buildSnapshotEntry({
+        provider: "claude",
         label: "Claude",
+        description: "Test provider",
         modes: [{ id: "default", label: "Default", description: "Built-in mode" }],
       }),
-      zai: createProviderDefinition({
-        id: "zai",
+      buildSnapshotEntry({
+        provider: "zai" as AgentProvider,
         label: "ZAI",
         description: "Custom Claude profile",
         defaultModeId: "default",
         modes: [{ id: "default", label: "Default", description: "Custom mode" }],
       }),
-    };
+    ]);
 
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
-      providerRegistry,
+      providerSnapshotManager: provStub.manager,
       logger,
     });
     const tool = registeredTool(server, "list_providers");
@@ -2013,27 +2750,52 @@ describe("provider listing MCP tool", () => {
     expect(modelVisibleText).toContain('"providers"');
   });
 
+  it("returns provider modes from the shared snapshot catalog", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const provStub = createProviderSnapshotManagerStub();
+    provStub.listRegisteredProviderIds.mockReturnValue(["codex"]);
+    provStub.listProviders.mockResolvedValue([
+      buildSnapshotEntry({
+        provider: "codex",
+        label: "Codex",
+        modes: [{ id: "dynamic", label: "Dynamic", description: "Runtime mode" }],
+      }),
+    ]);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: provStub.manager,
+      logger,
+    });
+    const tool = registeredTool(server, "list_providers");
+
+    const response = await tool.handler({});
+
+    expect(response.structuredContent.providers).toEqual([
+      expect.objectContaining({
+        id: "codex",
+        modes: [{ id: "dynamic", label: "Dynamic", description: "Runtime mode" }],
+      }),
+    ]);
+  });
+
   it("returns disabled providers with metadata without checking availability", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const baseProvider = createProviderDefinition({ id: "codex" });
-    const client = baseProvider.createClient(logger);
-    const isAvailable = vi.fn().mockResolvedValue(true);
-    const createClient = vi.fn(() => ({ ...client, isAvailable }));
-    const providerRegistry = {
-      codex: createProviderDefinition({
-        id: "codex",
+    const provStub = createProviderSnapshotManagerStub();
+    provStub.listRegisteredProviderIds.mockReturnValue(["codex"]);
+    provStub.listProviders.mockResolvedValue([
+      buildSnapshotEntry({
+        provider: "codex",
         label: "Codex",
         description: "OpenAI coding agent",
         enabled: false,
         modes: [{ id: "read-only", label: "Read Only", description: "No edits" }],
-        createClient,
       }),
-    };
-
+    ]);
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
-      providerRegistry,
+      providerSnapshotManager: provStub.manager,
       logger,
     });
     const tool = registeredTool(server, "list_providers");
@@ -2047,37 +2809,10 @@ describe("provider listing MCP tool", () => {
           description: "OpenAI coding agent",
           enabled: false,
           status: "unavailable",
-          modes: [{ id: "read-only", label: "Read Only", description: "No edits" }],
+          modes: [],
         },
       ],
     });
-    expect(createClient).not.toHaveBeenCalled();
-    expect(isAvailable).not.toHaveBeenCalled();
-  });
-
-  it("checks availability for enabled providers", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const baseProvider = createProviderDefinition({ id: "claude" });
-    const client = baseProvider.createClient(logger);
-    const isAvailable = vi.fn().mockResolvedValue(true);
-    const providerRegistry = {
-      claude: createProviderDefinition({
-        createClient: vi.fn(() => ({ ...client, isAvailable })),
-      }),
-    };
-
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerRegistry,
-      logger,
-    });
-    const tool = registeredTool(server, "list_providers");
-
-    await tool.handler({});
-
-    expect(providerRegistry.claude.createClient).toHaveBeenCalledTimes(1);
-    expect(isAvailable).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -2086,7 +2821,12 @@ describe("provider MCP tools", () => {
 
   it("does not register the replaced feature-specific provider discovery MCP tool", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
 
     expect(lookupTool(server, "list_provider_features")).toBeUndefined();
   });
@@ -2101,18 +2841,20 @@ describe("provider MCP tools", () => {
         value: false,
       },
     ]);
-    const providerRegistry = {
-      codex: createProviderDefinition({
-        id: "codex",
-        label: "Codex",
-        description: "OpenAI coding agent",
-        modes: [{ id: "full-access", label: "Full Access", description: "Can edit files" }],
-      }),
-    };
+    const provStub = createProviderSnapshotManagerStub();
+    provStub.listRegisteredProviderIds.mockReturnValue(["codex"]);
+    const codexEntry = buildSnapshotEntry({
+      provider: "codex",
+      label: "Codex",
+      description: "OpenAI coding agent",
+      modes: [{ id: "full-access", label: "Full Access", description: "Can edit files" }],
+    });
+    provStub.listProviders.mockResolvedValue([codexEntry]);
+    provStub.getProvider.mockResolvedValue(codexEntry);
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
-      providerRegistry,
+      providerSnapshotManager: provStub.manager,
       logger,
     });
     const tool = registeredTool(server, "inspect_provider");
@@ -2160,26 +2902,13 @@ describe("provider MCP tools", () => {
 
   it("rejects disabled providers without fetching models", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const fetchModels = vi.fn().mockResolvedValue([
-      {
-        provider: "codex",
-        id: "gpt-5.4",
-        label: "GPT-5.4",
-      },
-    ]);
-    const providerRegistry = {
-      codex: createProviderDefinition({
-        id: "codex",
-        label: "Codex",
-        enabled: false,
-        fetchModels,
-      }),
-    };
-
+    const provStub = createProviderSnapshotManagerStub();
+    provStub.listRegisteredProviderIds.mockReturnValue(["codex"]);
+    provStub.listModels.mockRejectedValue(new Error("Provider 'codex' is disabled"));
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
-      providerRegistry,
+      providerSnapshotManager: provStub.manager,
       logger,
     });
     const tool = registeredTool(server, "list_models");
@@ -2187,31 +2916,19 @@ describe("provider MCP tools", () => {
     await expect(tool.handler({ provider: "codex" })).rejects.toThrow(
       "Provider 'codex' is disabled",
     );
-    expect(fetchModels).not.toHaveBeenCalled();
   });
 
   it("inspect_provider rejects disabled providers without fetching models", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const fetchModels = vi.fn().mockResolvedValue([
-      {
-        provider: "codex",
-        id: "gpt-5.4",
-        label: "GPT-5.4",
-      },
-    ]);
-    const providerRegistry = {
-      codex: createProviderDefinition({
-        id: "codex",
-        label: "Codex",
-        enabled: false,
-        fetchModels,
-      }),
-    };
-
+    const provStub = createProviderSnapshotManagerStub();
+    provStub.listRegisteredProviderIds.mockReturnValue(["codex"]);
+    provStub.getProvider.mockResolvedValue(
+      buildSnapshotEntry({ provider: "codex", label: "Codex", enabled: false }),
+    );
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
-      providerRegistry,
+      providerSnapshotManager: provStub.manager,
       logger,
     });
     const tool = registeredTool(server, "inspect_provider");
@@ -2219,7 +2936,6 @@ describe("provider MCP tools", () => {
     await expect(tool.handler({ provider: "codex", cwd: "~/repo" })).rejects.toThrow(
       "Provider 'codex' is disabled",
     );
-    expect(fetchModels).not.toHaveBeenCalled();
   });
 });
 
@@ -2232,6 +2948,7 @@ describe("speak MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       callerAgentId: "voice-agent-1",
       enableVoiceTools: true,
       resolveSpeakHandler: () => speak,
@@ -2254,6 +2971,7 @@ describe("speak MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       callerAgentId: "voice-agent-2",
       enableVoiceTools: true,
       resolveSpeakHandler: () => null,
@@ -2270,6 +2988,7 @@ describe("speak MCP tool", () => {
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
       callerAgentId: "agent-no-voice",
       logger,
     });
@@ -2294,7 +3013,12 @@ describe("agent snapshot MCP serialization", () => {
       }),
     ]);
 
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "list_agents");
     const response = await tool.handler({});
     const structured = z
@@ -2345,9 +3069,7 @@ describe("agent snapshot MCP serialization", () => {
       agentManager,
       agentStorage,
       logger,
-      providerRegistry: {
-        claude: createProviderDefinition({}),
-      },
+      providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "get_agent_status");
     const response = await tool.handler({ agentId: "archived-agent" });
@@ -2404,7 +3126,12 @@ describe("agent snapshot MCP serialization", () => {
       }),
     );
 
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "get_agent_status");
     const response = await tool.handler({ agentId: "full-detail-agent" });
     const snapshot = z.record(z.unknown()).parse(response.structuredContent.snapshot);
@@ -2476,9 +3203,7 @@ describe("agent snapshot MCP serialization", () => {
       agentManager,
       agentStorage,
       logger,
-      providerRegistry: {
-        claude: createProviderDefinition({}),
-      },
+      providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "get_agent_status");
 
@@ -2520,9 +3245,7 @@ describe("agent snapshot MCP serialization", () => {
       agentManager,
       agentStorage,
       logger,
-      providerRegistry: {
-        claude: createProviderDefinition({}),
-      },
+      providerSnapshotManager: createClaudeOnlyManager(),
       callerAgentId: "caller-agent",
     });
     const tool = registeredTool(server, "list_agents");
@@ -2573,9 +3296,7 @@ describe("agent snapshot MCP serialization", () => {
       agentManager,
       agentStorage,
       logger,
-      providerRegistry: {
-        claude: createProviderDefinition({}),
-      },
+      providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "list_agents");
     const response = await tool.handler({
@@ -2614,9 +3335,7 @@ describe("agent snapshot MCP serialization", () => {
       agentManager,
       agentStorage,
       logger,
-      providerRegistry: {
-        claude: createProviderDefinition({}),
-      },
+      providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "list_agents");
     const response = await tool.handler({ includeArchived: true });
@@ -2657,9 +3376,7 @@ describe("agent snapshot MCP serialization", () => {
       agentManager,
       agentStorage,
       logger,
-      providerRegistry: {
-        claude: createProviderDefinition({}),
-      },
+      providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "list_agents");
     const response = await tool.handler({ cwd: REPO_CWD, includeArchived: true });
@@ -2733,7 +3450,12 @@ describe("agent snapshot MCP serialization", () => {
       }),
     ]);
 
-    const server = await createAgentMcpServer({ agentManager, agentStorage, logger });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
     const tool = registeredTool(server, "list_agents");
     const response = await tool.handler({});
 
@@ -2765,9 +3487,7 @@ describe("agent snapshot MCP serialization", () => {
       agentManager,
       agentStorage,
       logger,
-      providerRegistry: {
-        claude: createProviderDefinition({}),
-      },
+      providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "list_agents");
     const response = await tool.handler({ includeArchived: true });
@@ -2805,9 +3525,7 @@ describe("agent snapshot MCP serialization", () => {
       agentManager,
       agentStorage,
       logger,
-      providerRegistry: {
-        claude: createProviderDefinition({}),
-      },
+      providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "get_agent_activity");
     const response = await tool.handler({ agentId: "archived-activity-agent" });
@@ -2843,9 +3561,7 @@ describe("agent snapshot MCP serialization", () => {
       agentManager,
       agentStorage,
       logger: createTestLogger(),
-      providerRegistry: {
-        claude: createProviderDefinition({}),
-      },
+      providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "get_agent_activity");
     const response = await tool.handler({ agentId: "live-activity-agent", limit: 1 });
@@ -2874,9 +3590,7 @@ describe("agent snapshot MCP serialization", () => {
       agentManager,
       agentStorage,
       logger: createTestLogger(),
-      providerRegistry: {
-        claude: createProviderDefinition({}),
-      },
+      providerSnapshotManager: createClaudeOnlyManager(),
     });
     const tool = registeredTool(server, "get_agent_activity");
     const response = await tool.handler({ agentId: "live-activity-agent-2", limit: 2 });

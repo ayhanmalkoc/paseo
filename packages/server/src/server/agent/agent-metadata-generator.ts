@@ -8,7 +8,7 @@ import {
   StructuredAgentResponseError,
   generateStructuredAgentResponseWithFallback,
 } from "./agent-response-loop.js";
-import { MAX_AUTO_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
+import { MAX_AUTO_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
 import { buildMetadataPrompt } from "../../utils/build-metadata-prompt.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 
@@ -152,7 +152,7 @@ export async function generateAndApplyAgentMetadata(
   if (needs.needsTitle && typeof result.title === "string") {
     const normalizedTitle = normalizeAutoTitle(result.title);
     if (normalizedTitle) {
-      await options.agentManager.setGeneratedTitleIfUnset(options.agentId, normalizedTitle);
+      await options.agentManager.setGeneratedTitle(options.agentId, normalizedTitle);
     }
   }
 }

@@ -70,6 +70,10 @@ const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
 const CODEX_PROVIDER = "codex";
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
     provider: CODEX_PROVIDER,
@@ -667,7 +671,9 @@ describe("Codex app-server provider", () => {
 
     expect(capturedRequests[0]).toMatchObject({
       kind: "env",
-      CODEX_HOME: expect.stringContaining("/providers/codex/model-gateways/9router/home"),
+      CODEX_HOME: expect.stringMatching(
+        /[\\/]providers[\\/]codex[\\/]model-gateways[\\/]9router[\\/]home$/,
+      ),
       OPENAI_API_KEY: "sk-router",
     });
     const codexConfigToml = capturedRequests[0].CODEX_CONFIG_TOML;
@@ -680,8 +686,10 @@ describe("Codex app-server provider", () => {
     expect(codexConfigToml).toContain('wire_api = "responses"');
     expect(codexConfigToml).toContain("requires_openai_auth = false");
     expect(codexConfigToml).toContain("[agents.subagent]");
-    expect(codexConfigToml).toContain(
-      `[hooks.state."${String(capturedRequests[0].CODEX_HOME)}/hooks.json:session_start:0:0"]`,
+    expect(codexConfigToml).toMatch(
+      new RegExp(
+        `\\[hooks\\.state\\."${escapeRegExp(String(capturedRequests[0].CODEX_HOME))}[\\\\/]hooks\\.json:session_start:0:0"\\]`,
+      ),
     );
     expect(codexConfigToml).not.toContain("source-codex-home/hooks.json:session_start:0:0");
     expect(codexConfigToml).toContain("[mcp_servers.context-mode]");
@@ -720,6 +728,63 @@ describe("Codex app-server provider", () => {
         },
       },
     });
+  });
+
+  test("omits Codex model gateway model config when no gateway model is selected", async () => {
+    const capturedRequests = await runCustomCodexProviderTurn(
+      "codex-gateway-test",
+      "https://custom-relay.example.com",
+      {
+        modelGateway: {
+          type: "openai-compatible",
+          id: "9router",
+          provider: "codex",
+          baseUrl: "http://localhost:20128",
+          apiKey: "sk-router",
+        },
+      },
+    );
+
+    const codexConfigToml = String(capturedRequests[0].CODEX_CONFIG_TOML);
+    expect(codexConfigToml).toMatch(/^model_provider = "9router"/);
+    expect(codexConfigToml).not.toContain('model = ""');
+    expect(capturedThreadStartConfig(capturedRequests)).toMatchObject({
+      model_provider: "9router",
+      agents: {
+        subagent: {
+          description: "Subagent routed through the selected model gateway.",
+        },
+      },
+    });
+  });
+
+  test("rejects unsupported Codex model gateway protocols", async () => {
+    await expect(
+      runCustomCodexProviderTurn("codex-gateway-test", "https://custom-relay.example.com", {
+        modelGateway: {
+          type: "openai-compatible",
+          id: "9router",
+          provider: "codex",
+          baseUrl: "http://localhost:20128",
+          protocol: "chat_completions",
+          apiKey: "sk-router",
+        },
+      }),
+    ).rejects.toThrow("Codex model gateways only support the OpenAI Responses protocol.");
+  });
+
+  test("rejects model gateway base URLs without an http(s) scheme", async () => {
+    await expect(
+      runCustomCodexProviderTurn("codex-gateway-test", "https://custom-relay.example.com", {
+        modelGateway: {
+          type: "openai-compatible",
+          id: "9router",
+          provider: "codex",
+          baseUrl: "localhost:20128",
+          apiKey: "sk-router",
+        },
+      }),
+    ).rejects.toThrow("Model gateway base URL must be an http(s) URL");
   });
 
   test("uses the model gateway model inside Codex collaboration mode settings", async () => {
